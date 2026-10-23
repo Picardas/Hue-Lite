@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import NUMBERS
 from .engine import HueLiteConfigEntry
-from .entity import HueLiteEntity
+from .entity import SettingEntity
 
 
 async def async_setup_entry(
@@ -18,7 +18,7 @@ async def async_setup_entry(
     async_add_entities(SettingNumber(entry.runtime_data, key) for key in NUMBERS)
 
 
-class SettingNumber(HueLiteEntity, NumberEntity):
+class SettingNumber(SettingEntity, NumberEntity):
     _attr_entity_category = EntityCategory.CONFIG
     _attr_mode = NumberMode.SLIDER
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
@@ -32,4 +32,4 @@ class SettingNumber(HueLiteEntity, NumberEntity):
         return self.hue_lite.settings[self.key]
 
     async def async_set_native_value(self, value: float) -> None:
-        self.hue_lite.async_set_setting(self.key, int(value))
+        self._set(int(value))

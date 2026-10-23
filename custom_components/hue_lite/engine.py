@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from collections.abc import Coroutine, Mapping
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 import logging
 from typing import Any
 
@@ -72,6 +72,7 @@ from .timeline import (
     minutes,
     natural_light,
     next_scene,
+    noticeable,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,12 +92,13 @@ def async_get_loaded(hass: HomeAssistant) -> HueLite | None:
     return None
 
 
-def _count(state: State | None) -> int:
-    """The number of people a zone's state says are in it."""
+def _people(state: State | None) -> int | None:
+    """The number of people a zone's state says are in it; None while it's
+    unknown or unavailable."""
     try:
-        return int(state.state) if state else 0
+        return int(state.state) if state else None
     except ValueError:
-        return 0
+        return None
 
 
 class HueLite:
@@ -120,9 +122,12 @@ class HueLite:
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._last_wake_up: datetime | None = None
         self._sun: tuple[date, SunTimes] | None = None
+        # The target each scene's lights were last moved to.
+        self._followed: dict[str, Target] = {}
         self._listeners: list[CALLBACK_TYPE] = []
         self._unsubs: list[CALLBACK_TYPE] = []
         self._unwatch: CALLBACK_TYPE | None = None
+        self._watched: frozenset[str] = frozenset()
         self._leaving: CALLBACK_TYPE | None = None
         # Contexts of Hue-Lite's own light changes, so they're not taken for changes by hand.
         self._ours: deque[str] = deque(maxlen=100)
@@ -136,13 +141,16 @@ class HueLite:
         self.scenes.update(data.get("scenes", {}))
         if woke := data.get("last_wake_up"):
             self._last_wake_up = dt_util.parse_datetime(woke)
-        self._update(act=False)
+        self.natural, self.evening = self._targets(dt_util.now())
+        self._followed = {NATURAL: self.natural, ROUTINE: self.evening}
 
     @callback
     def async_start(self) -> None:
-        """Start following the clock, the home zone, the dimmers and the lights in scenes."""
+        """Start following the clock, the home zone, the dimmers, the lights in
+        scenes and renamed or removed lights."""
         self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
         self._unsubs.append(async_track_state_change_event(self.hass, [self.presence], self._presence_changed))
+        self._unsubs.append(self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_updated))
         if self.dimmers:
             self._unsubs.append(self.hass.bus.async_listen("zha_event", self._zha_event))
         self._watch_lights()
@@ -154,6 +162,7 @@ class HueLite:
                 unsub()
         self._unsubs.clear()
         self._unwatch = self._leaving = None
+        self._watched = frozenset()
 
     def _data(self) -> dict[str, Any]:
         return {
@@ -173,7 +182,7 @@ class HueLite:
 
     @callback
     def async_add_listener(self, update: CALLBACK_TYPE) -> CALLBACK_TYPE:
-        """Call `update` whenever the timelines, settings or scene lists change."""
+        """Call `update` whenever the timelines or scene lists change."""
         self._listeners.append(update)
         return lambda: self._listeners.remove(update)
 
@@ -187,7 +196,7 @@ class HueLite:
         """Change a setting; the timelines follow straight away."""
         self.settings[key] = value
         self._save()
-        self._update(act=True)
+        self._refresh()
 
     @callback
     def frontend_config(self) -> dict[str, Any]:
@@ -204,6 +213,10 @@ class HueLite:
     def in_scene(self, scene: str) -> list[str]:
         """The lights in a scene (NATURAL, ROUTINE or a preset id)."""
         return sorted(light for light, current in self.scenes.items() if current == scene)
+
+    def target(self, scene: str) -> Target:
+        """Where a followed scene (NATURAL or ROUTINE) is, and the light it wants now."""
+        return self.natural if scene == NATURAL else self.evening
 
     # ---- Choosing lights -----------------------------------------------------
 
@@ -272,14 +285,16 @@ class HueLite:
     def _set_scene(self, lights: list[str], scene: str) -> None:
         """Lights are now in `scene` (NATURAL, ROUTINE or a preset id), or with
         '' in none (changed by hand, or done with)."""
+        before = dict(self.scenes)
         for light in lights:
             if scene:
                 self.scenes[light] = scene
             else:
                 self.scenes.pop(light, None)
-        self._save()
-        self._watch_lights()
-        self._notify()
+        if self.scenes != before:
+            self._save()
+            self._watch_lights()
+            self._notify()
 
     def current_scene(self, lights: list[str]) -> str:
         """The scene every light that's on is in, or '' when none are on or
@@ -295,11 +310,11 @@ class HueLite:
 
     async def async_natural_light(self, lights: list[str], follow: bool = True) -> None:
         """Put lights into the Natural light scene (turning them on), or with
-        follow off just take them out of it."""
-        if not lights:
-            return
-        self._set_scene(lights, NATURAL if follow else "")
-        if follow:
+        follow off take the ones in it out (leaving other scenes alone)."""
+        if not follow:
+            self._set_scene([light for light in lights if self.scenes.get(light) == NATURAL], "")
+        elif lights:
+            self._set_scene(lights, NATURAL)
             await self._apply(NATURAL, lights, 2)
 
     async def async_next_scene(self, lights: list[str]) -> None:
@@ -318,7 +333,7 @@ class HueLite:
         """Send the Natural light scene's or the routine's current light to
         the lights, turning them on. Nightlight-labelled lights get Nightlight
         during Natural light's night and the routine's nightlight phase."""
-        target = self.natural if scene == NATURAL else self.evening
+        target = self.target(scene)
         night = target.phase == ("night" if scene == NATURAL else "nightlight")
         nightlights = set(self._labelled("nightlight")) if night else set()
         await self._send([entity_id for entity_id in lights if entity_id in nightlights], PRESETS["nightlight"], transition)
@@ -359,12 +374,17 @@ class HueLite:
 
     @callback
     def _watch_lights(self) -> None:
-        """Follow state changes of the lights in a scene."""
+        """Follow state changes of the lights in a scene (re-subscribing only
+        when that set of lights changes)."""
+        watched = frozenset(self.scenes)
+        if watched == self._watched:
+            return
         if self._unwatch:
             self._unwatch()
             self._unwatch = None
-        if self.scenes:
-            self._unwatch = async_track_state_change_event(self.hass, sorted(self.scenes), self._light_changed)
+        self._watched = watched
+        if watched:
+            self._unwatch = async_track_state_change_event(self.hass, sorted(watched), self._light_changed)
 
     @callback
     def _light_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -409,46 +429,55 @@ class HueLite:
             bedtime_weekend=minutes(s["bedtime_weekend"]),
         )
 
+    def _targets(self, now: datetime) -> tuple[Target, Evening]:
+        """Where Natural light and the evening routine are at `now`."""
+        sun = self._sun_times(now.date())
+        return (
+            natural_light(now.hour * 60 + now.minute, sun),
+            evening_routine(now, sun.sunset, self._evening_settings()),
+        )
+
     @callback
     def _tick(self, _now: datetime) -> None:
-        self._update(act=True)
+        self._refresh()
         self._check_wake_up(dt_util.now())
 
     @callback
-    def _update(self, act: bool) -> None:
-        """Work out where both timelines are now; with `act`, move the lights
-        that follow them and run the evening routine's start and bedtime."""
-        now = dt_util.now()
-        sun = self._sun_times(now.date())
-        natural, evening = getattr(self, "natural", None), getattr(self, "evening", None)
-        self.natural = natural_light(now.hour * 60 + now.minute, sun)
-        self.evening = evening_routine(now, sun.sunset, self._evening_settings())
-        self._notify()
-        if not act:
-            return
+    def _refresh(self) -> None:
+        """Work out where both timelines are now, move the lights that follow
+        them, and run the evening routine's start and bedtime."""
+        natural, evening = self.natural, self.evening
+        self.natural, self.evening = self._targets(dt_util.now())
+        if (self.natural, self.evening) != (natural, evening):
+            self._notify()
 
-        if self.natural != natural:
-            self._follow(NATURAL)
-        if evening is None:
-            return
+        self._follow(NATURAL)
         was, phase = evening.phase, self.evening.phase
         if was == "day" and phase in EVENING_PHASES:
+            # The start turns the routine's lights on at its current light.
+            self._followed[ROUTINE] = self.evening
             self._spawn(self._start_evening())
-        elif phase in EVENING_PHASES and self.evening != evening:
+        elif phase in EVENING_PHASES:
             self._follow(ROUTINE)
         elif was in EVENING_PHASES and phase == "night":
             self._spawn(self._bedtime())
 
     @callback
     def _follow(self, scene: str) -> None:
-        """Move a scene's lights that are on to its current light."""
+        """Move a scene's lights that are on to its current light, once that
+        has changed phase or moved noticeably since they were last moved. Slow
+        blends then send a command every few minutes rather than every minute."""
+        target, last = self.target(scene), self._followed.get(scene)
+        if last is not None and last.phase == target.phase and not noticeable(last.light, target.light):
+            return
+        self._followed[scene] = target
         if lights := self._on(self.in_scene(scene)):
             self._spawn(self._apply(scene, lights, 60))
 
     async def _start_evening(self) -> None:
         """The evening starts: the routine takes the Evening lights and turns
         them on dim, if it's on and someone's home."""
-        if not self.settings["evening_routine_enabled"] or _count(self.hass.states.get(self.presence)) == 0:
+        if not self.settings["evening_routine_enabled"] or not _people(self.hass.states.get(self.presence)):
             return
         if lights := self._labelled("evening"):
             self._set_scene(lights, ROUTINE)
@@ -468,25 +497,29 @@ class HueLite:
 
     @callback
     def _check_wake_up(self, now: datetime) -> None:
+        """Start the wake-up fade-in or turn the lights off afterwards when it's
+        time. Both can be on another day than the wake-up itself (a 00:15 wake
+        up fades in from 23:45), so each uses that wake-up day's time and
+        toggle."""
         s = self.settings
-        m = now.hour * 60 + now.minute
-        weekend = now.isoweekday() in (6, 7)
-        wake = minutes(s["wake_up_weekend" if weekend else "wake_up_weekday"])
-
-        if m == (wake - s["wake_up_fade_minutes"]) % 1440 and s["wake_up_weekends" if weekend else "wake_up_weekdays"]:
-            lights = self._labelled("wake_up")
-            if lights and not self._on(lights):
-                self._spawn(self._wake_up(lights))
-
-        woke = self._last_wake_up
-        if (
-            m == (wake + s["wake_up_off_after_minutes"]) % 1440
-            and s["wake_up_auto_off"]
-            and woke is not None
-            and woke > dt_util.utcnow() - timedelta(hours=6)
-            and (on := self._on(self._labelled("wake_up")))
-        ):
-            self._spawn(self._call("turn_off", on, transition=60))
+        minute = now.replace(tzinfo=None, second=0, microsecond=0)
+        fade, off_after = timedelta(minutes=s["wake_up_fade_minutes"]), timedelta(minutes=s["wake_up_off_after_minutes"])
+        for day in (minute.date() - timedelta(days=1), minute.date(), minute.date() + timedelta(days=1)):
+            weekend = day.isoweekday() in (6, 7)
+            wake = datetime.combine(day, time.fromisoformat(s["wake_up_weekend" if weekend else "wake_up_weekday"]))
+            if minute == wake - fade and s["wake_up_weekends" if weekend else "wake_up_weekdays"]:
+                lights = self._labelled("wake_up")
+                if lights and not self._on(lights):
+                    self._spawn(self._wake_up(lights))
+            woke = self._last_wake_up
+            if (
+                minute == wake + off_after
+                and s["wake_up_auto_off"]
+                and woke is not None
+                and woke > dt_util.utcnow() - timedelta(hours=6)
+                and (on := self._on(self._labelled("wake_up")))
+            ):
+                self._spawn(self._call("turn_off", on, transition=60))
 
     async def _wake_up(self, lights: list[str]) -> None:
         """Fade from a dim warm glow up to Energize, reaching it at the wake-up
@@ -511,7 +544,9 @@ class HueLite:
         if new.state == "0":
             # Gone for a while, so a brief location glitch doesn't count.
             self._leaving = async_call_later(self.hass, LEAVING_DELAY, self._everyone_left)
-        if _count(new) > _count(old):
+        # Only a real count going up: not the zone coming back from unknown.
+        before, after = _people(old), _people(new)
+        if before is not None and after is not None and after > before:
             self._someone_arrived()
 
     @callback
@@ -530,6 +565,19 @@ class HueLite:
         self._leaving = None
         if self.settings["leaving_home_enabled"] and (on := self._on(self.lights())):
             self._spawn(self._call("turn_off", on, transition=2))
+
+    # ---- Renamed and removed lights --------------------------------------------
+
+    @callback
+    def _registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
+        """A light keeps its scene when its entity id changes, and one that's
+        deleted is forgotten."""
+        data = event.data
+        if data["action"] == "remove":
+            self._set_scene([data["entity_id"]], "")
+        elif data["action"] == "update" and (old := data.get("old_entity_id")) and (scene := self.scenes.get(old)):
+            self._set_scene([old], "")
+            self._set_scene([data["entity_id"]], scene)
 
     # ---- Hue dimmer switches -------------------------------------------------
 

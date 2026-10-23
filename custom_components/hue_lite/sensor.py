@@ -13,7 +13,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import NATURAL, ROUTINE
 from .engine import HueLiteConfigEntry
 from .entity import HueLiteEntity
-from .timeline import Target
 
 
 async def async_setup_entry(
@@ -29,7 +28,15 @@ async def async_setup_entry(
     )
 
 
-class _TimelineSensor(HueLiteEntity, SensorEntity):
+class _EngineSensor(HueLiteEntity, SensorEntity):
+    """Updated whenever the timelines or scene lists change."""
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(self.hue_lite.async_add_listener(self.async_write_ha_state))
+
+
+class _TimelineSensor(_EngineSensor):
     """State: the phase. Attributes: the light it wants now, and `lights`, the
     lights in it."""
 
@@ -37,24 +44,41 @@ class _TimelineSensor(HueLiteEntity, SensorEntity):
     _scene: str
 
     @property
-    def _target(self) -> Target:
-        raise NotImplementedError
-
-    @property
     def native_value(self) -> str:
-        return self._target.phase
+        return self.hue_lite.target(self._scene).phase
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        light = self._target.light
+        light = self.hue_lite.target(self._scene).light
         return {
             "brightness_pct": light.brightness_pct,
             "xy_color": list(light.xy_color),
+            "color_temp_kelvin": light.kelvin,
             "lights": self.hue_lite.in_scene(self._scene),
         }
 
 
-class LightScenesSensor(HueLiteEntity, SensorEntity):
+class NaturalLightSensor(_TimelineSensor):
+    _attr_options = ["night", "sunrise", "morning", "day", "sunset", "evening"]
+    _scene = NATURAL
+
+
+class EveningRoutineSensor(_TimelineSensor):
+    _attr_options = ["day", "evening", "wind_down", "nightlight", "night"]
+    _scene = ROUTINE
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        evening = self.hue_lite.evening
+        return {
+            **super().extra_state_attributes,
+            "start": evening.start,
+            "bedtime": evening.bedtime,
+            "summary": f"On {evening.start} · off {evening.bedtime}",
+        }
+
+
+class LightScenesSensor(_EngineSensor):
     """How many lights are in a scene; `scenes` says which scene each is in
     (natural, routine or a preset id), for the dashboard's highlights."""
 
@@ -67,31 +91,3 @@ class LightScenesSensor(HueLiteEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"scenes": dict(sorted(self.hue_lite.scenes.items()))}
-
-
-class NaturalLightSensor(_TimelineSensor):
-    _attr_options = ["night", "sunrise", "morning", "day", "sunset", "evening"]
-    _scene = NATURAL
-
-    @property
-    def _target(self) -> Target:
-        return self.hue_lite.natural
-
-
-class EveningRoutineSensor(_TimelineSensor):
-    _attr_options = ["day", "evening", "wind_down", "nightlight", "night"]
-    _scene = ROUTINE
-
-    @property
-    def _target(self) -> Target:
-        return self.hue_lite.evening
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        evening = self.hue_lite.evening
-        return {
-            **super().extra_state_attributes,
-            "start": evening.start,
-            "bedtime": evening.bedtime,
-            "summary": f"On {evening.start} · off {evening.bedtime}",
-        }

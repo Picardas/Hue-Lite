@@ -1,6 +1,8 @@
-"""Base for Hue-Lite's entities: one device, refreshed by the engine."""
+"""Bases for Hue-Lite's entities, all on one device."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from homeassistant.helpers.entity import Entity
 
@@ -21,4 +23,11 @@ class HueLiteEntity(Entity):
     async def async_added_to_hass(self) -> None:
         self.hue_lite.entity_ids[self.key] = self.entity_id
         self.async_on_remove(lambda: self.hue_lite.entity_ids.pop(self.key, None))
-        self.async_on_remove(self.hue_lite.async_add_listener(self.async_write_ha_state))
+
+
+class SettingEntity(HueLiteEntity):
+    """A setting: its value lives in the engine, and only this entity changes it."""
+
+    def _set(self, value: Any) -> None:
+        self.hue_lite.async_set_setting(self.key, value)
+        self.async_write_ha_state()

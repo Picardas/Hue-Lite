@@ -54,6 +54,16 @@ PRESETS: dict[str, Light] = {
 SCENE_CYCLE = ("natural", "energize", "cool_bright", "relax", "rest", "nightlight")
 
 
+def noticeable(a: Light, b: Light) -> bool:
+    """Whether going from a to b is a visible change: 1% brightness, 0.003 in
+    either xy coordinate or 50 K. Smaller steps aren't worth a Zigbee command."""
+    return (
+        abs(a.brightness_pct - b.brightness_pct) >= 1
+        or max(abs(a.xy_color[0] - b.xy_color[0]), abs(a.xy_color[1] - b.xy_color[1])) >= 0.003
+        or abs(a.kelvin - b.kelvin) >= 50
+    )
+
+
 def blend(a: Light, b: Light, f: float) -> Light:
     """a at f = 0, b at f = 1, linear in between."""
     f = min(max(f, 0), 1)

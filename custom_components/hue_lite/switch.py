@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONFIG_SWITCHES, SWITCHES
 from .engine import HueLiteConfigEntry
-from .entity import HueLiteEntity
+from .entity import SettingEntity
 
 
 async def async_setup_entry(
@@ -20,7 +20,7 @@ async def async_setup_entry(
     async_add_entities(SettingSwitch(entry.runtime_data, key) for key in SWITCHES)
 
 
-class SettingSwitch(HueLiteEntity, SwitchEntity):
+class SettingSwitch(SettingEntity, SwitchEntity):
     def __init__(self, hue_lite, key: str) -> None:
         super().__init__(hue_lite, key)
         if key in CONFIG_SWITCHES:
@@ -31,7 +31,7 @@ class SettingSwitch(HueLiteEntity, SwitchEntity):
         return self.hue_lite.settings[self.key]
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        self.hue_lite.async_set_setting(self.key, True)
+        self._set(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        self.hue_lite.async_set_setting(self.key, False)
+        self._set(False)

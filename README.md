@@ -112,8 +112,11 @@ Changing a light by hand forgets its scene.
 A light joins Natural light when it's picked for it (dashboard, dimmer, coming
 home, the `hue_lite.natural_light` action) and stays in it, on or off, until
 another scene is picked or it's changed by hand (brightness or colour from the
-dashboard or a light dialog). Lights in it that are on move every minute; a
-light that's switched on picks up the current light straight away.
+dashboard or a light dialog). Lights in it that are on move with it, over a
+minute each time, whenever it has changed visibly (every minute while it
+brightens or dims quickly, every few minutes through the slow blends, to keep
+Zigbee traffic down); a light that's switched on picks up the current light
+straight away. The evening routine moves its lights the same way.
 `sensor.hue_lite_natural_light` shows the phase, the light it wants, and the
 lights in it (`lights`).
 

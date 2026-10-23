@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import TIMES
 from .engine import HueLiteConfigEntry
-from .entity import HueLiteEntity
+from .entity import SettingEntity
 
 
 async def async_setup_entry(
@@ -19,10 +19,10 @@ async def async_setup_entry(
     async_add_entities(SettingTime(entry.runtime_data, key) for key in TIMES)
 
 
-class SettingTime(HueLiteEntity, TimeEntity):
+class SettingTime(SettingEntity, TimeEntity):
     @property
     def native_value(self) -> time:
         return time.fromisoformat(self.hue_lite.settings[self.key])
 
     async def async_set_value(self, value: time) -> None:
-        self.hue_lite.async_set_setting(self.key, value.strftime("%H:%M"))
+        self._set(value.strftime("%H:%M"))

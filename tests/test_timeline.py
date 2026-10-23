@@ -14,6 +14,7 @@ from custom_components.hue_lite.timeline import (
     evening_routine,
     natural_light,
     next_scene,
+    noticeable,
 )
 
 SUN = SunTimes()  # dawn 06:00, sunrise 06:30, noon 12:00, sunset 18:00, dusk 18:30
@@ -95,6 +96,15 @@ def test_white_bulbs_get_their_own_colour_temperature() -> None:
     assert PRESETS["nightlight"].white_data() == {"brightness_pct": 1, "color_temp_kelvin": 2000}
     # Blends blend the colour temperature too: halfway through the morning.
     assert natural_light(at("09:45"), SUN).light.kelvin == round((6410 + 4000) / 2)
+
+
+def test_noticeable() -> None:
+    relax = PRESETS["relax"]
+    assert not noticeable(relax, relax)
+    assert not noticeable(relax, Light(56.9, (0.5047, 0.4124), 2286))
+    assert noticeable(relax, Light(57, relax.xy_color, relax.kelvin))
+    assert noticeable(relax, Light(56, (0.5050, 0.4152), relax.kelvin))
+    assert noticeable(relax, Light(56, relax.xy_color, 2287))
 
 
 def test_next_scene() -> None:

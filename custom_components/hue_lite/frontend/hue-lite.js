@@ -117,8 +117,9 @@
       if (inArea.length) rooms.push(room(setup, area.area_id, area.name, area.icon || "mdi:texture-box", inArea, { area_id: area.area_id }));
     }
 
+    // Not "other": an area called Other would have that id too.
     const noArea = ids(lights.filter((x) => !areaOf(hass, x)));
-    if (noArea.length) rooms.push(room(setup, "other", "Other", "mdi:lightbulb-question-outline", noArea, { entity_id: noArea }));
+    if (noArea.length) rooms.push(room(setup, "no-area", "Other", "mdi:lightbulb-question-outline", noArea, { entity_id: noArea }));
 
     const labels = setup.labels
       .filter((l) => !roleLabels.includes(l.label_id))
@@ -198,7 +199,7 @@
       "",
       `**Evening routine**: before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
-      `**Coming home**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only when the sun is down. When the last person leaves, every light can go off.`,
+      `**Coming home**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
       "",
       `**Adding a light**: give it an area, and the labels for the routines it should join (Settings → Devices & services → Entities). It appears here on the next reload. To keep a light out of all of this (e.g. one run by its own motion sensor), give it the *${label("exclude")}* label.`,
     ].join("\n");
@@ -298,11 +299,23 @@
     return () => { const was = held; held = false; return was; };
   }
 
+  // Whether any of these entities' states changed since the card last looked.
+  // Home Assistant hands out a new hass on every state change in the house,
+  // but replaces a state object only when that entity changes, so comparing
+  // the objects is enough to skip redrawing for everything else.
+  function statesChanged(card, hass, ids) {
+    const states = ids.map((id) => hass.states[id]);
+    const changed = !card._seen || states.some((state, i) => state !== card._seen[i]);
+    card._seen = states;
+    return changed;
+  }
+
   // Base for both cards: config, hass and one-off rendering into a shadow root.
   class HueLiteCard extends HTMLElement {
     setConfig(config) {
       if (!Array.isArray(config.entities) || !config.entities.length) throw new Error("entities must be a non-empty list of lights");
       this._config = config;
+      this._seen = null;
       this._root = this._root || this.attachShadow({ mode: "open" });
       this._render();
       this._update();
@@ -310,7 +323,12 @@
 
     set hass(hass) {
       this._hass = hass;
-      this._update();
+      if (statesChanged(this, hass, this._watching())) this._update();
+    }
+
+    // The entities this card shows.
+    _watching() {
+      return this._config.entities;
     }
 
     _states() {
@@ -453,6 +471,10 @@
       return { columns: 6, rows: 1, min_columns: 2 };
     }
 
+    _watching() {
+      return [...this._config.entities, this._config.scenes_entity];
+    }
+
     _selected() {
       const on = this._states().filter((s) => s.state === "on");
       const scenes = this._hass.states[this._config.scenes_entity]?.attributes.scenes || {};
@@ -536,6 +558,8 @@
     setConfig(config) {
       if (!Array.isArray(config.rooms)) throw new Error("rooms is required");
       this._config = config;
+      this._lights = [...new Set(config.rooms.flatMap((r) => r.lights))];
+      this._seen = null;
       this._layout = this._layout || { order: [], collapsed: [] };
       this._reordering = false;
       this._render();
@@ -545,8 +569,9 @@
     set hass(hass) {
       this._hass = hass;
       if (!this._loaded) this._load();
+      // The cards inside skip redrawing themselves when their lights haven't changed.
       for (const child of this._children || []) child.hass = hass;
-      this._update();
+      if (statesChanged(this, hass, this._lights)) this._update();
     }
 
     getCardSize() {
@@ -727,6 +752,9 @@
   // `entities` are Hue-Lite's entity ids, for the summaries.
   const isOn = (hass, id) => hass.states[id]?.state === "on";
   const clock = (hass, id) => (hass.states[id]?.state || "").slice(0, 5);
+  // Home Assistant's own cards come from its card helpers, loaded once.
+  let cardHelpers;
+  const loadCardHelpers = () => (cardHelpers = cardHelpers || window.loadCardHelpers());
   const SUMMARIES = {
     wake_up: (hass, e) => {
       const days = (toggle, time, label) => `${label} ${isOn(hass, toggle) ? clock(hass, time) : "off"}`;
@@ -743,6 +771,7 @@
     setConfig(config) {
       if (!Array.isArray(config.routines)) throw new Error("routines is required");
       this._config = config;
+      this._seen = null;
       this._collapsed = this._collapsed || [];
       this._render();
       if (this._hass && !this._loaded) this._load();
@@ -752,7 +781,7 @@
       this._hass = hass;
       if (!this._loaded) this._load();
       for (const child of this._children || []) child.hass = hass;
-      this._update();
+      if (statesChanged(this, hass, Object.values(this._config.entities || {}))) this._update();
     }
 
     getCardSize() {
@@ -784,6 +813,7 @@
       const list = this._root.querySelector(".routines");
       this._blocks = new Map();
       this._children = [];
+      const render = (this._rendering = {});
       for (const r of this._config.routines) {
         const el = document.createElement("div");
         el.innerHTML = `
@@ -801,16 +831,18 @@
           saveLayout(this._hass, ROUTINES_KEY, { collapsed: this._collapsed });
           this._arrange();
         });
-        this._fill(el.querySelector(".body"), r.cards);
+        this._fill(render, el.querySelector(".body"), r.cards);
         this._blocks.set(r.id, el);
         list.appendChild(el);
       }
       this._arrange();
     }
 
-    // Home Assistant's own cards come from its card helpers, loaded on demand.
-    async _fill(body, cards) {
-      const helpers = await window.loadCardHelpers();
+    // Fills a block once the card helpers have loaded, unless the card has
+    // been rendered again in the meantime.
+    async _fill(render, body, cards) {
+      const helpers = await loadCardHelpers();
+      if (render !== this._rendering) return;
       for (const config of cards) {
         const card = helpers.createCardElement(config);
         if (this._hass) card.hass = this._hass;
