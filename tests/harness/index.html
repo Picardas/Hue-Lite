@@ -65,7 +65,10 @@
       { entity_id: "switch.hue_lite_lights_off_when_everyone_leaves", state: "off", attributes: {} },
       {
         entity_id: "sensor.hue_lite_light_scenes", state: "4",
-        attributes: { scenes: { "light.office": "natural", "light.lamp": "natural", "light.living_room": "relax", "light.kitchen": "relax" } },
+        attributes: {
+          scenes: { "light.office": "natural", "light.lamp": "natural", "light.living_room": "relax", "light.kitchen": "relax" },
+          auto: ["light.living_room"],
+        },
       },
     ].map((s) => [s.entity_id, s]));
 

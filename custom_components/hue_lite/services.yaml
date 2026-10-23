@@ -29,3 +29,14 @@ next_scene:
   target:
     entity:
       domain: light
+
+set_auto:
+  target:
+    entity:
+      domain: light
+  fields:
+    auto:
+      required: true
+      default: true
+      selector:
+        boolean:

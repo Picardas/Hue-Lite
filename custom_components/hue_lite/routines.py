@@ -73,14 +73,31 @@ class Routines:
             self._start_evening()
 
     @callback
+    def auto_changed(self, lights: list[str], auto: bool) -> None:
+        """Lights put on Auto during the evening join the routine at once:
+        those that are on take its light, those that are off pick it up when
+        they're turned on. Lights taken off Auto are let go by a routine that
+        only had them through Auto; ones with its label stay."""
+        lite = self.lite
+        if auto:
+            if lite.settings["evening_routine_enabled"] and lite.evening.phase in EVENING_PHASES:
+                lite.set_scene(lights, ROUTINE)
+                if on := lite.on(lights):
+                    lite.spawn(lite.apply(ROUTINE, on, 2))
+            return
+        for scene, role in ((ROUTINE, "evening"), (WAKE_UP, "wake_up")):
+            labelled = set(lite.labelled(role))
+            lite.set_scene([light for light in lights if lite.scenes.get(light) == scene and light not in labelled], "")
+
+    @callback
     def _start_evening(self) -> None:
-        """The routine takes the Evening lights and turns them on at its
-        current light, if it's on and someone's home."""
+        """The routine takes its lights (Evening-labelled and on Auto) and
+        turns them on at its current light, if it's on and someone's home."""
         lite = self.lite
         if not lite.settings["evening_routine_enabled"] or not _people(lite.hass.states.get(lite.presence)):
             return
         lite.followed[ROUTINE] = lite.evening
-        if lights := lite.labelled("evening"):
+        if lights := lite.routine_lights("evening"):
             lite.set_scene(lights, ROUTINE)
             lite.spawn(lite.apply(ROUTINE, lights, 5))
 
@@ -126,7 +143,7 @@ class Routines:
 
     @callback
     def _start_wake_up(self) -> None:
-        lights = self.lite.labelled("wake_up")
+        lights = self.lite.routine_lights("wake_up")
         if lights and not self.lite.on(lights):
             self.lite.spawn(self._wake_up(lights))
 

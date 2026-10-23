@@ -1,5 +1,5 @@
-"""Hue-Lite's actions: a preset, the Natural light scene, and the next scene
-(a Hue dimmer's On button). Each takes a light target; none means every light."""
+"""Hue-Lite's actions: a preset, the Natural light scene, the next scene (a Hue
+dimmer's On button) and Auto. Each takes a light target; none means every light."""
 
 from __future__ import annotations
 
@@ -57,6 +57,10 @@ def async_register(hass: HomeAssistant) -> None:
         running = hue_lite()
         await running.async_next_scene(await lights(running, call), parent=call.context)
 
+    async def set_auto(call: ServiceCall) -> None:
+        running = hue_lite()
+        running.async_set_auto(await lights(running, call), call.data["auto"])
+
     hass.services.async_register(
         DOMAIN, "apply_preset", apply_preset, vol.Schema({vol.Required("preset"): vol.In(list(PRESETS)), **TARGET})
     )
@@ -64,3 +68,4 @@ def async_register(hass: HomeAssistant) -> None:
         DOMAIN, "natural_light", natural_light, vol.Schema({vol.Optional("follow", default=True): cv.boolean, **TARGET})
     )
     hass.services.async_register(DOMAIN, "next_scene", next_scene, vol.Schema(TARGET))
+    hass.services.async_register(DOMAIN, "set_auto", set_auto, vol.Schema({vol.Required("auto"): cv.boolean, **TARGET}))

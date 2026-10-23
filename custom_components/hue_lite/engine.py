@@ -97,6 +97,9 @@ class HueLite:
         self.settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
         # Light -> the scene it's in: NATURAL, ROUTINE, WAKE_UP or a preset id.
         self.scenes: dict[str, str] = {}
+        # Lights on Auto: the routines take them as if they had the routines'
+        # labels (see async_set_auto).
+        self.auto: set[str] = set()
         # Hue-Lite's entity ids by key, for the dashboard (filled in as they're added).
         self.entity_ids: dict[str, str] = {}
         self.device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name=NAME, entry_type=DeviceEntryType.SERVICE)
@@ -139,6 +142,7 @@ class HueLite:
             for light, scene in data.get("scenes", {}).items()
             if isinstance(scene, str) and not self.excluded(light) and not (routine_over and scene == ROUTINE)
         }
+        self.auto = {light for light in data.get("auto", []) if isinstance(light, str) and not self.excluded(light)}
 
     @callback
     def async_start(self) -> None:
@@ -175,6 +179,7 @@ class HueLite:
         return {
             "settings": self.settings,
             "scenes": dict(sorted(self.scenes.items())),
+            "auto": sorted(self.auto),
             "last_wake_up": self.last_wake_up.isoformat() if self.last_wake_up else None,
         }
 
@@ -243,6 +248,34 @@ class HueLite:
     def labelled(self, role: str) -> list[str]:
         """The lights with a role's label (Evening, Wake up, ...)."""
         return self.lights({ATTR_LABEL_ID: [self.labels[role]]})
+
+    def routine_lights(self, role: str) -> list[str]:
+        """The lights a routine ("evening" or "wake_up") takes: those with its
+        label, and those on Auto."""
+        return self.lights({ATTR_LABEL_ID: [self.labels[role]], ATTR_ENTITY_ID: sorted(self.auto)})
+
+    @callback
+    def async_set_auto(self, lights: list[str], auto: bool) -> None:
+        """Put lights on Auto, or take them off it. On Auto, a light does what
+        the routines ask whether or not it has their labels; off Auto, the
+        routines behave exactly as before (a labelled light is still taken)."""
+        lights = [light for light in lights if not self.excluded(light)]
+        before = len(self.auto)
+        if auto:
+            self.auto.update(lights)
+        else:
+            self.auto.difference_update(lights)
+        if len(self.auto) != before:
+            self.save()
+            self._notify()
+            self.routines.auto_changed(lights, auto)
+
+    @callback
+    def _drop_auto(self, lights: list[str]) -> None:
+        if self.auto.intersection(lights):
+            self.auto.difference_update(lights)
+            self.save()
+            self._notify()
 
     def excluded(self, entity_id: str) -> bool:
         return excluded(self.hass, entity_id, self.labels["exclude"])
@@ -428,18 +461,23 @@ class HueLite:
 
     @callback
     def _entity_registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
-        """A light keeps its scene when its entity id changes; one that's
-        deleted, excluded or hidden is let go."""
+        """A light keeps its scene and Auto when its entity id changes; one
+        that's deleted, excluded or hidden is let go."""
         data = event.data
         light = data["entity_id"]
         if not light.startswith(f"{LIGHT}."):
             return
         if data["action"] == "remove":
             self.set_scene([light], "")
+            self._drop_auto([light])
         elif data["action"] == "update":
-            if (old := data.get("old_entity_id")) and (scene := self.scenes.get(old)):
-                self.set_scene([old], "")
-                self.set_scene([light], scene)
+            if old := data.get("old_entity_id"):
+                if scene := self.scenes.get(old):
+                    self.set_scene([old], "")
+                    self.set_scene([light], scene)
+                if old in self.auto:
+                    self.auto.add(light)
+                    self._drop_auto([old])
             self._release_excluded()
 
     @callback
@@ -447,6 +485,7 @@ class HueLite:
         """Let go of lights that are now excluded (by their own, their
         device's or their area's label, or hidden)."""
         self.set_scene([light for light in self.scenes if self.excluded(light)], "")
+        self._drop_auto([light for light in self.auto if self.excluded(light)])
 
     # ---- Timelines -----------------------------------------------------------
 

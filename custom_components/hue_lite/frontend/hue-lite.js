@@ -68,8 +68,10 @@
 
   // ---- Card builders -------------------------------------------------------
 
-  function lightBar(entities, extra = {}) {
-    return { type: "custom:hue-lite-light-bar", entities, ...extra };
+  // A light bar, with an Auto button (Hue-Lite's scenes sensor says which
+  // lights are on Auto).
+  function lightBar(setup, entities, extra = {}) {
+    return { type: "custom:hue-lite-light-bar", entities, scenes_entity: setup.entities.light_scenes, ...extra };
   }
 
   // The scenes, two per row: Natural light first, then the presets. `target`
@@ -92,8 +94,8 @@
       icon,
       lights,
       cards: [
-        ...(lights.length > 1 ? [lightBar(lights, { name: "All lights" })] : []),
-        ...(eachLight || lights.length === 1 ? lights.map((l) => lightBar([l])) : []),
+        ...(lights.length > 1 ? [lightBar(setup, lights, { name: "All lights" })] : []),
+        ...(eachLight || lights.length === 1 ? lights.map((l) => lightBar(setup, [l])) : []),
         ...sceneTiles(setup, lights, target),
       ],
     };
@@ -361,7 +363,9 @@
 
   // One bar for a single light or a set ("All lights"): tap to toggle, slide to
   // dim, hold a single light to open Home Assistant's light dialog (colour
-  // wheel, colour temperature).
+  // wheel, colour temperature). With `scenes_entity`, an Auto button at the end
+  // puts the lights on Auto (following the routines) or takes them off it; on a
+  // set it shows when only some are on Auto, and a tap sets them all.
   class HueLiteLightBar extends HueLiteCard {
     getCardSize() {
       return 2;
@@ -376,8 +380,18 @@
       return this._config.entities.length === 1;
     }
 
+    _watching() {
+      return this._config.scenes_entity ? [...this._config.entities, this._config.scenes_entity] : this._config.entities;
+    }
+
     _call(service, data, entities = this._config.entities) {
       this._hass.callService("light", service, data, { entity_id: entities });
+    }
+
+    // How many of the bar's lights are on Auto.
+    _onAuto() {
+      const auto = this._hass?.states[this._config.scenes_entity]?.attributes.auto || [];
+      return this._config.entities.filter((id) => auto.includes(id)).length;
     }
 
     _render() {
@@ -406,16 +420,29 @@
           input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -4px; border-radius: 50%;
             background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
           input::-moz-range-thumb { width: 20px; height: 20px; border: none; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+          .auto { cursor: pointer; --mdc-icon-size: 22px; }
+          .auto.some { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1); color: var(--primary-color); }
+          .auto.all { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.25); color: var(--primary-color); }
         </style>
         <ha-card role="button" tabindex="0">
           <div class="circle light"><ha-icon></ha-icon></div>
           <div class="text"><div class="name"></div><div class="state"></div></div>
           <input type="range" min="1" max="100" step="1">
+          ${this._config.scenes_entity ? `<div class="circle auto" role="button" tabindex="0"><ha-icon icon="mdi:brightness-auto"></ha-icon></div>` : ""}
         </ha-card>`;
 
       const $ = (sel) => this._root.querySelector(sel);
-      this._el = { card: $("ha-card"), icon: $(".light ha-icon"), name: $(".name"), state: $(".state"), slider: $("input") };
-      const { card, slider } = this._el;
+      this._el = { card: $("ha-card"), icon: $(".light ha-icon"), name: $(".name"), state: $(".state"), slider: $("input"), auto: $(".auto") };
+      const { card, slider, auto } = this._el;
+
+      // Auto: on for all the bar's lights unless they're all on it already.
+      if (auto) {
+        auto.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+        onActivate(auto, () => {
+          const all = this._onAuto() === this._config.entities.length;
+          this._hass.callService(DOMAIN, "set_auto", { auto: !all }, { entity_id: this._config.entities });
+        });
+      }
 
       // Tap toggles; holding a single light opens its dialog instead.
       const wasHold = onHold(card, () => {
@@ -466,6 +493,16 @@
       if (this._root.activeElement !== slider) {
         slider.value = on.length ? pct : 1;
         slider.style.setProperty("--pct", on.length ? `${pct}%` : "0%");
+      }
+
+      if (this._el.auto) {
+        const onAuto = this._onAuto();
+        const all = onAuto === states.length && onAuto > 0;
+        this._el.auto.classList.toggle("all", all);
+        this._el.auto.classList.toggle("some", onAuto > 0 && !all);
+        this._el.auto.setAttribute("aria-pressed", all ? "true" : onAuto ? "mixed" : "false");
+        this._el.auto.title = (all ? "On Auto" : onAuto ? `${onAuto} of ${states.length} on Auto` : "Not on Auto")
+          + ": following wake up and the evening routine. Tap to " + (all ? "stop." : "start.");
       }
     }
   }

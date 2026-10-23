@@ -82,10 +82,11 @@ class EveningRoutineSensor(_TimelineSensor):
 
 class LightScenesSensor(_EngineSensor):
     """How many lights are in a scene; `scenes` says which scene each is in
-    (natural, routine or a preset id), for the dashboard's highlights."""
+    (natural, routine, wake_up or a preset id) and `auto` lists the lights on
+    Auto, for the dashboard's highlights and Auto buttons."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _unrecorded_attributes = frozenset({"scenes"})
+    _unrecorded_attributes = frozenset({"scenes", "auto"})
 
     @property
     def native_value(self) -> int:
@@ -93,4 +94,4 @@ class LightScenesSensor(_EngineSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"scenes": dict(sorted(self.hue_lite.scenes.items()))}
+        return {"scenes": dict(sorted(self.hue_lite.scenes.items())), "auto": sorted(self.hue_lite.auto)}

@@ -66,6 +66,10 @@ six scenes, and the routines with their settings.
 - **Coming & going:** the Coming home lights come on in Natural light when
   someone arrives (optionally only after dark), and every light can go off
   when everyone has left.
+- **Auto:** the button at the end of each light's bar (and a room's or the
+  whole home's All lights bar) puts lights on Auto. On Auto, a light follows
+  wake up and the evening routine whether or not it has their labels. Off
+  Auto, labelled lights still follow their routines.
 - **Hue dimmers** (RWL02x on ZHA) control their area: On steps through the
   scenes, Off turns the lights off, Up and Down dim.
 

@@ -97,7 +97,8 @@
       "light_scenes": {
         "name": "Light scenes",
         "state_attributes": {
-          "scenes": { "name": "Scenes" }
+          "scenes": { "name": "Scenes" },
+          "auto": { "name": "On Auto" }
         }
       }
     },
@@ -146,6 +147,13 @@
     "next_scene": {
       "name": "Next scene",
       "description": "Moves lights to the next scene, like pressing a Hue dimmer's On button again: Natural light, Energize, Cool bright, Relax, Rest, Nightlight, and round. Lights that are off come on in Natural light."
+    },
+    "set_auto": {
+      "name": "Set Auto",
+      "description": "Puts lights on Auto, or takes them off it. On Auto, a light does what the routines ask (wake up, the evening routine) whether or not it has their labels; off Auto, labelled lights still follow their routines. With no target, every light.",
+      "fields": {
+        "auto": { "name": "Auto", "description": "On to follow the routines, off to stop following them through Auto." }
+      }
     }
   },
   "exceptions": {
