@@ -133,6 +133,7 @@ async def test_dashboard_script_and_config(hass: HomeAssistant, home: Home, entr
     # Each preset's and colour scene's colours as a colour bulb reports them.
     assert config["presets"]["relax"] == {"rgb_colors": [[255, 189, 86]]}
     assert len(config["presets"]["nebula"]["rgb_colors"]) == 5
+    assert config["presets"]["aurora"]["rgb_colors"][0] == [20, 255, 126]
 
     # The script is on every page (versioned by content) while Hue-Lite is set up.
     scripts = hass.data[DATA_EXTRA_MODULE_URL]

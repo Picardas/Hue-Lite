@@ -17,6 +17,7 @@ apply_preset:
             - nightlight
             - golden_hour
             - nebula
+            - aurora
 
 natural_light:
   target:

@@ -68,7 +68,8 @@ class Palette:
 
 # Hue-Lite's colour scenes, from colours in Hue's scene library: Golden hour's
 # from Savanna sunset, Golden pond and Amber bloom; Nebula's from Nebula,
-# Tropical twilight and Moonlight.
+# Tropical twilight and Moonlight; Aurora's greens from Arctic aurora, Blue
+# Planet and Forest adventure.
 PALETTES: dict[str, Palette] = {
     "golden_hour": Palette(
         70,
@@ -79,6 +80,11 @@ PALETTES: dict[str, Palette] = {
         20,
         ((0.1911, 0.0673), (0.2712, 0.1723), (0.2412, 0.1171), (0.3161, 0.2306), (0.1725, 0.1532)),
         Light(15, (0.561, 0.4042), 2000),
+    ),
+    "aurora": Palette(
+        50,
+        ((0.1672, 0.593), (0.2072, 0.4525), (0.1868, 0.3328), (0.3095, 0.5913), (0.1915, 0.3638)),
+        Light(50, (0.3812, 0.3794), 4000),
     ),
 }
 

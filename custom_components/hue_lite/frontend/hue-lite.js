@@ -27,7 +27,7 @@
   const PENDING_MS = 5000;
   // The scenes' names and icons (their colours come from Hue-Lite): the
   // presets, then Natural light and the colour scenes, which change over time.
-  const NATURAL = { id: "natural", name: "Natural", icon: "mdi:theme-light-dark" };
+  const NATURAL = { id: "natural", name: "Natural", long: "Natural light", icon: "mdi:theme-light-dark" };
   const PRESETS = [
     { id: "energize", name: "Energize", icon: "mdi:lightning-bolt" },
     { id: "cool_bright", name: "Cool bright", icon: "mdi:white-balance-sunny" },
@@ -39,6 +39,7 @@
   const COLOUR_SCENES = [
     { id: "golden_hour", name: "Golden hour", icon: "mdi:weather-sunset" },
     { id: "nebula", name: "Nebula", icon: "mdi:creation" },
+    { id: "aurora", name: "Aurora", icon: "mdi:aurora" },
   ];
 
   // ---- Registry helpers ----------------------------------------------------
@@ -84,8 +85,8 @@
     return { type: "custom:hue-lite-light-bar", entities, scenes_entity: setup.entities.light_scenes, ...extra };
   }
 
-  // The scenes, three per row: the presets, then Natural light (coloured as
-  // it is now) and the colour scenes (the others are coloured by their
+  // The scenes: Natural light across the top (coloured as it is now), then
+  // three per row, the presets and the colour scenes (coloured by their
   // lights). `target` is the action target: {area_id}, {label_id},
   // {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
@@ -95,8 +96,8 @@
     });
     const preset = (p) => tile({ preset: p.id, light: setup.presets?.[p.id] });
     return [
+      tile({ natural: true, natural_entity: setup.entities.natural_light, wide: true, grid_options: { columns: 12, rows: 1 } }),
       ...PRESETS.map(preset),
-      tile({ natural: true, natural_entity: setup.entities.natural_light }),
       ...COLOUR_SCENES.map(preset),
     ];
   }
@@ -192,13 +193,6 @@
             whenOn(e.evening_weekends, { entity: e.bedtime_weekend, name: "Bedtime" }),
           ],
         },
-        {
-          type: "heading",
-          heading: "Timings & fades",
-          heading_style: "subtitle",
-          icon: "mdi:tune-variant",
-          tap_action: { action: "navigate", navigation_path: `/${path}/settings` },
-        },
       ],
     }, {
       id: "coming_going",
@@ -217,7 +211,15 @@
         entities: [{ entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" }],
       }],
     }];
-    sections.push({ type: "grid", column_span: 3, cards: [{ type: "custom:hue-lite-routines", routines, entities: e }] });
+    // Wake up's and the evening's timings, at the end of them all.
+    const footer = [{
+      type: "heading",
+      heading: "Timings & fades",
+      heading_style: "subtitle",
+      icon: "mdi:tune-variant",
+      tap_action: { action: "navigate", navigation_path: `/${path}/settings` },
+    }];
+    sections.push({ type: "grid", column_span: 3, cards: [{ type: "custom:hue-lite-routines", routines, footer, entities: e }] });
 
     return { title: "Lights", path: "lights", icon: "mdi:lightbulb-group", type: "sections", max_columns: 3, sections };
   }
@@ -225,15 +227,19 @@
   function howItWorks(setup) {
     const label = (role) => setup.labels.find((l) => l.label_id === setup.roles[role])?.name || role;
     return [
-      `**Wake up**: lights labelled *${label("wake_up")}* fade from a dim warm glow to Energize, reaching full brightness *at* your wake-up time.`,
-      "",
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
-      "**Colour scenes**: Golden hour and Nebula spread their colours across a room's colour bulbs and drift slowly between them.",
+      "**Colour scenes**: Golden hour, Nebula and Aurora spread their colours across a room's colour bulbs and drift slowly between them, a step every three minutes.",
+      "",
+      "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you pick a scene for it or change it. Lights a routine has show as on Auto too.",
+      "",
+      `**Wake up**: on the days it's on (Mon–Fri and Sat & Sun each have a switch and a time), lights labelled *${label("wake_up")}* fade from a dim warm glow to Energize, reaching full brightness *at* your wake-up time.`,
       "",
       `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
       `**Coming home**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
+      "",
+      "**Hue dimmer switches** control the lights in their area: On steps through the scenes, Off turns them off, Up and Down dim them.",
       "",
       `**Adding a light**: give it an area, and the labels for the routines it should join (on the light, its device or its area). It appears here on the next reload. To keep a light out of all of this (e.g. one run by its own motion sensor), give it the *${label("exclude")}* label.`,
     ].join("\n");
@@ -635,7 +641,8 @@
   // tinted with the scene's colours. Tap to put the lights in that scene.
   // Filled with them and ticked while every light that's on is in it and not
   // on Auto (which shows on the Auto button instead), and straight away when
-  // tapped, until the lights report it (or PENDING_MS passes).
+  // tapped, until the lights report it (or PENDING_MS passes). With `wide`
+  // it's a row across instead (swatch beside the name), as Natural light is.
   //   {natural: true, natural_entity, entities, target, scenes_entity}   Natural light
   //   {preset: id, light, entities, target, scenes_entity}               a preset or colour scene
   // Natural light's tile takes its colour and phase from `natural_entity`, as
@@ -651,11 +658,11 @@
     }
 
     getCardSize() {
-      return 2;
+      return this._config.wide ? 1 : 2;
     }
 
     getGridOptions() {
-      return { columns: 4, rows: 2, min_columns: 3 };
+      return this._config.wide ? { columns: "full", rows: 1 } : { columns: 4, rows: 2, min_columns: 3 };
     }
 
     _watching() {
@@ -689,10 +696,14 @@
           ha-card.on .circle { background: rgba(255, 255, 255, 0.3); }
           ha-card.on :is(.name, .now, .check) { color: var(--ink); }
           ha-card.on .check { display: block; }
+          ha-card.wide { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 0 14px; text-align: left; }
+          ha-card.wide .name { font-size: 14px; line-height: 20px; }
+          ha-card.wide .now { font-size: 12px; line-height: 16px; }
+          ha-card.wide .check { top: 50%; right: 14px; transform: translateY(-50%); --mdc-icon-size: 20px; }
         </style>
-        <ha-card role="button" tabindex="0">
+        <ha-card class="${this._config.wide ? "wide" : ""}" role="button" tabindex="0">
           <div class="circle"><ha-icon icon="${this._scene.icon}"></ha-icon></div>
-          <div class="text"><div class="name">${this._scene.name}</div><div class="now"></div></div>
+          <div class="text"><div class="name">${this._config.wide ? this._scene.long || this._scene.name : this._scene.name}</div><div class="now"></div></div>
           <ha-icon class="check" icon="mdi:check-circle"></ha-icon>
         </ha-card>`;
       this._card = this._root.querySelector("ha-card");
@@ -886,6 +897,7 @@
           .body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
           .cell > * { display: block; height: 100%; }
           .body > .cell.tile { height: 88px; }
+          .body > .cell.tile.wide { height: 56px; }
         </style>
         ${this._config.toolbar === false ? "" : `
         <div class="toolbar">
@@ -911,7 +923,7 @@
         const body = el.querySelector(".body");
         for (const cfg of r.cards) {
           const cell = document.createElement("div");
-          cell.className = `cell${cfg.type === "custom:hue-lite-scene-tile" ? " tile" : ""}`;
+          cell.className = `cell${cfg.type === "custom:hue-lite-scene-tile" ? " tile" : ""}${cfg.wide ? " wide" : ""}`;
           // Across the body's 12 columns: a tile is a third, a light bar the lot.
           cell.style.gridColumn = `span ${cfg.grid_options?.columns || 12}`;
           cell.appendChild(this._card(cfg));
@@ -989,8 +1001,9 @@
   // Wake up, Evening and Coming & going as blocks holding Home Assistant's own
   // cards (entities, tile, heading). The summary goes on its own line under
   // the title, so it isn't cut off on a phone. Tapping the "Routines"
-  // heading folds the whole card away.
-  //   {routines: [{id, name, icon, cards}], entities}
+  // heading folds the whole card away. `footer` cards (the Timings & fades
+  // link) come after the blocks.
+  //   {routines: [{id, name, icon, cards}], footer, entities}
   // `entities` are Hue-Lite's entity ids, for the summaries.
   const isOn = (hass, id) => hass.states[id]?.state === "on";
   const clock = (hass, id) => (hass.states[id]?.state || "").slice(0, 5);
@@ -1038,7 +1051,8 @@
           h2 { margin: 0; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
           .card-head .chev { --mdc-icon-size: 20px; }
           .folded .card-head .chev { transform: rotate(-90deg); }
-          .folded .blocks { display: none; }
+          .folded :is(.blocks, .footer) { display: none; }
+          .footer:not(:empty) { margin-top: 8px; }
           .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
                   color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; border-radius: 8px; }
           .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); flex: none; }
@@ -1054,6 +1068,7 @@
             <h2>Routines</h2><ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
           </div>
           <div class="blocks"></div>
+          <div class="footer"></div>
         </div>`;
       onActivate(this._root.querySelector(".card-head"), () => this._toggleCollapsed(ALL_ROUTINES));
       const list = this._root.querySelector(".blocks");
@@ -1063,6 +1078,7 @@
         this._fill(render, el.querySelector(".body"), r.cards);
         list.appendChild(el);
       }
+      this._fill(render, this._root.querySelector(".footer"), this._config.footer || []);
     }
 
     // A routine's heading: chevron, icon, title and summary; tapping it opens
