@@ -12,7 +12,8 @@
 //   custom:hue-lite-rooms       every room as a collapsible, reorderable block
 //   custom:hue-lite-routines    Wake up, Evening and Coming & going as collapsible blocks
 //
-// Layout: Whole home (fixed), then the rooms card with one block per area with
+// Layout: Whole home (fixed at the top, a block that collapses like a room),
+// then the rooms card with one block per area with
 // lights (ordered by floor unless you've reordered them) and one per label you
 // create yourself, then the routines card. The role labels drive the routines
 // and don't get blocks of their own.
@@ -81,9 +82,10 @@
     return [tile({ natural: true }), ...PRESETS.map((p) => tile({ preset: p.id }))];
   }
 
-  // A room (or label group) for the rooms card, with an "All lights" bar when
-  // it has several lights.
-  function room(setup, id, name, icon, lights, target) {
+  // A room (or label group, or the whole home) for the rooms card: an "All
+  // lights" bar when it has several lights, a bar per light unless `eachLight`
+  // is false, and the scenes.
+  function room(setup, id, name, icon, lights, target, eachLight = true) {
     return {
       id,
       name,
@@ -91,7 +93,7 @@
       lights,
       cards: [
         ...(lights.length > 1 ? [lightBar(lights, { name: "All lights" })] : []),
-        ...lights.map((l) => lightBar([l])),
+        ...(eachLight || lights.length === 1 ? lights.map((l) => lightBar([l])) : []),
         ...sceneTiles(setup, lights, target),
       ],
     };
@@ -109,14 +111,17 @@
     const lights = allLights(hass, setup.roles.exclude);
     const ids = (entries) => entries.map((x) => x.entity_id).sort(byName(hass));
     const everything = ids(lights);
-    const sections = [{
+    // Whole home stays put at the top: a single collapsible block, like a
+    // room, with its own saved state and no Rooms toolbar.
+    const sections = everything.length ? [{
       type: "grid",
-      cards: [
-        { type: "heading", heading: "Whole home", icon: "mdi:home" },
-        lightBar(everything, { name: "All lights" }),
-        ...sceneTiles(setup, everything, {}),
-      ],
-    }];
+      cards: [{
+        type: "custom:hue-lite-rooms",
+        rooms: [room(setup, "home", "Whole home", "mdi:home", everything, {}, false)],
+        toolbar: false,
+        layout_key: "hue_lite_home",
+      }],
+    }] : [];
 
     // Rooms (and your own labels) go in one collapsible, reorderable card;
     // Whole home above stays put.
@@ -567,7 +572,8 @@
 
   // A card of collapsible blocks: tap a heading to fold its block away (the
   // heading still shows a summary). Which blocks are collapsed is saved per
-  // user under `layoutKey`. Subclasses render the blocks and their summaries.
+  // user under the card's `layout_key`, or the class's `layoutKey`.
+  // Subclasses render the blocks and their summaries.
   class CollapsibleBlocks extends HTMLElement {
     setConfig(config) {
       this._validate(config);
@@ -594,15 +600,19 @@
       return { columns: "full", rows: "auto" };
     }
 
+    get _layoutKey() {
+      return this._config.layout_key || this.constructor.layoutKey;
+    }
+
     async _load() {
       this._loaded = true;
-      const saved = await loadLayout(this._hass, this.constructor.layoutKey);
+      const saved = await loadLayout(this._hass, this._layoutKey);
       this._layout = { order: saved.order || [], collapsed: saved.collapsed || [] };
       this._arrange();
     }
 
     _save() {
-      saveLayout(this._hass, this.constructor.layoutKey, this._layout);
+      saveLayout(this._hass, this._layoutKey, this._layout);
     }
 
     // A block: heading (chevron, icon, title, summary, then `extra` controls)
@@ -654,7 +664,9 @@
 
   // Every room (and label group) as a block with its light bars and scenes.
   // Collapsed, it still says how many lights are on, with a power button.
-  // Reorder moves rooms up or down; new rooms join at the end.
+  // Reorder moves rooms up or down; new rooms join at the end. With
+  // `toolbar: false` there's no Rooms heading, Collapse all or Reorder (the
+  // Whole home block uses that, with a `layout_key` of its own).
   class HueLiteRooms extends CollapsibleBlocks {
     static layoutKey = "hue_lite_rooms";
 
@@ -699,11 +711,12 @@
           .body > .cell.half { grid-column: span 6; }
           .body > .cell.tile { height: 56px; }
         </style>
+        ${this._config.toolbar === false ? "" : `
         <div class="toolbar">
           <h2>Rooms</h2>
           <button class="fold" title="Collapse or expand every room"><ha-icon icon="mdi:unfold-less-horizontal"></ha-icon><span>Collapse all</span></button>
           <button class="reorder" title="Move rooms up or down"><ha-icon icon="mdi:swap-vertical"></ha-icon><span>Reorder</span></button>
-        </div>
+        </div>`}
         <div class="blocks"></div>`;
 
       const list = this._root.querySelector(".blocks");
@@ -734,6 +747,7 @@
         list.appendChild(el);
       }
 
+      if (this._config.toolbar === false) return;
       onActivate(this._root.querySelector(".fold"), () => {
         const ids = this._config.rooms.map((r) => r.id);
         const allCollapsed = ids.every((id) => this._layout.collapsed.includes(id));
@@ -770,12 +784,14 @@
       });
       list.classList.toggle("reordering", this._reordering);
       const reorder = this._root.querySelector(".reorder");
-      reorder.classList.toggle("active", this._reordering);
-      reorder.querySelector("span").textContent = this._reordering ? "Done" : "Reorder";
-      const allCollapsed = order.every((id) => this._layout.collapsed.includes(id));
       const fold = this._root.querySelector(".fold");
-      fold.querySelector("span").textContent = allCollapsed ? "Expand all" : "Collapse all";
-      fold.querySelector("ha-icon").setAttribute("icon", allCollapsed ? "mdi:unfold-more-horizontal" : "mdi:unfold-less-horizontal");
+      if (reorder && fold) {
+        reorder.classList.toggle("active", this._reordering);
+        reorder.querySelector("span").textContent = this._reordering ? "Done" : "Reorder";
+        const allCollapsed = order.every((id) => this._layout.collapsed.includes(id));
+        fold.querySelector("span").textContent = allCollapsed ? "Expand all" : "Collapse all";
+        fold.querySelector("ha-icon").setAttribute("icon", allCollapsed ? "mdi:unfold-more-horizontal" : "mdi:unfold-less-horizontal");
+      }
       super._arrange();
     }
 

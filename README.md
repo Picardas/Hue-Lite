@@ -45,9 +45,9 @@ strategy:
   type: custom:hue-lite
 ```
 
-It builds itself from your areas and labels on every load: the whole home,
-each room (collapsible and reorderable) with a bar per light and the six
-scenes, and the routines with their settings.
+It builds itself from your areas and labels on every load: the whole home and
+each room (collapsible, and the rooms reorderable) with their lights and the
+six scenes, and the routines with their settings.
 
 ## How it works
 
