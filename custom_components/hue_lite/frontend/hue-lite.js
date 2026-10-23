@@ -3,8 +3,8 @@
 // A dashboard strategy (`strategy: {type: custom:hue-lite}`) that builds the
 // Lights dashboard from the area and label registries every time it loads, so
 // new lights, rooms and labels appear without editing anything. The
-// integration tells it which labels drive the routines, the preset values and
-// its own entity ids (websocket `hue_lite/config`). Also defines three cards:
+// integration tells it which labels drive the routines and its own entity ids
+// (websocket `hue_lite/config`). Also defines three cards:
 //   custom:hue-lite-light-bar   a light, or "All lights": tap to toggle, slide
 //                               to dim, hold a single light for its colour dialog
 //   custom:hue-lite-scene-tile  a scene button (Natural or a preset) that lights
@@ -55,16 +55,6 @@
     return Object.values(hass.areas || {}).sort((a, b) => level(a) - level(b) || a.name.localeCompare(b.name));
   }
 
-  // Does a light's current colour and brightness match a preset's values?
-  // (Same rule as the integration's scene cycling.)
-  function matchesPreset(state, preset) {
-    const a = state.attributes;
-    const xy = a.xy_color;
-    return Boolean(preset) && typeof a.brightness === "number" && a.color_mode === "xy" && Array.isArray(xy) &&
-      Math.abs((a.brightness / 255) * 100 - preset.brightness_pct) <= 3 &&
-      Math.abs(xy[0] - preset.xy_color[0]) < 0.03 && Math.abs(xy[1] - preset.xy_color[1]) < 0.03;
-  }
-
   // ---- Card builders -------------------------------------------------------
 
   function lightBar(entities, extra = {}) {
@@ -75,10 +65,10 @@
   // is the action target: {area_id}, {label_id}, {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
     const tile = (extra) => ({
-      type: "custom:hue-lite-scene-tile", entities: lights, target, natural_entity: setup.entities.natural_light,
+      type: "custom:hue-lite-scene-tile", entities: lights, target, scenes_entity: setup.entities.light_scenes,
       grid_options: { columns: 6, rows: 1 }, ...extra,
     });
-    return [tile({ natural: true }), ...PRESETS.map((p) => tile({ preset: p.id, values: setup.presets[p.id] }))];
+    return [tile({ natural: true }), ...PRESETS.map((p) => tile({ preset: p.id }))];
   }
 
   // A room (or label group) for the rooms card, with an "All lights" bar when
@@ -438,10 +428,9 @@
 
   // A scene button styled like a tile: tap to put the lights in that scene; lit
   // while every light that's on is in it.
-  //   {natural: true, entities, target, natural_entity}          the Natural light scene
-  //   {preset: id, values, entities, target, natural_entity}     a preset (recognised from
-  //                                                              the lights' colour and brightness)
-  // `natural_entity` lists the lights in Natural light (attribute `lights`);
+  //   {natural: true, entities, target, scenes_entity}   the Natural light scene
+  //   {preset: id, entities, target, scenes_entity}      a preset
+  // `scenes_entity` says which scene each light is in (attribute `scenes`);
   // `target` is passed to the actions: {area_id}, {label_id}, {entity_id} or {} for all.
   class HueLiteSceneTile extends HueLiteCard {
     setConfig(config) {
@@ -460,9 +449,9 @@
 
     _selected() {
       const on = this._states().filter((s) => s.state === "on");
-      const natural = this._hass.states[this._config.natural_entity]?.attributes.lights || [];
-      if (this._config.natural) return on.length > 0 && on.every((s) => natural.includes(s.entity_id));
-      return on.length > 0 && on.every((s) => !natural.includes(s.entity_id) && matchesPreset(s, this._config.values));
+      const scenes = this._hass.states[this._config.scenes_entity]?.attributes.scenes || {};
+      const scene = this._config.natural ? "natural" : this._config.preset;
+      return on.length > 0 && on.every((s) => scenes[s.entity_id] === scene);
     }
 
     _render() {

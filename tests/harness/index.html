@@ -54,7 +54,10 @@
       light("light.garden", "Garden", "on"),
       light("light.cupboard", "Cupboard", "off"),
       light("light.all", "All", "on", { entity_id: ["light.living_room", "light.kitchen"] }),
-      { entity_id: "sensor.hue_lite_natural_light", state: "day", attributes: { lights: ["light.office", "light.lamp"] } },
+      {
+        entity_id: "sensor.hue_lite_light_scenes", state: "4",
+        attributes: { scenes: { "light.office": "natural", "light.lamp": "natural", "light.living_room": "relax", "light.kitchen": "relax" } },
+      },
     ].map((s) => [s.entity_id, s]));
 
     const entities = {
@@ -76,14 +79,8 @@
         { label_id: "lamps", name: "Lamps", icon: "mdi:lamp" },
         { label_id: "empty", name: "Nothing here", icon: null },
       ],
-      presets: {
-        energize: { brightness_pct: 100, xy_color: [0.3143, 0.3301] },
-        cool_bright: { brightness_pct: 100, xy_color: [0.3812, 0.3794] },
-        relax: { brightness_pct: 56, xy_color: [0.5019, 0.4152] },
-        rest: { brightness_pct: 35, xy_color: [0.561, 0.4042] },
-        nightlight: { brightness_pct: 1, xy_color: [0.67, 0.32] },
-      },
       entities: {
+        light_scenes: "sensor.hue_lite_light_scenes",
         natural_light: "sensor.hue_lite_natural_light",
         evening_routine: "sensor.hue_lite_evening_routine",
         evening_routine_enabled: "switch.hue_lite_evening_routine",

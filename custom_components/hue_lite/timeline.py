@@ -6,7 +6,6 @@ be tested on their own. Times of day are minutes after midnight.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -14,29 +13,41 @@ from typing import Any
 
 @dataclass(frozen=True)
 class Light:
-    """A colour and brightness, as light.turn_on takes them."""
+    """A brightness, with an xy colour for colour bulbs and a colour
+    temperature for white ones."""
 
     brightness_pct: float
     xy_color: tuple[float, float]
+    kelvin: float
 
     def rounded(self) -> Light:
-        return Light(round(self.brightness_pct), (round(self.xy_color[0], 4), round(self.xy_color[1], 4)))
+        return Light(
+            round(self.brightness_pct), (round(self.xy_color[0], 4), round(self.xy_color[1], 4)), round(self.kelvin)
+        )
 
-    def service_data(self) -> dict[str, Any]:
+    def colour_data(self) -> dict[str, Any]:
+        """light.turn_on data for bulbs with colour."""
         return {"brightness_pct": self.brightness_pct, "xy_color": list(self.xy_color)}
+
+    def white_data(self) -> dict[str, Any]:
+        """light.turn_on data for the rest (Home Assistant drops the colour
+        temperature for dimmable-only bulbs)."""
+        return {"brightness_pct": self.brightness_pct, "color_temp_kelvin": self.kelvin}
 
 
 # The values the Hue app uses on colour bulbs, as xy colours (which is how Hue
 # gets e.g. Energize's blue tinge), from Hue's scene library:
 # https://gist.github.com/Hypfer/a0a8b5b9429831a7306ec4300077eaaa
-# Nightlight is deliberately redder than Hue's (0.561, 0.4042). Home Assistant
-# converts xy to a colour temperature for white-only bulbs.
+# Nightlight is deliberately redder than Hue's (0.561, 0.4042). White bulbs get
+# a colour temperature instead (Energize and Relax as in Hue's white-ambiance
+# scenes, Rest and Nightlight at 2000 K, as warm as most bulbs go): converting
+# the xy colours would make Nightlight's deep red a cool 4100 K.
 PRESETS: dict[str, Light] = {
-    "energize": Light(100, (0.3143, 0.3301)),
-    "cool_bright": Light(100, (0.3812, 0.3794)),
-    "relax": Light(56, (0.5019, 0.4152)),
-    "rest": Light(35, (0.561, 0.4042)),
-    "nightlight": Light(1, (0.67, 0.32)),
+    "energize": Light(100, (0.3143, 0.3301), 6410),
+    "cool_bright": Light(100, (0.3812, 0.3794), 4000),
+    "relax": Light(56, (0.5019, 0.4152), 2237),
+    "rest": Light(35, (0.561, 0.4042), 2000),
+    "nightlight": Light(1, (0.67, 0.32), 2000),
 }
 
 # What a Hue dimmer's On button steps through, and round again.
@@ -49,6 +60,7 @@ def blend(a: Light, b: Light, f: float) -> Light:
     return Light(
         a.brightness_pct + (b.brightness_pct - a.brightness_pct) * f,
         (a.xy_color[0] + (b.xy_color[0] - a.xy_color[0]) * f, a.xy_color[1] + (b.xy_color[1] - a.xy_color[1]) * f),
+        a.kelvin + (b.kelvin - a.kelvin) * f,
     )
 
 
@@ -181,37 +193,11 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
     down = (m - wind_start) / span if span > 0 else (1 if m >= wind_start else 0)
     down = min(max(down, 0), 1)
     light = blend(p["cool_bright"], p["relax"], down * 2) if down <= 0.5 else blend(p["relax"], p["rest"], down * 2 - 1)
-    light = Light(min(ramp, light.brightness_pct), light.xy_color)
+    light = Light(min(ramp, light.brightness_pct), light.xy_color, light.kelvin)
     return Evening(phase, light.rounded(), hhmm(start), hhmm(bedtime))
 
 
-# ---- Recognising scenes ------------------------------------------------------
-
-
-def matches(attributes: Mapping[str, Any], preset: Light) -> bool:
-    """Whether a light is in a preset: xy colour mode, xy within 0.03 and
-    brightness within 3% (the same rule as the dashboard's highlights)."""
-    xy = attributes.get("xy_color")
-    brightness = (attributes.get("brightness") or 0) / 255 * 100
-    return (
-        attributes.get("color_mode") == "xy"
-        and xy is not None
-        and abs(xy[0] - preset.xy_color[0]) < 0.03
-        and abs(xy[1] - preset.xy_color[1]) < 0.03
-        and abs(brightness - preset.brightness_pct) <= 3
-    )
-
-
-def current_scene(on: Iterable[tuple[str, Mapping[str, Any]]], natural: Collection[str]) -> str:
-    """The scene the lights that are on (entity id, attributes) are in:
-    'natural' when every one is in the Natural light scene, a preset id when
-    every one matches it, '' when none are on or they're in something else."""
-    on = list(on)
-    if not on:
-        return ""
-    if all(entity_id in natural for entity_id, _ in on):
-        return "natural"
-    return next((name for name, preset in PRESETS.items() if all(matches(a, preset) for _, a in on)), "")
+# ---- Scene cycling -----------------------------------------------------------
 
 
 def next_scene(current: str) -> str:

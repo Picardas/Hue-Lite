@@ -11,8 +11,9 @@ of the routines it should join.
 
 ## Install
 
-Hue-Lite needs Home Assistant 2025.1 or later and colour lights (white-only
-bulbs get the nearest colour temperature).
+Hue-Lite needs Home Assistant 2025.1 or later. It works with colour bulbs,
+white-ambiance (tunable white) bulbs, which get a colour temperature for each
+scene, and dimmable-only bulbs, which get the brightness. Rooms can mix them.
 
 **With HACS:** HACS → ⋮ → Custom repositories → add this repository's URL as
 an *Integration* → download **Hue-Lite** → restart Home Assistant.
@@ -75,16 +76,25 @@ The cards can be used on other dashboards too: `custom:hue-lite-light-bar`,
 
 ## Scenes
 
-| Scene | Colour (xy) | Brightness |
-| ----- | ----------- | ---------- |
-| Natural light | follows the sun (below) | |
-| Energize | 0.3143, 0.3301 | 100% |
-| Cool bright | 0.3812, 0.3794 | 100% |
-| Relax | 0.5019, 0.4152 | 56% |
-| Rest | 0.561, 0.4042 | 35% |
-| Nightlight | 0.67, 0.32 | 1% |
+| Scene | Colour bulbs (xy) | White bulbs | Brightness |
+| ----- | ----------------- | ----------- | ---------- |
+| Natural light | follows the sun (below) | | |
+| Energize | 0.3143, 0.3301 | 6410 K | 100% |
+| Cool bright | 0.3812, 0.3794 | 4000 K | 100% |
+| Relax | 0.5019, 0.4152 | 2237 K | 56% |
+| Rest | 0.561, 0.4042 | 2000 K | 35% |
+| Nightlight | 0.67, 0.32 | 2000 K | 1% |
 
-The presets are Hue's colour-bulb values (Nightlight is redder than Hue's).
+The colours are Hue's colour-bulb values (Nightlight is redder than Hue's).
+White bulbs get their own colour temperatures rather than ones converted from
+the colours, which would make Nightlight a cool 4100 K. Blends (Natural light,
+the evening routine) blend both. Bulbs that go no warmer than e.g. 2200 K
+stop there.
+
+Hue-Lite remembers which scene each light is in rather than recognising it
+from its colour, so the dashboard highlights and the dimmer cycle work for
+every kind of bulb. `sensor.hue_lite_light_scenes` lists them (`scenes`).
+Changing a light by hand forgets its scene.
 
 **Natural light** follows the sun from your Home Assistant location:
 
@@ -158,7 +168,7 @@ automations:
 | `number.hue_lite_wake_up_fade_in` / `…_lights_off_after` (min) | 30 / 60 |
 | `number.hue_lite_bedtime_fade_out` (min) | 15 |
 | `number.hue_lite_evening_start_before_sunset` / `…_brighten_over` / `…_wind_down` / `…_nightlight_before_bed` (min) | 90 / 60 / 120 / 30 |
-| `sensor.hue_lite_natural_light`, `sensor.hue_lite_evening_routine` | |
+| `sensor.hue_lite_natural_light`, `sensor.hue_lite_evening_routine`, `sensor.hue_lite_light_scenes` | |
 
 Settings and which lights are in which scene survive restarts.
 
@@ -199,6 +209,8 @@ empty. What changed:
 - Wake up takes its lights out of Natural light and the evening routine, so
   neither moves them during the fade.
 - "Every light" leaves out light groups.
+- The scene a light is in is remembered instead of recognised from its
+  colour, and white bulbs get colour temperatures of their own.
 
 ## Development
 

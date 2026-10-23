@@ -30,7 +30,8 @@ async def test_entities(hass: HomeAssistant, hue_lite: HueLite) -> None:
     assert ids["evening_routine_enabled"] == "switch.hue_lite_evening_routine"
     assert ids["wake_up_weekday"] == "time.hue_lite_wake_up_mon_fri"
     assert ids["bedtime_fade_minutes"] == "number.hue_lite_bedtime_fade_out"
-    assert len(ids) == 2 + 7 + 4 + 7
+    assert ids["light_scenes"] == "sensor.hue_lite_light_scenes"
+    assert len(ids) == 3 + 7 + 4 + 7
 
     assert hass.states.get("switch.hue_lite_evening_routine").state == "on"
     assert hass.states.get("switch.hue_lite_lights_off_when_everyone_leaves").state == "off"
@@ -82,7 +83,7 @@ async def test_natural_light_and_leaving_it(hass: HomeAssistant, home: Home, hue
     assert lights_in(hass, "sensor.hue_lite_natural_light") == ["light.bedroom", "light.living_room"]
     assert hass.states.get("sensor.hue_lite_natural_light").state == "day"
     assert [call.data for call in home.turn_on] == [
-        {"entity_id": ["light.bedroom", "light.living_room"], **PRESETS["cool_bright"].service_data(), "transition": 2}
+        {"entity_id": ["light.bedroom", "light.living_room"], **PRESETS["cool_bright"].colour_data(), "transition": 2}
     ]
 
     # A preset takes the light out; follow off takes the rest out.
@@ -130,13 +131,40 @@ async def test_next_scene_cycles(hass: HomeAssistant, home: Home, hue_lite: HueL
     await press()
     assert lights_in(hass, "sensor.hue_lite_natural_light") == ["light.living_room"]
     hass.states.async_set("light.living_room", "on", {}, context=Context(id=hue_lite._ours[-1]))
-    # In Natural light: Energize next.
-    assert await press() == {"entity_id": ["light.living_room"], **PRESETS["energize"].service_data(), "transition": 0.4}
-    # Showing Relax: Rest next.
-    hass.states.async_set(
-        "light.living_room", "on", {"color_mode": "xy", "xy_color": (0.502, 0.415), "brightness": 143}
-    )
-    assert (await press())["brightness_pct"] == PRESETS["rest"].brightness_pct
+    # Then on through the presets, whatever the bulb reports.
+    assert await press() == {"entity_id": ["light.living_room"], **PRESETS["energize"].colour_data(), "transition": 0.4}
+    assert (await press())["xy_color"] == list(PRESETS["cool_bright"].xy_color)
+    assert hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"] == {"light.living_room": "cool_bright"}
+    # Changed by hand: back to Natural light.
+    hass.states.async_set("light.living_room", "on", {"brightness": 50}, context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    await press()
+    assert lights_in(hass, "sensor.hue_lite_natural_light") == ["light.living_room"]
+
+
+async def test_white_and_dimmable_bulbs(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """White-ambiance bulbs get a colour temperature, not a converted colour;
+    their scene is remembered, so they cycle and highlight like colour bulbs."""
+    hass.states.async_set("light.bedroom", "on", {"supported_color_modes": ["color_temp"]})
+    hass.states.async_set("light.living_room", "on", {"supported_color_modes": ["xy", "color_temp"]})
+    entry = er.async_get(hass).async_get_or_create("light", "test", "lamp", suggested_object_id="lamp")
+    er.async_get(hass).async_update_entity(entry.entity_id, area_id="bedroom")
+    hass.states.async_set("light.lamp", "on", {"supported_color_modes": ["brightness"]})
+
+    await hass.services.async_call(DOMAIN, "apply_preset", {"preset": "nightlight"}, blocking=True)
+    assert [call.data for call in home.turn_on] == [
+        {"entity_id": ["light.living_room"], "brightness_pct": 1, "xy_color": [0.67, 0.32], "transition": 0.4},
+        {"entity_id": ["light.bedroom", "light.lamp"], "brightness_pct": 1, "color_temp_kelvin": 2000, "transition": 0.4},
+    ]
+    assert hue_lite.current_scene(["light.bedroom", "light.lamp", "light.living_room"]) == "nightlight"
+
+    # The dimmer cycle carries on from there: Natural light next.
+    home.turn_on.clear()
+    await hass.services.async_call(DOMAIN, "next_scene", {"area_id": "bedroom"}, blocking=True)
+    assert lights_in(hass, "sensor.hue_lite_natural_light") == ["light.bedroom", "light.lamp"]
+    assert home.turn_on[-1].data == {
+        "entity_id": ["light.bedroom", "light.lamp"], **PRESETS["cool_bright"].white_data(), "transition": 2
+    }
 
 
 async def test_dashboard_script(hass: HomeAssistant, entry: MockConfigEntry, hue_lite: HueLite) -> None:
@@ -153,5 +181,4 @@ async def test_dashboard_config(hass: HomeAssistant, home: Home, hue_lite: HueLi
     config = connection.send_result.call_args.args[1]
     assert config["roles"] == home.labels
     assert {label["name"] for label in config["labels"]} >= {"Evening", "Exclude from lighting"}
-    assert config["presets"]["relax"] == RELAX
-    assert config["entities"]["evening_routine"] == "sensor.hue_lite_evening_routine"
+    assert config["entities"]["light_scenes"] == "sensor.hue_lite_light_scenes"

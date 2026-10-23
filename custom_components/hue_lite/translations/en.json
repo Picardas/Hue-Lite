@@ -91,6 +91,12 @@
           "bedtime": { "name": "Bedtime" },
           "summary": { "name": "Summary" }
         }
+      },
+      "light_scenes": {
+        "name": "Light scenes",
+        "state_attributes": {
+          "scenes": { "name": "Scenes" }
+        }
       }
     },
     "switch": {

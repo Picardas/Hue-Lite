@@ -116,7 +116,7 @@ async def test_wake_up(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home
     await tick(hass, freezer, "06:30")
     assert [call.data for call in home.turn_on] == [
         {"entity_id": ["light.bedroom"], "brightness": 1, "color_temp_kelvin": 2200},
-        {"entity_id": ["light.bedroom"], **PRESETS["energize"].service_data(), "transition": 30 * 60},
+        {"entity_id": ["light.bedroom"], **PRESETS["energize"].colour_data(), "transition": 30 * 60},
     ]
     # Out of Natural light, so it doesn't move the bedroom during the fade.
     assert natural(hass) == []

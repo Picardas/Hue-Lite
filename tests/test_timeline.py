@@ -1,4 +1,4 @@
-"""The timelines and scene recognition, which match the YAML setup's Jinja macros."""
+"""The timelines, which match the YAML setup's Jinja macros, and the presets."""
 
 from __future__ import annotations
 
@@ -11,9 +11,7 @@ from custom_components.hue_lite.timeline import (
     EveningSettings,
     Light,
     SunTimes,
-    current_scene,
     evening_routine,
-    matches,
     natural_light,
     next_scene,
 )
@@ -91,27 +89,15 @@ def test_evening_routine_weekend_bedtime_after_midnight() -> None:
     assert evening("2026-10-25T23:00")[::3] == ("night", "23:00")
 
 
-def state(xy: tuple[float, float], brightness_pct: float, color_mode: str = "xy") -> dict:
-    return {"color_mode": color_mode, "xy_color": xy, "brightness": round(brightness_pct * 2.55)}
+def test_white_bulbs_get_their_own_colour_temperature() -> None:
+    # Warm all the way down: converting Nightlight's red would give ~4100 K.
+    assert [p.kelvin for p in PRESETS.values()] == [6410, 4000, 2237, 2000, 2000]
+    assert PRESETS["nightlight"].white_data() == {"brightness_pct": 1, "color_temp_kelvin": 2000}
+    # Blends blend the colour temperature too: halfway through the morning.
+    assert natural_light(at("09:45"), SUN).light.kelvin == round((6410 + 4000) / 2)
 
 
-def test_matches() -> None:
-    relax = PRESETS["relax"]
-    assert matches(state((0.50, 0.42), 56), relax)
-    assert matches(state((0.52, 0.40), 58), relax)
-    assert not matches(state((0.54, 0.42), 56), relax)  # colour too far off
-    assert not matches(state((0.50, 0.42), 60), relax)  # brightness too far off
-    assert not matches(state((0.50, 0.42), 56, "color_temp"), relax)
-    assert not matches({"color_mode": "xy", "brightness": 143}, relax)
-
-
-def test_current_and_next_scene() -> None:
-    rest = state((0.561, 0.4042), 35)
-    assert current_scene([], set()) == ""
-    assert current_scene([("light.a", rest), ("light.b", rest)], {"light.a", "light.b"}) == "natural"
-    assert current_scene([("light.a", rest), ("light.b", rest)], {"light.a"}) == "rest"
-    assert current_scene([("light.a", rest), ("light.b", state((0.3, 0.3), 100))], set()) == ""
-
+def test_next_scene() -> None:
     assert next_scene("") == "natural"
     assert next_scene("natural") == "energize"
     assert next_scene("rest") == "nightlight"

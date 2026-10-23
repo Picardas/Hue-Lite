@@ -1,10 +1,12 @@
-"""Where the Natural light scene and the evening routine are, and their lights."""
+"""Where the Natural light scene and the evening routine are, their lights,
+and which scene each light is in."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -18,7 +20,13 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     hue_lite = entry.runtime_data
-    async_add_entities([NaturalLightSensor(hue_lite, "natural_light"), EveningRoutineSensor(hue_lite, "evening_routine")])
+    async_add_entities(
+        [
+            NaturalLightSensor(hue_lite, "natural_light"),
+            EveningRoutineSensor(hue_lite, "evening_routine"),
+            LightScenesSensor(hue_lite, "light_scenes"),
+        ]
+    )
 
 
 class _TimelineSensor(HueLiteEntity, SensorEntity):
@@ -42,8 +50,23 @@ class _TimelineSensor(HueLiteEntity, SensorEntity):
         return {
             "brightness_pct": light.brightness_pct,
             "xy_color": list(light.xy_color),
-            "lights": sorted(self.hue_lite.members[self._scene]),
+            "lights": self.hue_lite.in_scene(self._scene),
         }
+
+
+class LightScenesSensor(HueLiteEntity, SensorEntity):
+    """How many lights are in a scene; `scenes` says which scene each is in
+    (natural, routine or a preset id), for the dashboard's highlights."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> int:
+        return len(self.hue_lite.scenes)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"scenes": dict(sorted(self.hue_lite.scenes.items()))}
 
 
 class NaturalLightSensor(_TimelineSensor):

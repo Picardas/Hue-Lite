@@ -11,7 +11,8 @@
     },
     "sensor": {
       "natural_light": { "default": "mdi:theme-light-dark" },
-      "evening_routine": { "default": "mdi:weather-sunset" }
+      "evening_routine": { "default": "mdi:weather-sunset" },
+      "light_scenes": { "default": "mdi:palette-swatch-variant" }
     },
     "switch": {
       "evening_routine_enabled": { "default": "mdi:weather-sunset" },
