@@ -151,6 +151,10 @@ async def test_home_assistant_scenes_win(
     assert await async_setup_component(
         hass, "scene", {"scene": [{"name": "Movie", "entities": {"light.living_room": {"state": "on", "brightness": 50}}}]}
     )
+    # The scene entity is added after setup returns; wait for it, or the states
+    # written below would take scene.movie first (and the real one be _2).
+    await hass.async_block_till_done()
+    assert hass.states.get("scene.movie").attributes["friendly_name"] == "Movie"
     await action(hass, "natural_light")
     on(hass, hue_lite, "light.living_room", "light.bedroom")
 
