@@ -73,13 +73,14 @@ async def test_bad_or_stale_saved_data_is_dropped(
     stored(
         hass_storage,
         settings={"bedtime_weeknight": "25:99", "bedtime_fade_minutes": "lots", "wake_up_weekdays": True},
-        scenes={"light.bedroom": "relax", "light.garden": "natural", "light.broken": 3},
+        scenes={"light.bedroom": "relax", "light.living_room": "movie", "light.garden": "natural", "light.broken": 3},
     )
     hue_lite = await set_up(hass, entry)
     assert hue_lite.settings["bedtime_weeknight"] == "23:00"
     assert hue_lite.settings["bedtime_fade_minutes"] == 15
     assert hue_lite.settings["wake_up_weekdays"] is True
-    assert hue_lite.scenes == {"light.bedroom": "relax"}
+    # Movie is called Nebula now.
+    assert hue_lite.scenes == {"light.bedroom": "relax", "light.living_room": "nebula"}
 
 
 async def test_routine_lights_let_go_when_bedtime_passed_while_down(
@@ -112,7 +113,7 @@ async def test_dashboard_script_and_config(hass: HomeAssistant, home: Home, entr
     assert config["entities"]["light_scenes"] == "sensor.hue_lite_light_scenes"
     # Each preset's and colour scene's colours as a colour bulb reports them.
     assert config["presets"]["relax"] == {"rgb_colors": [[255, 189, 86]]}
-    assert len(config["presets"]["movie"]["rgb_colors"]) == 5
+    assert len(config["presets"]["nebula"]["rgb_colors"]) == 5
 
     # The script is on every page (versioned by content) while Hue-Lite is set up.
     scripts = hass.data[DATA_EXTRA_MODULE_URL]

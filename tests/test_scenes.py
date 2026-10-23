@@ -49,12 +49,14 @@ async def test_colour_scene(hass: HomeAssistant, freezer: FrozenDateTimeFactory,
     assert colour(moved[lamp]) == (colour(first[lamp]) + 1) % len(colours)
     assert moved[lamp]["transition"] == 180
 
-    # Turned off and on again, a bulb picks its colour up again.
+    # Switched off and on again, a bulb comes back in its colour and drifts on
+    # from there: nothing's sent (a second command would only queue up).
     home.turn_on.clear()
     hass.states.async_set(lamp, "off")
     hass.states.async_set(lamp, "on")
     await settle(hass)
-    assert colour(sent()[lamp]) == colour(moved[lamp])
+    assert home.turn_on == []
+    assert hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"][lamp] == "golden_hour"
 
 
 async def test_apply_preset(hass: HomeAssistant, home: Home, hue_lite: HueLite, hass_admin_user: MockUser) -> None:
@@ -109,6 +111,23 @@ async def test_lights_turned_on_or_changed(hass: HomeAssistant, home: Home, hue_
     hass.states.async_set("light.living_room", "on", {"brightness": 50}, context=Context(user_id="someone"))
     await hass.async_block_till_done()
     assert natural(hass) == []
+
+    # Switched off and on again by hand, it picks the scene up; switched on
+    # at a brightness of your own (the slider), that's a change by hand.
+    by_hand = Context(user_id="someone")
+    await action(hass, "natural_light", {"entity_id": "light.living_room"})
+    on(hass, hue_lite, "light.living_room")
+    hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=Context(id=hue_lite._ours[-1]))
+    hass.states.async_set("light.living_room", "off", context=by_hand)
+    home.turn_on.clear()
+    hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=by_hand)
+    await settle(hass)
+    assert (natural(hass), len(home.turn_on)) == (["light.living_room"], 1)
+    hass.states.async_set("light.living_room", "off", context=by_hand)
+    home.turn_on.clear()
+    hass.states.async_set("light.living_room", "on", {"brightness": 60}, context=by_hand)
+    await settle(hass)
+    assert (natural(hass), home.turn_on) == ([], [])
 
 
 async def test_natural_light_moves_in_visible_steps(

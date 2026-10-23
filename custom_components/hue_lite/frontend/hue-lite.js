@@ -22,6 +22,9 @@
 (() => {
   const DOMAIN = "hue_lite";
   const HOLD_MS = 500;
+  // How long a tap shows before the bulbs report it. A bulb that doesn't
+  // answer takes a few seconds to fail; after this the card shows it as it is.
+  const PENDING_MS = 5000;
   // The scenes' names and icons (their colours come from Hue-Lite): the
   // presets, then Natural light and the colour scenes, which change over time.
   const NATURAL = { id: "natural", name: "Natural", icon: "mdi:theme-light-dark" };
@@ -35,7 +38,7 @@
   ];
   const COLOUR_SCENES = [
     { id: "golden_hour", name: "Golden hour", icon: "mdi:weather-sunset" },
-    { id: "movie", name: "Movie", icon: "mdi:movie-open-outline" },
+    { id: "nebula", name: "Nebula", icon: "mdi:creation" },
   ];
 
   // ---- Registry helpers ----------------------------------------------------
@@ -225,7 +228,7 @@
       "",
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
-      "**Colour scenes**: Golden hour and Movie spread their colours across a room's colour bulbs and drift slowly between them.",
+      "**Colour scenes**: Golden hour and Nebula spread their colours across a room's colour bulbs and drift slowly between them.",
       "",
       `**Evening routine**: before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
@@ -326,7 +329,7 @@
 
   // How a scene tile looks, from its scene's colours (as shown): a tint that
   // runs through them, a fill for while it's on, a swatch, and the ink that
-  // reads on the fill and swatch (white on dark ones like Movie's).
+  // reads on the fill and swatch (white on dark ones like Nebula's).
   function sceneLook(rgbs) {
     const colours = (rgbs?.length ? rgbs : [null]).map(shownColour);
     if (colours.length === 1) colours.push(colours[0]);
@@ -533,7 +536,7 @@
         this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: this._config.entities[0] }, bubbles: true, composed: true }));
       });
       const toggle = () => {
-        if (!wasHold()) this._call(this._states().some((s) => s.state === "on") ? "turn_off" : "turn_on", {});
+        if (!wasHold()) this._toggle();
       };
       if (expandable) {
         onActivate(light, toggle);
@@ -556,6 +559,18 @@
       });
     }
 
+    // Switch the lights on or off, showing it straight away: until they
+    // report it (or PENDING_MS passes) the bar shows where they're going, and
+    // another tap goes from there rather than sending the same command again.
+    _toggle() {
+      const states = this._states();
+      const on = !(this._pending?.on ?? states.some((s) => s.state === "on"));
+      clearTimeout(this._pending?.timer);
+      this._pending = { on, states, timer: setTimeout(() => { this._pending = null; this._update(); }, PENDING_MS) };
+      this._call(on ? "turn_on" : "turn_off", {});
+      this._update();
+    }
+
     _update() {
       if (!this._el || !this._hass) return;
       const { card, icon, name, state, slider } = this._el;
@@ -565,8 +580,16 @@
       const pct = brightness.length ? Math.max(1, Math.round((brightness.reduce((a, b) => a + b, 0) / brightness.length / 255) * 100)) : 0;
       const single = this._single ? states[0] : undefined;
       const unavailable = this._single && (!single || single.state === "unavailable");
+      // Settled once the lights report where the tap was taking them (a
+      // report since the tap, not the state they were already in).
+      const reported = this._pending && states.some((s, i) => s !== this._pending.states[i]);
+      if (reported && this._pending.on === on.length > 0) {
+        clearTimeout(this._pending.timer);
+        this._pending = null;
+      }
+      const pending = this._pending;
 
-      card.classList.toggle("on", on.length > 0);
+      card.classList.toggle("on", pending ? pending.on : on.length > 0);
       card.classList.toggle("unavailable", Boolean(unavailable));
       // The icon and the slider show the colour of the lights that are on.
       card.style.setProperty("--light-rgb", lightsColour(on).join(", "));
@@ -574,14 +597,16 @@
         : single?.attributes.icon || (on.length ? "mdi:lightbulb" : "mdi:lightbulb-outline")));
       name.textContent = this._config.name || single?.attributes.friendly_name || "Lights";
       state.textContent = unavailable ? "Unavailable"
+        : pending ? (pending.on ? "Turning on…" : "Turning off…")
         : this._single ? (on.length ? `${pct}%` : "Off")
         : on.length ? `${on.length} of ${states.length} on · ${pct}%` : `All ${states.length} off`;
 
       slider.disabled = Boolean(unavailable);
       slider.setAttribute("aria-label", `Brightness of ${name.textContent}`);
       if (this._root.activeElement !== slider) {
-        slider.value = on.length ? pct : 1;
-        slider.style.setProperty("--pct", on.length ? `${pct}%` : "0%");
+        const shown = pending?.on === false ? 0 : on.length ? pct : 0;
+        slider.value = shown || 1;
+        slider.style.setProperty("--pct", `${shown}%`);
       }
 
       if (this._el.auto) {
@@ -601,10 +626,15 @@
   // Natural light's phases, as its tile shows them.
   const PHASES = { night: "Night", sunrise: "Sunrise", morning: "Morning", day: "Day", sunset: "Sunset", evening: "Evening" };
 
+  // The tile last tapped for each target (as JSON), shown as picked until
+  // its lights report the scene; tapping another for the same lights clears it.
+  const pickedTiles = new Map();
+
   // A scene button: a small upright tile (the scene's swatch above its name),
   // tinted with the scene's colours. Tap to put the lights in that scene.
   // Filled with them and ticked while every light that's on is in it and not
-  // on Auto (which shows on the Auto button instead).
+  // on Auto (which shows on the Auto button instead), and straight away when
+  // tapped, until the lights report it (or PENDING_MS passes).
   //   {natural: true, natural_entity, entities, target, scenes_entity}   Natural light
   //   {preset: id, light, entities, target, scenes_entity}               a preset or colour scene
   // Natural light's tile takes its colour and phase from `natural_entity`, as
@@ -670,7 +700,19 @@
         const target = this._config.target || {};
         if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
         else this._hass.callService(DOMAIN, "apply_preset", { preset: this._scene.id }, target);
+        const key = JSON.stringify(target);
+        pickedTiles.get(key)?._settle();
+        pickedTiles.set(key, this);
+        this._picked = setTimeout(() => this._settle(), PENDING_MS);
+        this._update();
       });
+    }
+
+    // Stop showing a tap: the tile shows the lights as they are.
+    _settle() {
+      clearTimeout(this._picked);
+      this._picked = null;
+      this._update();
     }
 
     _update() {
@@ -680,7 +722,12 @@
       const rgbs = now ? [now.attributes.rgb_color].filter(Array.isArray) : this._config.light?.rgb_colors;
       for (const [name, value] of Object.entries(sceneLook(rgbs))) this._card.style.setProperty(name, value);
       this._now.textContent = (now && PHASES[now.state]) || "";
-      const selected = this._selected();
+      const actual = this._selected();
+      if (actual && this._picked) {
+        clearTimeout(this._picked);
+        this._picked = null;
+      }
+      const selected = actual || Boolean(this._picked);
       this._card.classList.toggle("on", selected);
       this._card.setAttribute("aria-pressed", String(selected));
       this._card.title = selected ? `${this._scene.name} (current)` : this._scene.name;

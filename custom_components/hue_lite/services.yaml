@@ -16,7 +16,7 @@ apply_preset:
             - rest
             - nightlight
             - golden_hour
-            - movie
+            - nebula
 
 natural_light:
   target:

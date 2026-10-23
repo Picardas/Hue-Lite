@@ -58,7 +58,7 @@ ticked while the lights are in it.
 - **Scenes:** Natural light, Energize, Cool bright, Read, Relax, Rest and
   Nightlight. Colour bulbs get Hue's colours, white bulbs a colour
   temperature, and dimmable bulbs the brightness.
-- **Colour scenes:** Golden hour and Movie, from colours in Hue's own
+- **Colour scenes:** Golden hour and Nebula, from colours in Hue's own
   scenes. Each room's colour bulbs get different colours from the scene,
   drifting slowly from one to the next; white bulbs get a warm white.
 - **Natural light** follows the sun: Energize from dawn, Cool bright by
@@ -90,7 +90,7 @@ which scene each light is in.
 
 ```yaml
 action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
-target: {area_id: living_room}  # nightlight, golden_hour, movie
+target: {area_id: living_room}  # nightlight, golden_hour, nebula
 data: {preset: relax}
 ---
 action: hue_lite.natural_light  # follow: false takes the lights out instead

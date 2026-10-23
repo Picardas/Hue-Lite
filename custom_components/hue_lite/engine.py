@@ -18,6 +18,7 @@ off Auto; turning it on or off doesn't.
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from collections.abc import Coroutine, Mapping
 from datetime import date, datetime, time
@@ -26,7 +27,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_ENTITY_ID, ATTR_LABEL_ID, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
-from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
@@ -142,6 +143,13 @@ class HueLite:
         self._watched: frozenset[str] = frozenset()
         # Contexts of Hue-Lite's own light changes, so they're not taken for changes by others.
         self._ours: deque[str] = deque(maxlen=100)
+        # Lights a command is on its way to, and the latest command waiting
+        # for each (see call).
+        self._sending: set[str] = set()
+        self._waiting: dict[str, tuple[str, dict[str, Any], Context | None]] = {}
+        # Each light's brightness when it was last turned off, to tell a plain
+        # switch-on from one at a brightness of someone's own.
+        self._off_brightness: dict[str, int] = {}
         # The colour scenes' drift step their bulbs were last moved on at.
         self._drifted = self._drift_step()
 
@@ -165,8 +173,9 @@ class HueLite:
         # Lights excluded since are let go, and so are the routine's when bedtime
         # passed while Home Assistant was down.
         routine_over = self.evening.phase not in EVENING_PHASES
+        renamed = {"movie": "nebula"}
         self.scenes = {
-            light: scene
+            light: renamed.get(scene, scene)
             for light, scene in data.get("scenes", {}).items()
             if isinstance(scene, str) and not self.excluded(light) and not (routine_over and scene == ROUTINE)
         }
@@ -491,8 +500,36 @@ class HueLite:
     async def call(self, service: str, lights: list[str], *, parent: Context | None = None, **data: Any) -> None:
         """Call a light action as Hue-Lite: a context with no user, so the
         change isn't taken for someone else's, linked to what caused it (an
-        action call, a dimmer press) so the logbook can say. One unreachable
-        bulb is logged and doesn't hold up the rest."""
+        action call, a dimmer press) so the logbook can say.
+
+        Commands don't pile up behind a slow or unreachable bulb (Zigbee
+        sends to a bulb one request at a time, and an unanswered one takes
+        seconds to fail, holding up everything after it, yours included): a
+        command for a light that's still being sent the last one waits,
+        replacing any already waiting, so only the latest goes."""
+        command = (service, data, parent)
+        for light in lights:
+            self._waiting[light] = command
+        await self._send_waiting([light for light in lights if light not in self._sending])
+
+    async def _send_waiting(self, lights: list[str]) -> None:
+        """Send lights their waiting commands (lights waiting on the same one
+        together), then any that came in for them meanwhile."""
+        while lights:
+            commands: dict[int, tuple[tuple[str, dict[str, Any], Context | None], list[str]]] = {}
+            for light in lights:
+                command = self._waiting.pop(light)
+                commands.setdefault(id(command), (command, []))[1].append(light)
+            self._sending.update(lights)
+            try:
+                await asyncio.gather(*(self._send(*command, group) for command, group in commands.values()))
+            finally:
+                self._sending.difference_update(lights)
+            lights = [light for light in lights if light in self._waiting]
+
+    async def _send(self, service: str, data: dict[str, Any], parent: Context | None, lights: list[str]) -> None:
+        """One light action call. A bulb that doesn't answer is logged and
+        doesn't stop the rest."""
         context = Context(parent_id=parent.id if parent else None)
         self._ours.append(context.id)
         try:
@@ -522,27 +559,37 @@ class HueLite:
 
     @callback
     def _light_changed(self, event: Event[EventStateChangedData]) -> None:
-        """A light in Natural light, the routine or a colour scene that's
-        turned on picks up its scene's current light. A light that's on and
+        """A light in Natural light or the routine that's switched on picks
+        up its scene's current light (one in a colour scene comes back on in
+        its colour and drifts on from there, so it needs nothing). A light
         changed by someone else (from the dashboard, a light dialog, an
-        automation) leaves its scene and Auto; bulbs reporting their own state
-        don't count, and nor does turning a light on or off. A wake-up light
-        that's turned off is done with."""
+        automation) leaves its scene and Auto: one that's on and changed, or
+        one switched on at a brightness of their own (the slider). Bulbs
+        reporting their own state don't count, and nor does plain switching
+        on and off. A wake-up light that's switched off is done with."""
         old, new = event.data["old_state"], event.data["new_state"]
         if old is None or new is None:
             return
         light, scene = new.entity_id, self.scenes.get(new.entity_id)
-        if new.state == STATE_OFF and scene == WAKE_UP:
-            self.set_scene([light], "")
+        if new.state == STATE_OFF:
+            if old.state == STATE_ON and (brightness := old.attributes.get("brightness")) is not None:
+                self._off_brightness[light] = brightness
+            if scene == WAKE_UP:
+                self.set_scene([light], "")
         if new.state != STATE_ON or new.context.id in self._ours:
             return
-        if old.state != STATE_ON:
-            if scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES):
-                self.spawn(self.apply(scene, [light], 2))
-            elif scene in PALETTES:
-                self.spawn(self.send_palette(scene, [light], 2))
-        elif new.context.user_id or new.context.parent_id:
+        by_someone = bool(new.context.user_id or new.context.parent_id)
+        if by_someone and (old.state == STATE_ON or self._own_brightness(new)):
             self.set_scene([light], "", leave_auto=True)
+        elif old.state != STATE_ON and (scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES)):
+            self.spawn(self.apply(scene, [light], 2))
+
+    def _own_brightness(self, new: State) -> bool:
+        """Whether a light was switched on at a brightness other than the one
+        it was switched off at (as far as Hue-Lite knows)."""
+        before = self._off_brightness.get(new.entity_id)
+        brightness = new.attributes.get("brightness")
+        return before is not None and brightness is not None and abs(brightness - before) > 2
 
     @callback
     def _scene_activated(self, event: Event[EventStateChangedData]) -> None:
