@@ -1,5 +1,5 @@
 """Hue-Lite's engine: the settings, which lights are in which scene, and the
-listeners that run the scenes and routines (what SPEC.md's automations did).
+listeners that run the scenes and routines (what the YAML setup's automations did).
 
 Every scene change says which lights it was for: the Natural light scene, the
 evening routine, a preset, or '' (changed by hand). Two lists follow from that,

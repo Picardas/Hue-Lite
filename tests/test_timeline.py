@@ -1,4 +1,4 @@
-"""The timelines and scene recognition, which match SPEC.md's Jinja macros."""
+"""The timelines and scene recognition, which match the YAML setup's Jinja macros."""
 
 from __future__ import annotations
 
