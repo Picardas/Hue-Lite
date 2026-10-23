@@ -988,7 +988,8 @@
 
   // Wake up, Evening and Coming & going as blocks holding Home Assistant's own
   // cards (entities, tile, heading). The summary goes on its own line under
-  // the title, so it isn't cut off on a phone.
+  // the title, so it isn't cut off on a phone. Tapping the "Routines"
+  // heading folds the whole card away.
   //   {routines: [{id, name, icon, cards}], entities}
   // `entities` are Hue-Lite's entity ids, for the summaries.
   const isOn = (hass, id) => hass.states[id]?.state === "on";
@@ -1010,6 +1011,8 @@
   // Home Assistant's own cards come from its card helpers, loaded once.
   let cardHelpers;
   const loadCardHelpers = () => (cardHelpers = cardHelpers || window.loadCardHelpers());
+  // The whole card's folded state, kept with the blocks' under this id.
+  const ALL_ROUTINES = "all";
 
   class HueLiteRoutines extends CollapsibleBlocks {
     static layoutKey = "hue_lite_routines";
@@ -1030,7 +1033,12 @@
       this._root.innerHTML = `
         <style>
           ${BLOCKS_CSS}
-          h2 { margin: 0; padding: 0 4px 8px; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
+          .card-head { display: inline-flex; align-items: center; gap: 2px; min-height: 32px; padding: 0 4px; margin-bottom: 8px;
+                       cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; border-radius: 8px; }
+          h2 { margin: 0; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
+          .card-head .chev { --mdc-icon-size: 20px; }
+          .folded .card-head .chev { transform: rotate(-90deg); }
+          .folded .blocks { display: none; }
           .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
                   color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; border-radius: 8px; }
           .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); flex: none; }
@@ -1041,8 +1049,13 @@
           .collapsed .chev { transform: rotate(-90deg); }
           .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
         </style>
-        <h2>Routines</h2>
-        <div class="blocks"></div>`;
+        <div class="card">
+          <div class="card-head" role="button" tabindex="0" title="Show or hide the routines">
+            <h2>Routines</h2><ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
+          </div>
+          <div class="blocks"></div>
+        </div>`;
+      onActivate(this._root.querySelector(".card-head"), () => this._toggleCollapsed(ALL_ROUTINES));
       const list = this._root.querySelector(".blocks");
       const render = (this._rendering = {});
       for (const r of this._config.routines) {
@@ -1071,6 +1084,14 @@
 
     _showOpen(el, open) {
       el.querySelector(".head").setAttribute("aria-expanded", String(open));
+    }
+
+    // Folds the whole card or not, then the blocks.
+    _arrange() {
+      const folded = this._layout.collapsed.includes(ALL_ROUTINES);
+      this._root.querySelector(".card").classList.toggle("folded", folded);
+      this._root.querySelector(".card-head").setAttribute("aria-expanded", String(!folded));
+      super._arrange();
     }
 
     // Fills a block once the card helpers have loaded, unless the card has
