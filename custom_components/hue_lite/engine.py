@@ -39,6 +39,7 @@ from homeassistant.helpers.event import TrackStates, async_track_state_change_ev
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
+from homeassistant.util.color import color_xy_to_RGB
 
 from . import dimmers
 from .const import (
@@ -76,6 +77,12 @@ def async_get_loaded(hass: HomeAssistant) -> HueLite | None:
         if entry.state is ConfigEntryState.LOADED:
             return entry.runtime_data
     return None
+
+
+def rgb_color(light: Light) -> list[int]:
+    """The RGB colour a colour bulb reports at `light` (Home Assistant works it
+    out from the xy colour), for the dashboard to show."""
+    return list(color_xy_to_RGB(*light.xy_color))
 
 
 def _is_time(value: str) -> bool:
@@ -220,7 +227,8 @@ class HueLite:
     def frontend_config(self) -> dict[str, Any]:
         """What the dashboard needs: the role labels, the labels it can show
         (role labels and labels on lights, their devices and areas; Home
-        Assistant only lists every label to admins) and Hue-Lite's entity ids."""
+        Assistant only lists every label to admins), Hue-Lite's entity ids,
+        and each preset's colour as a colour bulb reports it, for its tile."""
         devices, areas = dr.async_get(self.hass), ar.async_get(self.hass)
         wanted = set(self.labels.values())
         for entry in er.async_get(self.hass).entities.values():
@@ -241,6 +249,7 @@ class HueLite:
                 if label.label_id in wanted
             ],
             "entities": self.entity_ids,
+            "presets": {preset: {"rgb_color": rgb_color(light)} for preset, light in PRESETS.items()},
         }
 
     # ---- Choosing lights -----------------------------------------------------

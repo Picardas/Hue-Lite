@@ -110,6 +110,8 @@ async def test_dashboard_script_and_config(hass: HomeAssistant, home: Home, entr
     assert "Payroll" not in names
     assert config["roles"] == home.labels
     assert config["entities"]["light_scenes"] == "sensor.hue_lite_light_scenes"
+    # Each preset's colour as a colour bulb reports it.
+    assert config["presets"]["relax"] == {"rgb_color": [255, 189, 86]}
 
     # The script is on every page (versioned by content) while Hue-Lite is set up.
     scripts = hass.data[DATA_EXTRA_MODULE_URL]

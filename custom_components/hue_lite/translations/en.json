@@ -71,6 +71,7 @@
         "state_attributes": {
           "brightness_pct": { "name": "Brightness" },
           "xy_color": { "name": "Colour (xy)" },
+          "rgb_color": { "name": "Colour (RGB)" },
           "color_temp_kelvin": { "name": "Colour temperature (white bulbs)" },
           "lights": { "name": "Lights in the scene" }
         }
@@ -87,6 +88,7 @@
         "state_attributes": {
           "brightness_pct": { "name": "Brightness" },
           "xy_color": { "name": "Colour (xy)" },
+          "rgb_color": { "name": "Colour (RGB)" },
           "color_temp_kelvin": { "name": "Colour temperature (white bulbs)" },
           "lights": { "name": "Lights in the routine" },
           "start": { "name": "Starts" },

@@ -49,7 +49,9 @@ It builds itself from your areas and labels on every load: the whole home and
 each room (reorderable), and the routines with their settings. Each room is a
 bar for all its lights: tap its icon to switch them on or off, slide to dim,
 **Auto** at the end, and tap its name to show or hide each light's bar and
-the six scenes. Icons take the colour of their lights.
+the six scenes. Icons and sliders take the colour the bulbs report; each
+scene shows the colour it gives (Natural light's as it is now), filled and
+ticked while the lights are in it.
 
 ## How it works
 

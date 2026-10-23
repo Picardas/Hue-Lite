@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import NATURAL, ROUTINE
-from .engine import HueLiteConfigEntry
+from .engine import HueLiteConfigEntry, rgb_color
 from .entity import HueLiteEntity
 
 
@@ -37,8 +37,9 @@ class _EngineSensor(HueLiteEntity, SensorEntity):
 
 
 class _TimelineSensor(_EngineSensor):
-    """State: the phase. Attributes: the light it wants now, and `lights`, the
-    lights in it."""
+    """State: the phase. Attributes: the light it wants now (with the RGB
+    colour a colour bulb reports for it, for the dashboard), and `lights`,
+    the lights in it."""
 
     _attr_device_class = SensorDeviceClass.ENUM
     # The light lists change with every scene pick; history has no use for them.
@@ -55,6 +56,7 @@ class _TimelineSensor(_EngineSensor):
         return {
             "brightness_pct": light.brightness_pct,
             "xy_color": list(light.xy_color),
+            "rgb_color": rgb_color(light),
             "color_temp_kelvin": light.kelvin,
             "lights": self.hue_lite.in_scene(self._scene),
         }

@@ -22,14 +22,14 @@
 (() => {
   const DOMAIN = "hue_lite";
   const HOLD_MS = 500;
-  // How each scene looks; `rgb` is its highlight colour.
-  const NATURAL = { name: "Natural", icon: "mdi:theme-light-dark", rgb: "255, 193, 7" };
+  // The scenes' names and icons (their colours come from Hue-Lite).
+  const NATURAL = { name: "Natural", icon: "mdi:theme-light-dark" };
   const PRESETS = [
-    { id: "energize", name: "Energize", icon: "mdi:lightning-bolt", rgb: "90, 150, 255" },
-    { id: "cool_bright", name: "Cool bright", icon: "mdi:white-balance-sunny", rgb: "130, 190, 255" },
-    { id: "relax", name: "Relax", icon: "mdi:sofa", rgb: "255, 170, 60" },
-    { id: "rest", name: "Rest", icon: "mdi:book-open-page-variant", rgb: "255, 130, 50" },
-    { id: "nightlight", name: "Nightlight", icon: "mdi:weather-night", rgb: "229, 57, 53" },
+    { id: "energize", name: "Energize", icon: "mdi:lightning-bolt" },
+    { id: "cool_bright", name: "Cool bright", icon: "mdi:white-balance-sunny" },
+    { id: "relax", name: "Relax", icon: "mdi:sofa" },
+    { id: "rest", name: "Rest", icon: "mdi:book-open-page-variant" },
+    { id: "nightlight", name: "Nightlight", icon: "mdi:weather-night" },
   ];
 
   // ---- Registry helpers ----------------------------------------------------
@@ -75,14 +75,18 @@
     return { type: "custom:hue-lite-light-bar", entities, scenes_entity: setup.entities.light_scenes, ...extra };
   }
 
-  // The scenes, two per row: Natural light first, then the presets. `target`
-  // is the action target: {area_id}, {label_id}, {entity_id} or {} for every light.
+  // The scenes, two per row: Natural light first (coloured as it is now),
+  // then the presets (coloured by their light). `target` is the action
+  // target: {area_id}, {label_id}, {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
     const tile = (extra) => ({
       type: "custom:hue-lite-scene-tile", entities: lights, target, scenes_entity: setup.entities.light_scenes,
       grid_options: { columns: 6, rows: 1 }, ...extra,
     });
-    return [tile({ natural: true }), ...PRESETS.map((p) => tile({ preset: p.id }))];
+    return [
+      tile({ natural: true, natural_entity: setup.entities.natural_light }),
+      ...PRESETS.map((p) => tile({ preset: p.id, light: setup.presets?.[p.id] })),
+    ];
   }
 
   // A room (or label group, or the whole home) for the rooms card: a bar for
@@ -285,14 +289,26 @@
               display: flex; align-items: center; justify-content: center; transition: background-color 180ms, color 180ms;
               background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.05); color: var(--state-inactive-color, var(--secondary-text-color)); }`;
 
-  // A light's colour for its icon: halfway to the fully saturated colour of
-  // the same hue, so whites still show on the card (warm ones as amber, cool
-  // ones as pale blue). Pure white shows as amber.
-  function iconColour([r, g, b]) {
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    if (max - min < 8) return "255, 193, 7";
-    return [r, g, b].map((c) => Math.round((c + (255 * (c - min)) / (max - min)) / 2)).join(", ");
+  // ---- Colours -------------------------------------------------------------
+
+  // How a light's colour shows on its icon, its slider and its scene's tile:
+  // the RGB colour the bulb reports (Hue-Lite works out a scene's the same
+  // way), halfway to the fully saturated colour of its hue so whites still
+  // show on the card. Pure white, and lights with no colour, show as amber.
+  const AMBER = [255, 193, 7];
+
+  function shownColour(rgb) {
+    if (!Array.isArray(rgb)) return AMBER;
+    const max = Math.max(...rgb);
+    const min = Math.min(...rgb);
+    if (max - min < 8) return AMBER;
+    return rgb.map((c) => Math.round((c + (255 * (c - min)) / (max - min)) / 2));
+  }
+
+  // The colour of these lights (their average), as shown.
+  function lightsColour(states) {
+    const rgbs = states.map((s) => s.attributes.rgb_color).filter(Array.isArray);
+    return shownColour(rgbs.length ? [0, 1, 2].map((i) => rgbs.reduce((sum, c) => sum + c[i], 0) / rgbs.length) : null);
   }
 
   // A focus ring for keyboard use only, not left behind by a tap.
@@ -371,8 +387,8 @@
 
   // One bar for a single light or a set (a room): tap to toggle, slide to dim,
   // hold a single light to open Home Assistant's light dialog (colour wheel,
-  // colour temperature). The icon (`icon`, or a bulb) takes the lights' own
-  // colour, so it follows what Auto and the scenes do to them. With
+  // colour temperature). The icon (`icon`, or a bulb) and the slider take the
+  // lights' own colour, so they follow what Auto and the scenes do to them. With
   // `scenes_entity`, an Auto button at the end puts the lights on Auto
   // (following the routines) or takes them off it; on a set it shows when only
   // some are on Auto, and a tap sets them all.
@@ -420,13 +436,13 @@
         <style>
           ${CIRCLE_CSS}
           ${FOCUS_CSS}
-          :host { --icon-rgb: 255, 193, 7; }
+          :host { --light-rgb: ${AMBER}; }
           ha-card { height: 72px; box-sizing: border-box; padding: 0 12px; display: flex; align-items: center; gap: 12px;
                     cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
                     -webkit-tap-highlight-color: transparent; }
           ha-card.unavailable { opacity: 0.5; }
           .light { width: 40px; height: 40px; }
-          ha-card.on .light { background: rgba(var(--icon-rgb), 0.25); color: rgb(var(--icon-rgb)); }
+          ha-card.on .light { background: rgba(var(--light-rgb), 0.25); color: rgb(var(--light-rgb)); }
           .text { flex: 0 1 38%; min-width: 0; }
           .name { display: flex; align-items: center; gap: 2px; font-size: 14px; font-weight: 500; line-height: 20px;
                   color: var(--primary-text-color); }
@@ -436,7 +452,7 @@
           .chev { --mdc-icon-size: 20px; flex: none; color: var(--secondary-text-color); transition: transform 180ms; }
           .collapsed .chev { transform: rotate(-90deg); }
           input { -webkit-appearance: none; appearance: none; flex: 1; min-width: 60px; height: 36px; margin: 0;
-                  background: transparent; cursor: pointer; --pct: 0%; --fill: 255, 193, 7; }
+                  background: transparent; cursor: pointer; --pct: 0%; --fill: var(--light-rgb); }
           ha-card:not(.on) input { --fill: 150, 150, 150; }
           input::-webkit-slider-runnable-track { height: 12px; border-radius: 6px;
             background: linear-gradient(to right, rgb(var(--fill)) var(--pct), rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12) var(--pct)); }
@@ -520,10 +536,8 @@
 
       card.classList.toggle("on", on.length > 0);
       card.classList.toggle("unavailable", Boolean(unavailable));
-      // The icon shows the colour of the lights that are on (their average).
-      const rgbs = on.map((s) => s.attributes.rgb_color).filter(Array.isArray);
-      const rgb = rgbs.length && [0, 1, 2].map((i) => rgbs.reduce((sum, c) => sum + c[i], 0) / rgbs.length);
-      card.style.setProperty("--icon-rgb", rgb ? iconColour(rgb) : "255, 193, 7");
+      // The icon and the slider show the colour of the lights that are on.
+      card.style.setProperty("--light-rgb", lightsColour(on).join(", "));
       icon.setAttribute("icon", this._config.icon || (!this._single ? "mdi:lightbulb-group"
         : single?.attributes.icon || (on.length ? "mdi:lightbulb" : "mdi:lightbulb-outline")));
       name.textContent = this._config.name || single?.attributes.friendly_name || "Lights";
@@ -552,11 +566,17 @@
 
   // ---- Scene tile ----------------------------------------------------------
 
-  // A scene button styled like a tile: tap to put the lights in that scene; lit
-  // while every light that's on is in it and not on Auto (which shows on the
-  // Auto button instead).
-  //   {natural: true, entities, target, scenes_entity}   the Natural light scene
-  //   {preset: id, entities, target, scenes_entity}      a preset
+  // Natural light's phases, as its tile shows them.
+  const PHASES = { night: "Night", sunrise: "Sunrise", morning: "Morning", day: "Day", sunset: "Sunset", evening: "Evening" };
+
+  // A scene button styled like a tile, tinted with the scene's colour: tap to
+  // put the lights in that scene. Filled with the colour and ticked while
+  // every light that's on is in it and not on Auto (which shows on the Auto
+  // button instead).
+  //   {natural: true, natural_entity, entities, target, scenes_entity}   Natural light
+  //   {preset: id, light, entities, target, scenes_entity}               a preset
+  // Natural light's tile takes its colour and phase from `natural_entity`, as
+  // it is now; a preset's colour is its `light` ({rgb_color}).
   // `scenes_entity` says which scene each light is in (attributes `scenes` and
   // `auto`); `target` is passed to the actions: {area_id}, {label_id},
   // {entity_id} or {} for all.
@@ -576,7 +596,7 @@
     }
 
     _watching() {
-      return [...this._config.entities, this._config.scenes_entity];
+      return [...this._config.entities, this._config.scenes_entity, ...(this._config.natural ? [this._config.natural_entity] : [])];
     }
 
     _selected() {
@@ -591,19 +611,30 @@
         <style>
           ${CIRCLE_CSS}
           ${FOCUS_CSS}
-          :host { --scene-rgb: ${this._scene.rgb}; }
-          ha-card { height: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 10px;
-                    padding: 0 10px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
-                    transition: background-color 180ms, opacity 180ms; }
-          .name { font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0.1px; color: var(--primary-text-color);
-                  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          ha-card.on { background: rgba(var(--scene-rgb), 0.12); }
-          ha-card.on .circle { background: rgba(var(--scene-rgb), 0.25); color: rgb(var(--scene-rgb)); }
+          :host { --scene-rgb: ${AMBER}; --card-bg: var(--ha-card-background, var(--card-background-color, #fff)); }
+          ha-card { height: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 0 10px;
+                    cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; overflow: hidden;
+                    background: linear-gradient(115deg, rgba(var(--scene-rgb), 0.3), rgba(var(--scene-rgb), 0.04) 80%), var(--card-bg); }
+          .circle { background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.6), rgb(var(--scene-rgb)) 70%);
+                    color: rgba(0, 0, 0, 0.6); }
+          .text { flex: 1; min-width: 0; }
+          .name, .now { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .name { font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0.1px; color: var(--primary-text-color); }
+          .now { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }
+          .now:empty { display: none; }
+          .check { display: none; flex: none; --mdc-icon-size: 20px; }
+          ha-card.on { background: linear-gradient(115deg, rgb(var(--scene-rgb)), rgba(var(--scene-rgb), 0.7)), var(--card-bg); }
+          ha-card.on .circle { background: rgba(255, 255, 255, 0.5); }
+          ha-card.on :is(.name, .now, .check) { color: rgba(0, 0, 0, 0.87); }
+          ha-card.on .check { display: block; }
         </style>
         <ha-card role="button" tabindex="0">
-          <div class="circle"><ha-icon icon="${this._scene.icon}"></ha-icon></div><span class="name">${this._scene.name}</span>
+          <div class="circle"><ha-icon icon="${this._scene.icon}"></ha-icon></div>
+          <div class="text"><div class="name">${this._scene.name}</div><div class="now"></div></div>
+          <ha-icon class="check" icon="mdi:check-circle"></ha-icon>
         </ha-card>`;
       this._card = this._root.querySelector("ha-card");
+      this._now = this._root.querySelector(".now");
       onActivate(this._card, () => {
         const target = this._config.target || {};
         if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
@@ -613,6 +644,11 @@
 
     _update() {
       if (!this._card || !this._hass) return;
+      // Natural light's tile shows where it is now: its colour and phase.
+      const now = this._config.natural ? this._hass.states[this._config.natural_entity] : undefined;
+      const rgb = now ? now.attributes.rgb_color : this._config.light?.rgb_color;
+      this._card.style.setProperty("--scene-rgb", shownColour(rgb).join(", "));
+      this._now.textContent = (now && PHASES[now.state]) || "";
       const selected = this._selected();
       this._card.classList.toggle("on", selected);
       this._card.setAttribute("aria-pressed", String(selected));
