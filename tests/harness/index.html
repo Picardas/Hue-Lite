@@ -37,6 +37,7 @@
   <div id="home" class="grid"></div>
   <h2>Rooms</h2>
   <div id="rooms"></div>
+  <div id="routines"></div>
   <h2>Generated dashboard</h2>
   <pre id="config"></pre>
   <script>
@@ -54,6 +55,14 @@
       light("light.garden", "Garden", "on"),
       light("light.cupboard", "Cupboard", "off"),
       light("light.all", "All", "on", { entity_id: ["light.living_room", "light.kitchen"] }),
+      { entity_id: "switch.hue_lite_wake_up_on_weekdays", state: "on", attributes: {} },
+      { entity_id: "time.hue_lite_wake_up_mon_fri", state: "06:45:00", attributes: {} },
+      { entity_id: "switch.hue_lite_wake_up_on_weekends", state: "off", attributes: {} },
+      { entity_id: "switch.hue_lite_evening_routine", state: "on", attributes: {} },
+      { entity_id: "sensor.hue_lite_evening_routine", state: "day", attributes: { summary: "On 16:30 · off 23:00" } },
+      { entity_id: "switch.hue_lite_coming_home", state: "on", attributes: {} },
+      { entity_id: "switch.hue_lite_coming_home_only_after_dark", state: "on", attributes: {} },
+      { entity_id: "switch.hue_lite_lights_off_when_everyone_leaves", state: "off", attributes: {} },
       {
         entity_id: "sensor.hue_lite_light_scenes", state: "4",
         attributes: { scenes: { "light.office": "natural", "light.lamp": "natural", "light.living_room": "relax", "light.kitchen": "relax" } },
@@ -86,6 +95,11 @@
         evening_routine_enabled: "switch.hue_lite_evening_routine",
         wake_up_weekdays: "switch.hue_lite_wake_up_on_weekdays",
         wake_up_weekday: "time.hue_lite_wake_up_mon_fri",
+        wake_up_weekends: "switch.hue_lite_wake_up_on_weekends",
+        wake_up_weekend: "time.hue_lite_wake_up_sat_sun",
+        coming_home_enabled: "switch.hue_lite_coming_home",
+        coming_home_only_dark: "switch.hue_lite_coming_home_only_after_dark",
+        leaving_home_enabled: "switch.hue_lite_lights_off_when_everyone_leaves",
       },
     };
 
@@ -115,6 +129,16 @@
       },
     };
 
+    // Home Assistant's card helpers: built-in cards show as their config.
+    window.loadCardHelpers = async () => ({
+      createCardElement(config) {
+        const el = document.createElement("pre");
+        el.className = "builtin";
+        el.textContent = JSON.stringify(config, null, 1);
+        return el;
+      },
+    });
+
     function card(config) {
       const el = document.createElement(config.type.replace(/^custom:/, ""));
       el.setConfig(config);
@@ -126,9 +150,10 @@
     window.ready = (async () => {
       window.dash = await customElements.get("ll-strategy-dashboard-hue-lite").generate({}, window.hass);
       document.getElementById("config").textContent = JSON.stringify(window.dash, null, 1);
-      const [home, rooms] = window.dash.views[0].sections;
+      const [home, rooms, routines] = window.dash.views[0].sections;
       for (const config of home.cards.filter((c) => c.type.startsWith("custom:"))) document.getElementById("home").appendChild(card(config));
       document.getElementById("rooms").appendChild(card(rooms.cards[0]));
+      document.getElementById("routines").appendChild(card(routines.cards[0]));
     })();
   </script>
 </body>

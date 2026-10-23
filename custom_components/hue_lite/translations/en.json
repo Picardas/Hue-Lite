@@ -102,7 +102,7 @@
     "switch": {
       "evening_routine_enabled": { "name": "Evening routine" },
       "coming_home_enabled": { "name": "Coming home" },
-      "coming_home_only_dark": { "name": "Coming home only when dark" },
+      "coming_home_only_dark": { "name": "Coming home only after dark" },
       "leaving_home_enabled": { "name": "Lights off when everyone leaves" },
       "wake_up_weekdays": { "name": "Wake up on weekdays" },
       "wake_up_weekends": { "name": "Wake up on weekends" },

@@ -4,17 +4,18 @@
 // Lights dashboard from the area and label registries every time it loads, so
 // new lights, rooms and labels appear without editing anything. The
 // integration tells it which labels drive the routines and its own entity ids
-// (websocket `hue_lite/config`). Also defines three cards:
+// (websocket `hue_lite/config`). Also defines four cards:
 //   custom:hue-lite-light-bar   a light, or "All lights": tap to toggle, slide
 //                               to dim, hold a single light for its colour dialog
 //   custom:hue-lite-scene-tile  a scene button (Natural or a preset) that lights
 //                               up while its lights are in that scene
 //   custom:hue-lite-rooms       every room as a collapsible, reorderable block
+//   custom:hue-lite-routines    Wake up, Evening and Coming & going as collapsible blocks
 //
 // Layout: Whole home (fixed), then the rooms card with one block per area with
 // lights (ordered by floor unless you've reordered them) and one per label you
-// create yourself, then Wake up, Evening and Coming & going. The role labels
-// drive the routines and don't get blocks of their own.
+// create yourself, then the routines card. The role labels drive the routines
+// and don't get blocks of their own.
 
 (() => {
   const DOMAIN = "hue_lite";
@@ -130,25 +131,26 @@
       sections.push({ type: "grid", column_span: 2, cards: [{ type: "custom:hue-lite-rooms", rooms }] });
     }
 
-    sections.push({
-      type: "grid",
-      cards: [
-        { type: "heading", heading: "Wake up", icon: "mdi:weather-sunset-up" },
-        {
-          type: "entities",
-          entities: [
-            { entity: e.wake_up_weekdays, name: "Mon–Fri" },
-            whenOn(e.wake_up_weekdays, { entity: e.wake_up_weekday, name: "Wake at" }),
-            { entity: e.wake_up_weekends, name: "Sat & Sun" },
-            whenOn(e.wake_up_weekends, { entity: e.wake_up_weekend, name: "Wake at" }),
-          ],
-        },
-      ],
+    // The routines go in one card of collapsible blocks, like the rooms.
+    const routines = [{
+      id: "wake_up",
+      name: "Wake up",
+      icon: "mdi:weather-sunset-up",
+      cards: [{
+        type: "entities",
+        entities: [
+          { entity: e.wake_up_weekdays, name: "Mon–Fri" },
+          whenOn(e.wake_up_weekdays, { entity: e.wake_up_weekday, name: "Wake at" }),
+          { entity: e.wake_up_weekends, name: "Sat & Sun" },
+          whenOn(e.wake_up_weekends, { entity: e.wake_up_weekend, name: "Wake at" }),
+        ],
+      }],
     }, {
-      type: "grid",
+      id: "evening",
+      name: "Evening",
+      icon: "mdi:weather-sunset",
       cards: [
-        { type: "heading", heading: "Evening", icon: "mdi:weather-sunset" },
-        { type: "tile", entity: e.evening_routine, name: "Tonight", state_content: ["state", "summary"], grid_options: { columns: "full" } },
+        { type: "tile", entity: e.evening_routine, name: "Tonight", state_content: ["state", "summary"] },
         {
           type: "entities",
           entities: [
@@ -166,19 +168,21 @@
         },
       ],
     }, {
-      type: "grid",
-      cards: [
-        { type: "heading", heading: "Coming & going", icon: "mdi:home-import-outline" },
-        {
-          type: "entities",
-          entities: [
-            { entity: e.coming_home_enabled, name: "Lights on when I arrive" },
-            whenOn(e.coming_home_enabled, { entity: e.coming_home_only_dark, name: "Only when it's dark" }),
-            { entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" },
-          ],
-        },
-      ],
-    });
+      id: "coming_going",
+      name: "Coming & going",
+      icon: "mdi:home-import-outline",
+      cards: [{
+        type: "entities",
+        entities: [
+          { type: "section", label: "Coming home" },
+          { entity: e.coming_home_enabled, name: "Lights on when I arrive" },
+          whenOn(e.coming_home_enabled, { entity: e.coming_home_only_dark, name: "Only if I arrive after dark" }),
+          { type: "section", label: "Leaving" },
+          { entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" },
+        ],
+      }],
+    }];
+    sections.push({ type: "grid", column_span: 3, cards: [{ type: "custom:hue-lite-routines", routines, entities: e }] });
 
     return { title: "Lights", path: "lights", icon: "mdi:lightbulb-group", type: "sections", max_columns: 3, sections };
   }
@@ -489,23 +493,37 @@
 
   // ---- Rooms card ----------------------------------------------------------
 
-  // Remembers the room order and which rooms are collapsed for the signed-in
-  // user (Home Assistant's per-user frontend storage, so it follows you across
-  // devices), falling back to this browser if that isn't available.
-  const LAYOUT_KEY = "hue_lite_rooms";
+  // Remembers the room order and which rooms and routines are collapsed for
+  // the signed-in user (Home Assistant's per-user frontend storage, so it
+  // follows you across devices), falling back to this browser if that isn't
+  // available.
+  const ROOMS_KEY = "hue_lite_rooms";
+  const ROUTINES_KEY = "hue_lite_routines";
 
-  async function loadLayout(hass) {
+  async function loadLayout(hass, key) {
     try {
-      const res = await hass.callWS({ type: "frontend/get_user_data", key: LAYOUT_KEY });
+      const res = await hass.callWS({ type: "frontend/get_user_data", key });
       if (res && res.value) return res.value;
     } catch (err) { /* fall through */ }
-    try { return JSON.parse(localStorage.getItem(LAYOUT_KEY)) || {}; } catch (err) { return {}; }
+    try { return JSON.parse(localStorage.getItem(key)) || {}; } catch (err) { return {}; }
   }
 
-  function saveLayout(hass, layout) {
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (err) { /* private mode */ }
-    hass.callWS({ type: "frontend/set_user_data", key: LAYOUT_KEY, value: layout }).catch(() => {});
+  function saveLayout(hass, key, layout) {
+    try { localStorage.setItem(key, JSON.stringify(layout)); } catch (err) { /* private mode */ }
+    hass.callWS({ type: "frontend/set_user_data", key, value: layout }).catch(() => {});
   }
+
+  // The look of a collapsible block's heading, shared by rooms and routines.
+  const BLOCK_CSS = `
+    .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
+            color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; }
+    .head .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
+    .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .summary { flex: 1; min-width: 0; font-size: 13px; color: var(--secondary-text-color); white-space: nowrap;
+               overflow: hidden; text-overflow: ellipsis; }
+    .chev { --mdc-icon-size: 22px; color: var(--secondary-text-color); transition: transform 180ms; }
+    .collapsed .chev { transform: rotate(-90deg); }
+    .collapsed .body { display: none; }`;
 
   // Every room (and label group) as a collapsible block: tap the heading to fold
   // it away (it still shows how many lights are on, with a power button), and
@@ -537,13 +555,13 @@
 
     async _load() {
       this._loaded = true;
-      const saved = await loadLayout(this._hass);
+      const saved = await loadLayout(this._hass, ROOMS_KEY);
       this._layout = { order: saved.order || [], collapsed: saved.collapsed || [] };
       this._arrange();
     }
 
     _save() {
-      saveLayout(this._hass, this._layout);
+      saveLayout(this._hass, ROOMS_KEY, this._layout);
     }
 
     // Saved order first, then any rooms the saved order doesn't know yet.
@@ -564,20 +582,13 @@
           button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
           button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
           .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
-          .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
-                  color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; }
-          .head .room-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
-          .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          .summary { flex: 1; font-size: 13px; color: var(--secondary-text-color); white-space: nowrap; }
-          .chev { --mdc-icon-size: 22px; color: var(--secondary-text-color); transition: transform 180ms; }
-          .room.collapsed .chev { transform: rotate(-90deg); }
+          ${BLOCK_CSS}
           .power.on { color: var(--amber-color, #ffc107); }
           .move { display: none; }
           .reordering .move { display: inline-flex; }
           .reordering .power { display: none; }
           .move button:disabled { opacity: 0.3; cursor: default; }
           .body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
-          .room.collapsed .body { display: none; }
           .body > .cell { grid-column: span 12; }
           .cell > * { display: block; height: 100%; }
           .body > .cell.half { grid-column: span 6; }
@@ -599,7 +610,7 @@
         el.innerHTML = `
           <div class="head" role="button" tabindex="0" aria-expanded="true">
             <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
-            <ha-icon class="room-icon" icon="${r.icon}"></ha-icon>
+            <ha-icon class="block-icon" icon="${r.icon}"></ha-icon>
             <span class="title"></span>
             <span class="summary"></span>
             <button class="power" title="Turn ${r.lights.length > 1 ? "all " : ""}on or off"><ha-icon icon="mdi:power"></ha-icon></button>
@@ -703,8 +714,128 @@
     }
   }
 
+  // ---- Routines card -------------------------------------------------------
+
+  // Wake up, Evening and Coming & going as collapsible blocks like the rooms;
+  // collapsed, each still says what it will do. The blocks hold Home
+  // Assistant's own cards (entities, tile, heading).
+  //   {routines: [{id, name, icon, cards}], entities}
+  // `entities` are Hue-Lite's entity ids, for the summaries.
+  const isOn = (hass, id) => hass.states[id]?.state === "on";
+  const clock = (hass, id) => (hass.states[id]?.state || "").slice(0, 5);
+  const SUMMARIES = {
+    wake_up: (hass, e) => {
+      const days = (toggle, time, label) => `${label} ${isOn(hass, toggle) ? clock(hass, time) : "off"}`;
+      return `${days(e.wake_up_weekdays, e.wake_up_weekday, "Mon–Fri")} · ${days(e.wake_up_weekends, e.wake_up_weekend, "Sat & Sun")}`;
+    },
+    evening: (hass, e) => (isOn(hass, e.evening_routine_enabled) ? hass.states[e.evening_routine]?.attributes.summary || "On" : "Off"),
+    coming_going: (hass, e) => {
+      const arrive = !isOn(hass, e.coming_home_enabled) ? "nothing" : isOn(hass, e.coming_home_only_dark) ? "lights on after dark" : "lights on";
+      return `Arrive: ${arrive} · Leave: ${isOn(hass, e.leaving_home_enabled) ? "lights off" : "nothing"}`;
+    },
+  };
+
+  class HueLiteRoutines extends HTMLElement {
+    setConfig(config) {
+      if (!Array.isArray(config.routines)) throw new Error("routines is required");
+      this._config = config;
+      this._collapsed = this._collapsed || [];
+      this._render();
+      if (this._hass && !this._loaded) this._load();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      if (!this._loaded) this._load();
+      for (const child of this._children || []) child.hass = hass;
+      this._update();
+    }
+
+    getCardSize() {
+      return 6;
+    }
+
+    getGridOptions() {
+      return { columns: "full", rows: "auto" };
+    }
+
+    async _load() {
+      this._loaded = true;
+      this._collapsed = (await loadLayout(this._hass, ROUTINES_KEY)).collapsed || [];
+      this._arrange();
+    }
+
+    _render() {
+      this._root = this._root || this.attachShadow({ mode: "open" });
+      this._root.innerHTML = `
+        <style>
+          :host { display: block; }
+          h2 { margin: 0; padding: 0 4px 8px; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
+          .routines { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+          ${BLOCK_CSS}
+          .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+        </style>
+        <h2>Routines</h2>
+        <div class="routines"></div>`;
+      const list = this._root.querySelector(".routines");
+      this._blocks = new Map();
+      this._children = [];
+      for (const r of this._config.routines) {
+        const el = document.createElement("div");
+        el.innerHTML = `
+          <div class="head" role="button" tabindex="0" aria-expanded="true">
+            <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
+            <ha-icon class="block-icon" icon="${r.icon}"></ha-icon>
+            <span class="title"></span>
+            <span class="summary"></span>
+          </div>
+          <div class="body"></div>`;
+        el.querySelector(".title").textContent = r.name;
+        onActivate(el.querySelector(".head"), () => {
+          const c = this._collapsed;
+          this._collapsed = c.includes(r.id) ? c.filter((x) => x !== r.id) : [...c, r.id];
+          saveLayout(this._hass, ROUTINES_KEY, { collapsed: this._collapsed });
+          this._arrange();
+        });
+        this._fill(el.querySelector(".body"), r.cards);
+        this._blocks.set(r.id, el);
+        list.appendChild(el);
+      }
+      this._arrange();
+    }
+
+    // Home Assistant's own cards come from its card helpers, loaded on demand.
+    async _fill(body, cards) {
+      const helpers = await window.loadCardHelpers();
+      for (const config of cards) {
+        const card = helpers.createCardElement(config);
+        if (this._hass) card.hass = this._hass;
+        body.appendChild(card);
+        this._children.push(card);
+      }
+    }
+
+    _arrange() {
+      if (!this._blocks) return;
+      for (const [id, el] of this._blocks) {
+        const collapsed = this._collapsed.includes(id);
+        el.classList.toggle("collapsed", collapsed);
+        el.querySelector(".head").setAttribute("aria-expanded", String(!collapsed));
+      }
+      this._update();
+    }
+
+    _update() {
+      if (!this._blocks || !this._hass) return;
+      for (const [id, el] of this._blocks) {
+        el.querySelector(".summary").textContent = SUMMARIES[id]?.(this._hass, this._config.entities || {}) || "";
+      }
+    }
+  }
+
   for (const [tag, cls] of [
     ["ll-strategy-dashboard-hue-lite", HueLiteStrategy],
+    ["hue-lite-routines", HueLiteRoutines],
     ["hue-lite-light-bar", HueLiteLightBar],
     ["hue-lite-scene-tile", HueLiteSceneTile],
     ["hue-lite-rooms", HueLiteRooms],

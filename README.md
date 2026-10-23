@@ -68,11 +68,13 @@ It's rebuilt on every load: **Whole home** (All lights and the scenes), then
 lights without an area and one per label of your own, each with a bar per light
 (tap to toggle, slide to dim, hold for the colour dialog) and the six scenes.
 The scene a room is in is highlighted. Room order and collapsed rooms are saved
-per user (**Reorder**, **Collapse all**). Below are Wake up, Evening and
-Coming & going, and a **Timings & fades** page.
+per user (**Reorder**, **Collapse all**). Below are the **Routines**, Wake up,
+Evening and Coming & going, as blocks that collapse the same way; collapsed,
+each says what it will do (e.g. "Mon–Fri 07:00 · Sat & Sun off"). Fades and the
+evening timeline are on a **Timings & fades** page.
 
 The cards can be used on other dashboards too: `custom:hue-lite-light-bar`,
-`custom:hue-lite-scene-tile`, `custom:hue-lite-rooms`.
+`custom:hue-lite-scene-tile`, `custom:hue-lite-rooms`, `custom:hue-lite-routines`.
 
 ## Scenes
 
@@ -138,7 +140,7 @@ over *wake-up fade-in*, reaching it at the wake-up time. Skipped if one of them
 is already on. With *Wake-up lights turn off*, they go off *wake-up lights off
 after* the wake-up time.
 
-**Coming home** (switch *Coming home*, optionally *only when dark*): when the
+**Coming home** (switch *Coming home*, optionally *only after dark*): when the
 number of people in the home zone goes up, the Coming home lights that are off
 come on in Natural light.
 
@@ -159,7 +161,7 @@ automations:
 | Entity | Default |
 | ------ | ------- |
 | `switch.hue_lite_evening_routine` | on |
-| `switch.hue_lite_coming_home`, `…_coming_home_only_when_dark` | on, on |
+| `switch.hue_lite_coming_home`, `…_coming_home_only_after_dark` | on, on |
 | `switch.hue_lite_lights_off_when_everyone_leaves` | off |
 | `switch.hue_lite_wake_up_on_weekdays`, `…_on_weekends` | off, off |
 | `switch.hue_lite_wake_up_lights_turn_off` | off |
