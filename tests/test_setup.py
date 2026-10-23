@@ -35,12 +35,14 @@ async def test_entities(hass: HomeAssistant, hue_lite: HueLite) -> None:
     ids = hue_lite.entity_ids
     assert ids["natural_light"] == "sensor.hue_lite_natural_light"
     assert ids["light_scenes"] == "sensor.hue_lite_light_scenes"
-    assert ids["evening_routine_enabled"] == "switch.hue_lite_evening_routine"
+    assert ids["evening_weeknights"] == "switch.hue_lite_evening_routine_sun_thu_nights"
+    assert ids["evening_weekends"] == "switch.hue_lite_evening_routine_fri_sat_nights"
     assert ids["wake_up_weekday"] == "time.hue_lite_wake_up_mon_fri"
     assert ids["bedtime_fade_minutes"] == "number.hue_lite_bedtime_fade_out"
-    assert len(ids) == 3 + 7 + 4 + 7
+    assert len(ids) == 3 + 8 + 4 + 7
 
-    assert hass.states.get("switch.hue_lite_evening_routine").state == "on"
+    assert hass.states.get("switch.hue_lite_evening_routine_sun_thu_nights").state == "on"
+    assert hass.states.get("switch.hue_lite_evening_routine_fri_sat_nights").state == "on"
     assert hass.states.get("switch.hue_lite_lights_off_when_everyone_leaves").state == "off"
     assert hass.states.get("time.hue_lite_bedtime_sun_thu_nights").state == "23:00:00"
     assert hass.states.get("number.hue_lite_bedtime_fade_out").state == "15"
@@ -49,7 +51,9 @@ async def test_entities(hass: HomeAssistant, hue_lite: HueLite) -> None:
 
 
 async def test_settings_are_kept(hass: HomeAssistant, entry: MockConfigEntry, hue_lite: HueLite) -> None:
-    await hass.services.async_call("switch", "turn_off", {"entity_id": "switch.hue_lite_evening_routine"}, blocking=True)
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": "switch.hue_lite_evening_routine_sun_thu_nights"}, blocking=True
+    )
     await hass.services.async_call(
         "time", "set_value", {"entity_id": "time.hue_lite_bedtime_sun_thu_nights", "time": "22:15"}, blocking=True
     )
@@ -60,9 +64,24 @@ async def test_settings_are_kept(hass: HomeAssistant, entry: MockConfigEntry, hu
 
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
-    assert hass.states.get("switch.hue_lite_evening_routine").state == "off"
+    assert hass.states.get("switch.hue_lite_evening_routine_sun_thu_nights").state == "off"
     assert hass.states.get("time.hue_lite_bedtime_sun_thu_nights").state == "22:15:00"
     assert hass.states.get("number.hue_lite_bedtime_fade_out").state == "20"
+
+
+async def test_the_old_evening_switch_becomes_two(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """The evening routine's one switch, switched off, becomes two switched
+    off, and its entity goes."""
+    stored(hass_storage, settings={"evening_routine_enabled": False})
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    registry.async_get_or_create("switch", DOMAIN, f"{entry.entry_id}_evening_routine_enabled", config_entry=entry)
+    await set_up(hass, entry)
+    assert hass.states.get("switch.hue_lite_evening_routine_sun_thu_nights").state == "off"
+    assert hass.states.get("switch.hue_lite_evening_routine_fri_sat_nights").state == "off"
+    assert registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_evening_routine_enabled") is None
 
 
 async def test_bad_or_stale_saved_data_is_dropped(

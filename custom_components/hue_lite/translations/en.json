@@ -105,7 +105,8 @@
       }
     },
     "switch": {
-      "evening_routine_enabled": { "name": "Evening routine" },
+      "evening_weeknights": { "name": "Evening routine Sun–Thu nights" },
+      "evening_weekends": { "name": "Evening routine Fri & Sat nights" },
       "coming_home_enabled": { "name": "Coming home" },
       "coming_home_only_dark": { "name": "Coming home only after dark" },
       "leaving_home_enabled": { "name": "Lights off when everyone leaves" },

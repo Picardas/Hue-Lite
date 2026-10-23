@@ -190,15 +190,21 @@ class EveningSettings:
 
 @dataclass(frozen=True)
 class Evening(Target):
-    """The evening routine's phase and light, with tonight's start and bedtime (HH:MM)."""
+    """The evening routine's phase and light, with tonight's start and bedtime
+    (HH:MM), and whether tonight is a Fri or Sat night."""
 
     start: str
     bedtime: str
+    weekend: bool
 
     def moved_from(self, other: Target) -> bool:
         if not isinstance(other, Evening):
             return True
-        return super().moved_from(other) or (self.start, self.bedtime) != (other.start, other.bedtime)
+        return super().moved_from(other) or (self.start, self.bedtime, self.weekend) != (
+            other.start,
+            other.bedtime,
+            other.weekend,
+        )
 
 
 def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
@@ -212,7 +218,7 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
 
     The evening runs from noon to noon, so a bedtime after midnight belongs to
     the evening before (Friday's evening ends at 01:00 on Saturday). Friday and
-    Saturday nights use the weekend bedtime.
+    Saturday nights use the weekend bedtime (and switch).
     """
     p = PRESETS
     morning = now.hour < 12
@@ -220,7 +226,8 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
     evening_day = now - timedelta(days=1) if morning else now
 
     start = sunset - s.start_before_sunset
-    bedtime = s.bedtime_weekend if evening_day.isoweekday() in (5, 6) else s.bedtime_weeknight
+    weekend = evening_day.isoweekday() in (5, 6)
+    bedtime = s.bedtime_weekend if weekend else s.bedtime_weeknight
     if bedtime < 720:
         bedtime += 1440
     wind_start = bedtime - s.wind_down
@@ -246,7 +253,7 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
     down = min(max(down, 0), 1)
     light = blend(p["cool_bright"], p["relax"], down * 2) if down <= 0.5 else blend(p["relax"], p["rest"], down * 2 - 1)
     light = Light(min(ramp, light.brightness_pct), light.xy_color, light.kelvin)
-    return Evening(phase, light.rounded(), hhmm(start), hhmm(bedtime))
+    return Evening(phase, light.rounded(), hhmm(start), hhmm(bedtime), weekend)
 
 
 # ---- Scene cycling -----------------------------------------------------------

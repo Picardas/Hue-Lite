@@ -181,14 +181,15 @@
       name: "Evening",
       icon: "mdi:weather-sunset",
       cards: [
-        // The times are in the block's heading already.
-        { type: "tile", entity: e.evening_routine, name: "Now", state_content: ["state"] },
+        // Where it is now, and tonight's times.
+        { type: "tile", entity: e.evening_routine, name: "Now", state_content: ["state", "summary"] },
         {
           type: "entities",
           entities: [
-            { entity: e.evening_routine_enabled, name: "Evening routine" },
-            { entity: e.bedtime_weeknight, name: "Bedtime Sun–Thu" },
-            { entity: e.bedtime_weekend, name: "Bedtime Fri & Sat" },
+            { entity: e.evening_weeknights, name: "Sun–Thu" },
+            whenOn(e.evening_weeknights, { entity: e.bedtime_weeknight, name: "Bedtime" }),
+            { entity: e.evening_weekends, name: "Fri & Sat" },
+            whenOn(e.evening_weekends, { entity: e.bedtime_weekend, name: "Bedtime" }),
           ],
         },
         {
@@ -230,7 +231,7 @@
       "",
       "**Colour scenes**: Golden hour and Nebula spread their colours across a room's colour bulbs and drift slowly between them.",
       "",
-      `**Evening routine**: before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
+      `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
       `**Coming home**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
       "",
@@ -997,7 +998,10 @@
       const days = (toggle, time, label) => `${label} ${isOn(hass, toggle) ? clock(hass, time) : "off"}`;
       return `${days(e.wake_up_weekdays, e.wake_up_weekday, "Mon–Fri")} · ${days(e.wake_up_weekends, e.wake_up_weekend, "Sat & Sun")}`;
     },
-    evening: (hass, e) => (isOn(hass, e.evening_routine_enabled) ? hass.states[e.evening_routine]?.attributes.summary || "On" : "Off"),
+    evening: (hass, e) => {
+      const nights = (toggle, time, label) => `${label} ${isOn(hass, toggle) ? `till ${clock(hass, time)}` : "off"}`;
+      return `${nights(e.evening_weeknights, e.bedtime_weeknight, "Sun–Thu")} · ${nights(e.evening_weekends, e.bedtime_weekend, "Fri & Sat")}`;
+    },
     coming_going: (hass, e) => {
       const arrive = !isOn(hass, e.coming_home_enabled) ? "nothing" : isOn(hass, e.coming_home_only_dark) ? "lights on after dark" : "lights on";
       return `Arrive: ${arrive} · Leave: ${isOn(hass, e.leaving_home_enabled) ? "lights off" : "nothing"}`;

@@ -1,4 +1,4 @@
-"""On/off settings: the routines and which days wake up runs."""
+"""On/off settings: the routines, and which days wake up and the evening routine run."""
 
 from __future__ import annotations
 
@@ -7,9 +7,10 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONFIG_SWITCHES, SWITCHES
+from .const import CONFIG_SWITCHES, DOMAIN, SWITCHES
 from .engine import HueLiteConfigEntry
 from .entity import SettingEntity
 
@@ -17,6 +18,11 @@ from .entity import SettingEntity
 async def async_setup_entry(
     hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    # The evening routine's one switch is now one for Sun–Thu nights and one
+    # for Fri & Sat nights.
+    registry = er.async_get(hass)
+    if old := registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_evening_routine_enabled"):
+        registry.async_remove(old)
     async_add_entities(SettingSwitch(entry.runtime_data, key) for key in SWITCHES)
 
 

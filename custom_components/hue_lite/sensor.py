@@ -74,11 +74,12 @@ class EveningRoutineSensor(_TimelineSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         evening = self.hue_lite.evening
+        on = self.hue_lite.routines.evening_on
         return {
             **super().extra_state_attributes,
             "start": evening.start,
             "bedtime": evening.bedtime,
-            "summary": f"On {evening.start} · off {evening.bedtime}",
+            "summary": f"On {evening.start} · off {evening.bedtime}" if on else "Off tonight",
         }
 
 

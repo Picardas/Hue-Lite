@@ -49,7 +49,10 @@ EVENING_PHASES: Final = ("evening", "wind_down", "nightlight")
 # Settings, shown as Hue-Lite's switch, time and number entities (and on the
 # dashboard). Keys are the entity keys.
 SWITCHES: Final = {
-    "evening_routine_enabled": True,
+    # The evening routine on Sun–Thu nights and on Fri & Sat nights (an
+    # evening's night is the one its bedtime ends, as with the bedtimes).
+    "evening_weeknights": True,
+    "evening_weekends": True,
     "coming_home_enabled": True,
     "coming_home_only_dark": True,
     "leaving_home_enabled": False,

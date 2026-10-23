@@ -15,7 +15,8 @@
       "light_scenes": { "default": "mdi:palette-swatch-variant" }
     },
     "switch": {
-      "evening_routine_enabled": { "default": "mdi:weather-sunset" },
+      "evening_weeknights": { "default": "mdi:weather-sunset" },
+      "evening_weekends": { "default": "mdi:weather-sunset" },
       "coming_home_enabled": { "default": "mdi:home-import-outline" },
       "coming_home_only_dark": { "default": "mdi:weather-night" },
       "leaving_home_enabled": { "default": "mdi:home-export-outline" },

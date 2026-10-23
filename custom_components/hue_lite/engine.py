@@ -158,9 +158,14 @@ class HueLite:
     async def async_load(self) -> None:
         """Load the saved settings and scenes, and work out where the timelines are."""
         data = await self._store.async_load() or {}
+        settings = data.get("settings", {})
+        # The evening routine's one switch is now one for Sun–Thu nights and
+        # one for Fri & Sat nights: both start as it was.
+        if isinstance(was := settings.get("evening_routine_enabled"), bool):
+            settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
         # A stored value of the wrong kind (a bad time, say) would break every
         # minute's tick, so those keep their defaults.
-        for key, value in data.get("settings", {}).items():
+        for key, value in settings.items():
             if key in self.settings and type(value) is type(self.settings[key]):
                 if key in TIMES and not _is_time(value):
                     continue
@@ -242,11 +247,13 @@ class HueLite:
 
     @callback
     def async_set_setting(self, key: str, value: Any) -> None:
-        """Change a setting; the timelines and routines follow straight away."""
+        """Change a setting; the timelines, routines and sensors follow
+        straight away."""
         self.settings[key] = value
         self.save()
         self._refresh()
         self.routines.setting_changed(key, value)
+        self._notify()
 
     @callback
     def frontend_config(self) -> dict[str, Any]:

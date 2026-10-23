@@ -61,11 +61,22 @@ class Routines:
         elif was.phase in EVENING_PHASES and phase == "night":
             lite.spawn(self._bedtime())
 
+    @property
+    def _tonight(self) -> str:
+        """The switch for tonight's evening: Sun–Thu or Fri & Sat nights."""
+        return "evening_weekends" if self.lite.evening.weekend else "evening_weeknights"
+
+    @property
+    def evening_on(self) -> bool:
+        """Whether the evening routine is on tonight."""
+        return self.lite.settings[self._tonight]
+
     @callback
     def setting_changed(self, key: str, value: object) -> None:
-        """Switching the evening routine off lets its lights go (they stay as
-        they are); switching it on during the evening starts it."""
-        if key != "evening_routine_enabled":
+        """Switching tonight's evening routine off lets its lights go (they
+        stay as they are); switching it on during the evening starts it. The
+        other nights' switch doesn't change tonight."""
+        if key != self._tonight:
             return
         if not value:
             self.lite.set_scene(self.lite.in_scene(ROUTINE), "")
@@ -74,16 +85,17 @@ class Routines:
 
     @property
     def evening_running(self) -> bool:
-        """Whether the evening routine is on and it's the evening, so lights
-        put on Auto join it straight away."""
-        return self.lite.settings["evening_routine_enabled"] and self.lite.evening.phase in EVENING_PHASES
+        """Whether the evening routine is on tonight and it's the evening, so
+        lights put on Auto join it straight away."""
+        return self.evening_on and self.lite.evening.phase in EVENING_PHASES
 
     @callback
     def _start_evening(self) -> None:
         """The routine takes its lights (Evening-labelled and on Auto) and
-        turns them on at its current light, if it's on and someone's home."""
+        turns them on at its current light, if it's on tonight and someone's
+        home."""
         lite = self.lite
-        if not lite.settings["evening_routine_enabled"] or not _people(lite.hass.states.get(lite.presence)):
+        if not self.evening_on or not _people(lite.hass.states.get(lite.presence)):
             return
         lite.followed[ROUTINE] = lite.evening
         if lights := lite.routine_lights("evening"):

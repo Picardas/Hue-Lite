@@ -16,7 +16,8 @@ from custom_components.hue_lite.timeline import PRESETS
 from .conftest import FRIDAY, Home, action, add_device, natural, on, routine, set_up, settle, switch, tick
 
 COOL_BRIGHT_XY = list(PRESETS["cool_bright"].xy_color)
-EVENING = "switch.hue_lite_evening_routine"
+EVENING = "switch.hue_lite_evening_routine_sun_thu_nights"  # the tests' Thursday
+WEEKENDS = "switch.hue_lite_evening_routine_fri_sat_nights"
 
 
 async def test_evening_routine(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry) -> None:
@@ -83,6 +84,38 @@ async def test_switching_the_evening_routine_off_and_on(
     assert routine(hass) == []
     await tick(hass, freezer, "23:00")
     assert home.turn_on == home.turn_off == []
+
+
+async def test_weeknights_and_weekends(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    def summary() -> str:
+        return hass.states.get("sensor.hue_lite_evening_routine").attributes["summary"]
+
+    # Fri & Sat nights off: Thursday's evening runs...
+    await tick(hass, freezer, "16:29")
+    await set_up(hass, entry)
+    await switch(hass, WEEKENDS, on=False)
+    await tick(hass, freezer, "16:30")
+    assert routine(hass) == ["light.bedroom", "light.living_room"]
+    assert summary() == "On 16:30 · off 23:00"
+
+    # ...and Friday's doesn't.
+    await tick(hass, freezer, "23:00")
+    await tick(hass, freezer, f"{FRIDAY} 12:00:00+01:00")
+    await tick(hass, freezer, f"{FRIDAY} 16:30:00+01:00")
+    assert routine(hass) == []
+    assert summary() == "Off tonight"
+
+    # Sun–Thu's switch doesn't change Friday night; its own does.
+    await switch(hass, EVENING, on=False)
+    await switch(hass, EVENING)
+    await settle(hass)
+    assert routine(hass) == []
+    await switch(hass, WEEKENDS)
+    await settle(hass)
+    assert routine(hass) == ["light.bedroom", "light.living_room"]
+    assert summary() == "On 16:30 · off 00:00"
 
 
 async def test_wake_up(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry) -> None:

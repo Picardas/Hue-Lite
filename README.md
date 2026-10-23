@@ -67,7 +67,8 @@ ticked while the lights are in it.
   automation, or use one of your own Home Assistant scenes on it.
 - **Evening routine:** before sunset, if someone's home, the Evening lights
   come on dim, brighten, wind down through Relax and Rest, and fade out at
-  bedtime.
+  bedtime. Sun–Thu and Fri & Sat nights each have their own switch and
+  bedtime, like wake up's days.
 - **Wake up:** the Wake up lights fade from a warm glow to Energize by your
   wake-up time, and can turn off again afterwards.
 - **Coming & going:** the Coming home lights come on in Natural light when
