@@ -639,7 +639,7 @@
         el.innerHTML = `
           <div class="head" role="button" tabindex="0" aria-expanded="true">
             <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
-            <ha-icon class="block-icon" icon="${r.icon}"></ha-icon>
+            <ha-icon class="block-icon"></ha-icon>
             <span class="title"></span>
             <span class="summary"></span>
             <button class="power" title="Turn ${r.lights.length > 1 ? "all " : ""}on or off"><ha-icon icon="mdi:power"></ha-icon></button>
@@ -649,7 +649,10 @@
             </span>
           </div>
           <div class="body"></div>`;
+        // Names and icons come from the registries, so they're set as text
+        // and attributes, never parsed as HTML.
         el.querySelector(".title").textContent = r.name;
+        el.querySelector(".block-icon").setAttribute("icon", r.icon);
         const body = el.querySelector(".body");
         for (const cfg of r.cards) {
           const card = document.createElement(cfg.type.replace(/^custom:/, ""));
@@ -819,12 +822,13 @@
         el.innerHTML = `
           <div class="head" role="button" tabindex="0" aria-expanded="true">
             <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
-            <ha-icon class="block-icon" icon="${r.icon}"></ha-icon>
+            <ha-icon class="block-icon"></ha-icon>
             <span class="title"></span>
             <span class="summary"></span>
           </div>
           <div class="body"></div>`;
         el.querySelector(".title").textContent = r.name;
+        el.querySelector(".block-icon").setAttribute("icon", r.icon);
         onActivate(el.querySelector(".head"), () => {
           const c = this._collapsed;
           this._collapsed = c.includes(r.id) ? c.filter((x) => x !== r.id) : [...c, r.id];

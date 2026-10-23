@@ -107,6 +107,18 @@ def test_noticeable() -> None:
     assert noticeable(relax, Light(56, relax.xy_color, 2287))
 
 
+def test_moved_from() -> None:
+    # The morning blend moves too little in a minute to count, a new phase always does.
+    assert not natural_light(at("08:01"), SUN).moved_from(natural_light(at("08:00"), SUN))
+    assert natural_light(at("08:10"), SUN).moved_from(natural_light(at("08:00"), SUN))
+    assert natural_light(at("12:00"), SUN).moved_from(natural_light(at("11:59"), SUN))
+    # The evening routine also moves when tonight's start or bedtime does.
+    later = EveningSettings(**{**SETTINGS.__dict__, "bedtime_weeknight": 23 * 60 + 30})
+    now = datetime.fromisoformat("2026-10-22T13:00")
+    assert evening_routine(now, SUN.sunset, later).moved_from(evening_routine(now, SUN.sunset, SETTINGS))
+    assert not evening_routine(now, SUN.sunset, SETTINGS).moved_from(evening_routine(now, SUN.sunset, SETTINGS))
+
+
 def test_next_scene() -> None:
     assert next_scene("") == "natural"
     assert next_scene("natural") == "energize"

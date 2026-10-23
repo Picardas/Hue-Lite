@@ -59,6 +59,7 @@ from .const import (
     ROUTINE,
     STORAGE_KEY,
     STORAGE_VERSION,
+    TIMES,
     label_option,
 )
 from .timeline import (
@@ -72,7 +73,6 @@ from .timeline import (
     minutes,
     natural_light,
     next_scene,
-    noticeable,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,6 +92,14 @@ def async_get_loaded(hass: HomeAssistant) -> HueLite | None:
     return None
 
 
+def _is_time(value: str) -> bool:
+    try:
+        time.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _people(state: State | None) -> int | None:
     """The number of people a zone's state says are in it; None while it's
     unknown or unavailable."""
@@ -106,6 +114,8 @@ class HueLite:
 
     natural: Target
     evening: Evening
+    # The targets the sensors last showed.
+    _shown: tuple[Target, Evening]
 
     def __init__(self, hass: HomeAssistant, entry: HueLiteConfigEntry) -> None:
         self.hass = hass
@@ -137,12 +147,19 @@ class HueLite:
     async def async_load(self) -> None:
         """Load the saved settings and scene lists, and work out where the timelines are."""
         data = await self._store.async_load() or {}
-        self.settings.update({k: v for k, v in data.get("settings", {}).items() if k in self.settings})
-        self.scenes.update(data.get("scenes", {}))
+        # A stored value of the wrong kind (a bad time, say) would break every
+        # minute's tick, so those keep their defaults.
+        for key, value in data.get("settings", {}).items():
+            if key in self.settings and type(value) is type(self.settings[key]):
+                if key in TIMES and not _is_time(value):
+                    continue
+                self.settings[key] = value
+        self.scenes.update({light: scene for light, scene in data.get("scenes", {}).items() if isinstance(scene, str)})
         if woke := data.get("last_wake_up"):
             self._last_wake_up = dt_util.parse_datetime(woke)
         self.natural, self.evening = self._targets(dt_util.now())
         self._followed = {NATURAL: self.natural, ROUTINE: self.evening}
+        self._shown = (self.natural, self.evening)
 
     @callback
     def async_start(self) -> None:
@@ -200,12 +217,21 @@ class HueLite:
 
     @callback
     def frontend_config(self) -> dict[str, Any]:
-        """What the dashboard needs: role labels, every label and entity ids."""
+        """What the dashboard needs: the role labels, the labels it can show
+        (role labels and labels on lights; Home Assistant only lists every
+        label to admins) and Hue-Lite's entity ids."""
+        wanted = set(self.labels.values()) | {
+            label
+            for entry in er.async_get(self.hass).entities.values()
+            if entry.domain == LIGHT
+            for label in entry.labels
+        }
         return {
             "roles": self.labels,
             "labels": [
                 {"label_id": label.label_id, "name": label.name, "icon": label.icon}
                 for label in lr.async_get(self.hass).async_list_labels()
+                if label.label_id in wanted
             ],
             "entities": self.entity_ids,
         }
@@ -285,13 +311,16 @@ class HueLite:
     def _set_scene(self, lights: list[str], scene: str) -> None:
         """Lights are now in `scene` (NATURAL, ROUTINE or a preset id), or with
         '' in none (changed by hand, or done with)."""
-        before = dict(self.scenes)
+        changed = False
         for light in lights:
+            if self.scenes.get(light, "") == scene:
+                continue
+            changed = True
             if scene:
                 self.scenes[light] = scene
             else:
-                self.scenes.pop(light, None)
-        if self.scenes != before:
+                del self.scenes[light]
+        if changed:
             self._save()
             self._watch_lights()
             self._notify()
@@ -302,22 +331,22 @@ class HueLite:
         scenes = {self.scenes.get(light, "") for light in self._on(lights)}
         return scenes.pop() if len(scenes) == 1 else ""
 
-    async def async_preset(self, lights: list[str], preset: str) -> None:
+    async def async_preset(self, lights: list[str], preset: str, parent: Context | None = None) -> None:
         if not lights:
             return
         self._set_scene(lights, preset)
-        await self._send(lights, PRESETS[preset], 0.4)
+        await self._send(lights, PRESETS[preset], 0.4, parent)
 
-    async def async_natural_light(self, lights: list[str], follow: bool = True) -> None:
+    async def async_natural_light(self, lights: list[str], follow: bool = True, parent: Context | None = None) -> None:
         """Put lights into the Natural light scene (turning them on), or with
         follow off take the ones in it out (leaving other scenes alone)."""
         if not follow:
             self._set_scene([light for light in lights if self.scenes.get(light) == NATURAL], "")
         elif lights:
             self._set_scene(lights, NATURAL)
-            await self._apply(NATURAL, lights, 2)
+            await self._apply(NATURAL, lights, 2, parent)
 
-    async def async_next_scene(self, lights: list[str]) -> None:
+    async def async_next_scene(self, lights: list[str], parent: Context | None = None) -> None:
         """Like pressing a Hue dimmer's On button again: Natural light,
         Energize, Cool bright, Relax, Rest, Nightlight, and round. Lights that
         are off, or in something unrecognised, go to Natural light."""
@@ -325,29 +354,29 @@ class HueLite:
             return
         scene = next_scene(self.current_scene(lights))
         if scene == NATURAL:
-            await self.async_natural_light(lights)
+            await self.async_natural_light(lights, parent=parent)
         else:
-            await self.async_preset(lights, scene)
+            await self.async_preset(lights, scene, parent)
 
-    async def _apply(self, scene: str, lights: list[str], transition: float) -> None:
+    async def _apply(self, scene: str, lights: list[str], transition: float, parent: Context | None = None) -> None:
         """Send the Natural light scene's or the routine's current light to
         the lights, turning them on. Nightlight-labelled lights get Nightlight
         during Natural light's night and the routine's nightlight phase."""
         target = self.target(scene)
         night = target.phase == ("night" if scene == NATURAL else "nightlight")
         nightlights = set(self._labelled("nightlight")) if night else set()
-        await self._send([entity_id for entity_id in lights if entity_id in nightlights], PRESETS["nightlight"], transition)
-        await self._send([entity_id for entity_id in lights if entity_id not in nightlights], target.light, transition)
+        await self._send([light for light in lights if light in nightlights], PRESETS["nightlight"], transition, parent)
+        await self._send([light for light in lights if light not in nightlights], target.light, transition, parent)
 
-    async def _send(self, lights: list[str], light: Light, transition: float) -> None:
+    async def _send(self, lights: list[str], light: Light, transition: float, parent: Context | None = None) -> None:
         """Turn lights on at `light`: its xy colour on bulbs with colour, its
         colour temperature on the rest."""
         colour = [entity_id for entity_id in lights if self._has_colour(entity_id)]
         white = [entity_id for entity_id in lights if entity_id not in colour]
         if colour:
-            await self._call("turn_on", colour, **light.colour_data(), transition=transition)
+            await self._call("turn_on", colour, parent=parent, **light.colour_data(), transition=transition)
         if white:
-            await self._call("turn_on", white, **light.white_data(), transition=transition)
+            await self._call("turn_on", white, parent=parent, **light.white_data(), transition=transition)
 
     def _has_colour(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
@@ -355,11 +384,12 @@ class HueLite:
         # Unknown: send colour, which Home Assistant converts if it has to.
         return modes is None or bool(COLOUR_MODES.intersection(modes))
 
-    async def _call(self, service: str, lights: list[str], **data: Any) -> None:
+    async def _call(self, service: str, lights: list[str], *, parent: Context | None = None, **data: Any) -> None:
         """Call a light action as Hue-Lite: a context with no user, so the
-        change isn't taken for one made by hand. One unreachable bulb is logged
-        and doesn't hold up the rest."""
-        context = Context()
+        change isn't taken for one made by hand, linked to what caused it (an
+        action call, a dimmer press) so the logbook can say. One unreachable
+        bulb is logged and doesn't hold up the rest."""
+        context = Context(parent_id=parent.id if parent else None)
         self._ours.append(context.id)
         try:
             await self.hass.services.async_call(
@@ -446,9 +476,12 @@ class HueLite:
     def _refresh(self) -> None:
         """Work out where both timelines are now, move the lights that follow
         them, and run the evening routine's start and bedtime."""
-        natural, evening = self.natural, self.evening
+        evening = self.evening
         self.natural, self.evening = self._targets(dt_util.now())
-        if (self.natural, self.evening) != (natural, evening):
+        # The sensors change as visibly as the lights do, not every minute.
+        shown_natural, shown_evening = self._shown
+        if self.natural.moved_from(shown_natural) or self.evening.moved_from(shown_evening):
+            self._shown = (self.natural, self.evening)
             self._notify()
 
         self._follow(NATURAL)
@@ -468,7 +501,7 @@ class HueLite:
         has changed phase or moved noticeably since they were last moved. Slow
         blends then send a command every few minutes rather than every minute."""
         target, last = self.target(scene), self._followed.get(scene)
-        if last is not None and last.phase == target.phase and not noticeable(last.light, target.light):
+        if last is not None and not target.moved_from(last):
             return
         self._followed[scene] = target
         if lights := self._on(self.in_scene(scene)):
@@ -547,18 +580,18 @@ class HueLite:
         # Only a real count going up: not the zone coming back from unknown.
         before, after = _people(old), _people(new)
         if before is not None and after is not None and after > before:
-            self._someone_arrived()
+            self._someone_arrived(new.context)
 
     @callback
-    def _someone_arrived(self) -> None:
+    def _someone_arrived(self, parent: Context) -> None:
         """Put the Coming home lights that are off into Natural light
-        (optionally only when the sun is down)."""
+        (optionally only after dark)."""
         s = self.settings
         if not s["coming_home_enabled"] or (s["coming_home_only_dark"] and is_up(self.hass)):
             return
         lights = [entity_id for entity_id in self._labelled("coming_home") if self.hass.states.is_state(entity_id, STATE_OFF)]
         if lights:
-            self._spawn(self.async_natural_light(lights))
+            self._spawn(self.async_natural_light(lights, parent=parent))
 
     @callback
     def _everyone_left(self, _now: datetime) -> None:
@@ -573,6 +606,8 @@ class HueLite:
         """A light keeps its scene when its entity id changes, and one that's
         deleted is forgotten."""
         data = event.data
+        if not data["entity_id"].startswith(f"{LIGHT}."):
+            return
         if data["action"] == "remove":
             self._set_scene([data["entity_id"]], "")
         elif data["action"] == "update" and (old := data.get("old_entity_id")) and (scene := self.scenes.get(old)):
@@ -590,17 +625,18 @@ class HueLite:
         device = dr.async_get(self.hass).async_get(event.data.get("device_id") or "")
         if device is None or not (device.model or "").startswith(DIMMER_MODEL_PREFIX) or device.area_id is None:
             return
-        self._spawn(self._dimmer(command.split("_")[0], self.lights({ATTR_AREA_ID: [device.area_id]})))
+        lights = self.lights({ATTR_AREA_ID: [device.area_id]})
+        self._spawn(self._dimmer(command.split("_")[0], lights, event.context))
 
-    async def _dimmer(self, button: str, lights: list[str]) -> None:
+    async def _dimmer(self, button: str, lights: list[str], parent: Context) -> None:
         """On: next scene. Off: off. Up and Down: 10% brighter or dimmer, with
         Down stopping at about 10%. Dimming counts as a change by hand."""
         if not lights:
             return
         if button == "on":
-            await self.async_next_scene(lights)
+            await self.async_next_scene(lights, parent)
         elif button == "off":
-            await self._call("turn_off", lights, transition=1)
+            await self._call("turn_off", lights, parent=parent, transition=1)
         else:
             dimming = lights if button == "up" else [
                 s.entity_id
@@ -609,4 +645,5 @@ class HueLite:
             ]
             if dimming:
                 self._set_scene(dimming, "")
-                await self._call("turn_on", dimming, brightness_step_pct=10 if button == "up" else -10, transition=0.4)
+                step = 10 if button == "up" else -10
+                await self._call("turn_on", dimming, parent=parent, brightness_step_pct=step, transition=0.4)

@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import voluptuous as vol
 
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.const import ATTR_AREA_ID, ATTR_DEVICE_ID, ATTR_ENTITY_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import ServiceValidationError, Unauthorized, UnknownUser
 from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
@@ -16,13 +17,8 @@ from .timeline import PRESETS
 
 _IDS = vol.All(cv.ensure_list, [cv.string])
 
-TARGET = {
-    vol.Optional(ATTR_ENTITY_ID): cv.entity_ids,
-    vol.Optional(ATTR_AREA_ID): _IDS,
-    vol.Optional(ATTR_FLOOR_ID): _IDS,
-    vol.Optional(ATTR_DEVICE_ID): _IDS,
-    vol.Optional(ATTR_LABEL_ID): _IDS,
-}
+TARGET_KEYS = (ATTR_ENTITY_ID, ATTR_AREA_ID, ATTR_FLOOR_ID, ATTR_DEVICE_ID, ATTR_LABEL_ID)
+TARGET = {vol.Optional(key): cv.entity_ids if key == ATTR_ENTITY_ID else _IDS for key in TARGET_KEYS}
 
 
 @callback
@@ -32,17 +28,34 @@ def async_register(hass: HomeAssistant) -> None:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="not_loaded")
         return running
 
+    async def lights(running: HueLite, call: ServiceCall) -> list[str]:
+        """The call's lights, checked against the caller's permissions the way
+        Home Assistant checks its own light actions: Hue-Lite then changes
+        them as itself, which Home Assistant doesn't check. With a target,
+        every light must be allowed; without one, only the allowed ones count."""
+        found = running.lights(call.data)
+        if not call.context.user_id:
+            return found
+        if (user := await hass.auth.async_get_user(call.context.user_id)) is None:
+            raise UnknownUser(context=call.context)
+        if user.is_admin:
+            return found
+        denied = [light for light in found if not user.permissions.check_entity(light, POLICY_CONTROL)]
+        if denied and any(call.data.get(key) for key in TARGET_KEYS):
+            raise Unauthorized(context=call.context, entity_id=denied[0], permission=POLICY_CONTROL)
+        return [light for light in found if light not in denied]
+
     async def apply_preset(call: ServiceCall) -> None:
         running = hue_lite()
-        await running.async_preset(running.lights(call.data), call.data["preset"])
+        await running.async_preset(await lights(running, call), call.data["preset"], parent=call.context)
 
     async def natural_light(call: ServiceCall) -> None:
         running = hue_lite()
-        await running.async_natural_light(running.lights(call.data), call.data["follow"])
+        await running.async_natural_light(await lights(running, call), call.data["follow"], parent=call.context)
 
     async def next_scene(call: ServiceCall) -> None:
         running = hue_lite()
-        await running.async_next_scene(running.lights(call.data))
+        await running.async_next_scene(await lights(running, call), parent=call.context)
 
     hass.services.async_register(
         DOMAIN, "apply_preset", apply_preset, vol.Schema({vol.Required("preset"): vol.In(list(PRESETS)), **TARGET})

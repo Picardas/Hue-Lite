@@ -91,6 +91,11 @@ class Target:
     phase: str
     light: Light
 
+    def moved_from(self, other: Target) -> bool:
+        """Whether this differs visibly from `other`: another phase or a
+        noticeable change of light."""
+        return self.phase != other.phase or noticeable(self.light, other.light)
+
 
 # ---- Natural light scene -----------------------------------------------------
 
@@ -157,6 +162,11 @@ class Evening(Target):
 
     start: str
     bedtime: str
+
+    def moved_from(self, other: Target) -> bool:
+        if not isinstance(other, Evening):
+            return True
+        return super().moved_from(other) or (self.start, self.bedtime) != (other.start, other.bedtime)
 
 
 def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:

@@ -41,6 +41,8 @@ class _TimelineSensor(_EngineSensor):
     lights in it."""
 
     _attr_device_class = SensorDeviceClass.ENUM
+    # The light lists change with every scene pick; history has no use for them.
+    _unrecorded_attributes = frozenset({"lights"})
     _scene: str
 
     @property
@@ -83,6 +85,7 @@ class LightScenesSensor(_EngineSensor):
     (natural, routine or a preset id), for the dashboard's highlights."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _unrecorded_attributes = frozenset({"scenes"})
 
     @property
     def native_value(self) -> int:
