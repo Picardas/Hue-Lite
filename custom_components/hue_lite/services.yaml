@@ -33,11 +33,6 @@ next_scene:
     entity:
       domain: light
 
-sleep:
-  target:
-    entity:
-      domain: light
-
 set_auto:
   target:
     entity:

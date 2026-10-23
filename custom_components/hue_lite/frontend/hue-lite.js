@@ -22,9 +22,8 @@
 (() => {
   const DOMAIN = "hue_lite";
   const HOLD_MS = 500;
-  // The scenes' names and icons (their colours come from Hue-Lite): Sleep and
-  // Natural light, the presets, then the colour scenes, in the tiles' order.
-  const SLEEP = { id: "sleep", name: "Sleep", icon: "mdi:power-sleep" };
+  // The scenes' names and icons (their colours come from Hue-Lite): the
+  // presets, then Natural light and the colour scenes, which change over time.
   const NATURAL = { id: "natural", name: "Natural", icon: "mdi:theme-light-dark" };
   const PRESETS = [
     { id: "energize", name: "Energize", icon: "mdi:lightning-bolt" },
@@ -33,6 +32,8 @@
     { id: "relax", name: "Relax", icon: "mdi:sofa" },
     { id: "rest", name: "Rest", icon: "mdi:candle" },
     { id: "nightlight", name: "Nightlight", icon: "mdi:weather-night" },
+  ];
+  const COLOUR_SCENES = [
     { id: "golden_hour", name: "Golden hour", icon: "mdi:weather-sunset" },
     { id: "movie", name: "Movie", icon: "mdi:movie-open-outline" },
   ];
@@ -80,19 +81,20 @@
     return { type: "custom:hue-lite-light-bar", entities, scenes_entity: setup.entities.light_scenes, ...extra };
   }
 
-  // The scenes, two per row: Sleep (coloured as Rest, which it fades out
-  // from) and Natural light (coloured as it is now), then the presets and
-  // colour scenes (coloured by their lights). `target` is the action target:
-  // {area_id}, {label_id}, {entity_id} or {} for every light.
+  // The scenes, three per row: the presets, then Natural light (coloured as
+  // it is now) and the colour scenes (the others are coloured by their
+  // lights). `target` is the action target: {area_id}, {label_id},
+  // {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
     const tile = (extra) => ({
       type: "custom:hue-lite-scene-tile", entities: lights, target, scenes_entity: setup.entities.light_scenes,
-      grid_options: { columns: 6, rows: 1 }, ...extra,
+      grid_options: { columns: 4, rows: 2 }, ...extra,
     });
+    const preset = (p) => tile({ preset: p.id, light: setup.presets?.[p.id] });
     return [
-      tile({ sleep: true, light: setup.presets?.rest }),
+      ...PRESETS.map(preset),
       tile({ natural: true, natural_entity: setup.entities.natural_light }),
-      ...PRESETS.map((p) => tile({ preset: p.id, light: setup.presets?.[p.id] })),
+      ...COLOUR_SCENES.map(preset),
     ];
   }
 
@@ -223,7 +225,7 @@
       "",
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
-      "**Scenes**: Golden hour and Movie spread their colours across a room's colour bulbs and drift slowly between them. Sleep takes a room to Rest and fades it out over the bedtime fade below; lights on Auto stay on it.",
+      "**Colour scenes**: Golden hour and Movie spread their colours across a room's colour bulbs and drift slowly between them.",
       "",
       `**Evening routine**: before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
@@ -599,11 +601,10 @@
   // Natural light's phases, as its tile shows them.
   const PHASES = { night: "Night", sunrise: "Sunrise", morning: "Morning", day: "Day", sunset: "Sunset", evening: "Evening" };
 
-  // A scene button styled like a tile, tinted with the scene's colours: tap to
-  // put the lights in that scene. Filled with them and ticked while every
-  // light that's on is in it and not on Auto (which shows on the Auto button
-  // instead).
-  //   {sleep: true, light, entities, target, scenes_entity}              Sleep
+  // A scene button: a small upright tile (the scene's swatch above its name),
+  // tinted with the scene's colours. Tap to put the lights in that scene.
+  // Filled with them and ticked while every light that's on is in it and not
+  // on Auto (which shows on the Auto button instead).
   //   {natural: true, natural_entity, entities, target, scenes_entity}   Natural light
   //   {preset: id, light, entities, target, scenes_entity}               a preset or colour scene
   // Natural light's tile takes its colour and phase from `natural_entity`, as
@@ -613,17 +614,17 @@
   // {entity_id} or {} for all.
   class HueLiteSceneTile extends HueLiteCard {
     setConfig(config) {
-      this._scene = config.sleep ? SLEEP : config.natural ? NATURAL : PRESETS.find((p) => p.id === config.preset);
+      this._scene = config.natural ? NATURAL : [...PRESETS, ...COLOUR_SCENES].find((p) => p.id === config.preset);
       if (!this._scene) throw new Error(`unknown preset ${config.preset}`);
       super.setConfig(config);
     }
 
     getCardSize() {
-      return 1;
+      return 2;
     }
 
     getGridOptions() {
-      return { columns: 6, rows: 1, min_columns: 2 };
+      return { columns: 4, rows: 2, min_columns: 3 };
     }
 
     _watching() {
@@ -642,16 +643,17 @@
           ${CIRCLE_CSS}
           ${FOCUS_CSS}
           :host { --card-bg: var(--ha-card-background, var(--card-background-color, #fff)); }
-          ha-card { height: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 0 10px;
+          ha-card { height: 100%; box-sizing: border-box; position: relative; display: flex; flex-direction: column;
+                    align-items: center; justify-content: center; gap: 4px; padding: 8px 6px; text-align: center;
                     cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; overflow: hidden;
                     background: var(--tint, none), var(--card-bg); }
           .circle { background: var(--swatch); color: var(--ink); }
-          .text { flex: 1; min-width: 0; }
+          .text { max-width: 100%; }
           .name, .now { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          .name { font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0.1px; color: var(--primary-text-color); }
-          .now { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }
+          .name { font-size: 13px; font-weight: 500; line-height: 18px; letter-spacing: 0.1px; color: var(--primary-text-color); }
+          .now { font-size: 11px; line-height: 14px; color: var(--secondary-text-color); }
           .now:empty { display: none; }
-          .check { display: none; flex: none; --mdc-icon-size: 20px; }
+          .check { display: none; position: absolute; top: 6px; right: 6px; --mdc-icon-size: 18px; }
           ha-card.on { background: var(--fill), var(--card-bg); }
           ha-card.on .circle { background: rgba(255, 255, 255, 0.3); }
           ha-card.on :is(.name, .now, .check) { color: var(--ink); }
@@ -666,8 +668,7 @@
       this._now = this._root.querySelector(".now");
       onActivate(this._card, () => {
         const target = this._config.target || {};
-        if (this._config.sleep) this._hass.callService(DOMAIN, "sleep", {}, target);
-        else if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
+        if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
         else this._hass.callService(DOMAIN, "apply_preset", { preset: this._scene.id }, target);
       });
     }
@@ -705,7 +706,7 @@
 
   const BLOCKS_CSS = `
     :host { display: block; }
-    .blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+    .blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 16px; align-items: start; }
     .collapsed .body { display: none; }
     ${FOCUS_CSS}`;
 
@@ -835,10 +836,8 @@
           .reordering .move { display: inline-flex; }
           .move button:disabled { opacity: 0.3; cursor: default; }
           .body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
-          .body > .cell { grid-column: span 12; }
           .cell > * { display: block; height: 100%; }
-          .body > .cell.half { grid-column: span 6; }
-          .body > .cell.tile { height: 56px; }
+          .body > .cell.tile { height: 88px; }
         </style>
         ${this._config.toolbar === false ? "" : `
         <div class="toolbar">
@@ -864,7 +863,9 @@
         const body = el.querySelector(".body");
         for (const cfg of r.cards) {
           const cell = document.createElement("div");
-          cell.className = `cell${cfg.type === "custom:hue-lite-scene-tile" ? " tile" : ""}${cfg.grid_options?.columns === 6 ? " half" : ""}`;
+          cell.className = `cell${cfg.type === "custom:hue-lite-scene-tile" ? " tile" : ""}`;
+          // Across the body's 12 columns: a tile is a third, a light bar the lot.
+          cell.style.gridColumn = `span ${cfg.grid_options?.columns || 12}`;
           cell.appendChild(this._card(cfg));
           body.appendChild(cell);
         }

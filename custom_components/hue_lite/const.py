@@ -34,11 +34,10 @@ def label_option(role: str) -> str:
 # Scenes a light can be in besides the presets and colour scenes: Natural light
 # and the evening routine are followed over time; wake-up marks lights its
 # fade-in has, until they're changed, so turning them off afterwards leaves
-# other lights alone; sleep marks lights fading out, until they're off.
+# other lights alone.
 NATURAL: Final = "natural"
 ROUTINE: Final = "routine"
 WAKE_UP: Final = "wake_up"
-SLEEP: Final = "sleep"
 
 # Colour scenes move each colour bulb on to the next colour this often, over
 # the whole time, so they drift slowly.

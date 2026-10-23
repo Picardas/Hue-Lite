@@ -4,7 +4,7 @@ Hue dimmers in dimmers.py, and choosing lights in targets.py.
 
 Each light Hue-Lite has put into a scene remembers it in `scenes`: Natural
 light, the evening routine, a preset, a colour scene (whose colours drift),
-the wake-up fade-in, or a sleep fade-out. Picking another
+or the wake-up fade-in. Picking another
 scene replaces it; changing the light yourself or from an automation, or
 activating one of Home Assistant's own scenes with it, forgets it. Turning a
 light off keeps its scene, so a light in Natural light or the routine picks it
@@ -55,7 +55,6 @@ from .const import (
     NATURAL,
     ROLES,
     ROUTINE,
-    SLEEP,
     STORAGE_KEY,
     STORAGE_VERSION,
     TIMES,
@@ -294,10 +293,8 @@ class HueLite:
 
     def on_auto(self) -> list[str]:
         """The lights on Auto: put on it, or held by the evening routine or
-        wake up now. Lights fading out to sleep show that instead (they're
-        back on Auto once they're off)."""
-        held = {light for light, scene in self.scenes.items() if scene in (ROUTINE, WAKE_UP)}
-        return sorted((self.auto | held).difference(self.in_scene(SLEEP)))
+        wake up now."""
+        return sorted(self.auto.union(light for light, scene in self.scenes.items() if scene in (ROUTINE, WAKE_UP)))
 
     @callback
     def async_set_auto(self, lights: list[str], auto: bool) -> None:
@@ -529,13 +526,13 @@ class HueLite:
         turned on picks up its scene's current light. A light that's on and
         changed by someone else (from the dashboard, a light dialog, an
         automation) leaves its scene and Auto; bulbs reporting their own state
-        don't count, and nor does turning a light on or off. A wake-up or
-        sleep light that's turned off is done with."""
+        don't count, and nor does turning a light on or off. A wake-up light
+        that's turned off is done with."""
         old, new = event.data["old_state"], event.data["new_state"]
         if old is None or new is None:
             return
         light, scene = new.entity_id, self.scenes.get(new.entity_id)
-        if new.state == STATE_OFF and scene in (WAKE_UP, SLEEP):
+        if new.state == STATE_OFF and scene == WAKE_UP:
             self.set_scene([light], "")
         if new.state != STATE_ON or new.context.id in self._ours:
             return

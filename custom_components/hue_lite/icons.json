@@ -33,8 +33,6 @@
   "services": {
     "apply_preset": { "service": "mdi:palette" },
     "natural_light": { "service": "mdi:theme-light-dark" },
-    "next_scene": { "service": "mdi:palette-swatch-variant" },
-    "sleep": { "service": "mdi:power-sleep" },
-    "set_auto": { "service": "mdi:brightness-auto" }
+    "next_scene": { "service": "mdi:palette-swatch-variant" },    "set_auto": { "service": "mdi:brightness-auto" }
   }
 }

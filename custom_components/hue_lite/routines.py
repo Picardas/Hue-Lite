@@ -1,4 +1,4 @@
-"""The routines: the evening routine, sleep, wake up, and coming & going."""
+"""The routines: the evening routine, wake up, and coming & going."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 from homeassistant.helpers.sun import is_up
 from homeassistant.util import dt as dt_util
 
-from .const import EVENING_PHASES, LEAVING_DELAY, NATURAL, ROUTINE, SLEEP, WAKE_UP
+from .const import EVENING_PHASES, LEAVING_DELAY, NATURAL, ROUTINE, WAKE_UP
 from .timeline import PRESETS, Evening
 
 if TYPE_CHECKING:
@@ -100,25 +100,6 @@ class Routines:
         lite.set_scene(lights, "")
         if on := lite.on(lights):
             await lite.call("turn_off", on, transition=lite.settings["bedtime_fade_minutes"] * 60)
-
-    # ---- Sleep ---------------------------------------------------------------
-
-    @callback
-    def async_sleep(self, lights: list[str], parent: Context | None = None) -> None:
-        """Going to bed now: the lights that are on go to Rest, then fade out
-        over the bedtime fade. Like switching off, that leaves Auto alone, so
-        wake up still takes them in the morning."""
-        if on := self.lite.on(lights):
-            self.lite.set_scene(on, SLEEP)
-            self.lite.spawn(self._fade_out(on, parent))
-
-    async def _fade_out(self, lights: list[str], parent: Context | None) -> None:
-        lite = self.lite
-        await lite.send(lights, PRESETS["rest"], 2, parent)
-        await asyncio.sleep(2)
-        # Not lights put into another scene meanwhile.
-        if lights := [light for light in lights if lite.scenes.get(light, SLEEP) == SLEEP]:
-            await lite.call("turn_off", lights, parent=parent, transition=lite.settings["bedtime_fade_minutes"] * 60)
 
     # ---- Wake up -------------------------------------------------------------
 

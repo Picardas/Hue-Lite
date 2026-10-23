@@ -126,6 +126,5 @@ def test_next_scene() -> None:
     assert next_scene("read") == "relax"
     assert next_scene("rest") == "nightlight"
     assert next_scene("nightlight") == "natural"
-    # The colour scenes and sleep aren't in the cycle: on to Natural light.
+    # The colour scenes aren't in the cycle: on to Natural light.
     assert next_scene("movie") == "natural"
-    assert next_scene("sleep") == "natural"

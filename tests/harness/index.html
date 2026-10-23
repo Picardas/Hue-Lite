@@ -20,7 +20,6 @@
     h2 { font-size: 15px; margin: 20px 0 8px; }
     .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; max-width: 420px; }
     .grid > * { grid-column: span 12; }
-    .grid > .half { grid-column: span 6; height: 56px; }
     #rooms { max-width: 900px; }
     pre { font-size: 11px; max-height: 300px; overflow: auto; background: #fff; padding: 8px; }
   </style>
@@ -174,7 +173,6 @@
       const el = document.createElement(config.type.replace(/^custom:/, ""));
       el.setConfig(config);
       el.hass = window.hass;
-      if (config.grid_options?.columns === 6) el.className = "half";
       return el;
     }
 

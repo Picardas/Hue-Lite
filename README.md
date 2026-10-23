@@ -61,8 +61,6 @@ ticked while the lights are in it.
 - **Colour scenes:** Golden hour and Movie, from colours in Hue's own
   scenes. Each room's colour bulbs get different colours from the scene,
   drifting slowly from one to the next; white bulbs get a warm white.
-- **Sleep:** the lights that are on go to Rest and fade out over the bedtime
-  fade. Lights on Auto stay on it, so wake up still takes them.
 - **Natural light** follows the sun: Energize from dawn, Cool bright by
   midday, Relax at sunset, Rest at night. A light stays in it, on or off,
   until you pick another scene, change the light yourself or from an
@@ -94,9 +92,6 @@ which scene each light is in.
 action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
 target: {area_id: living_room}  # nightlight, golden_hour, movie
 data: {preset: relax}
----
-action: hue_lite.sleep          # Rest, then fade out
-target: {area_id: bedroom}
 ---
 action: hue_lite.natural_light  # follow: false takes the lights out instead
 target: {label_id: lamps}
