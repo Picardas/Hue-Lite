@@ -1,4 +1,4 @@
-"""The routines: the evening routine, wake up, and coming & going."""
+"""The routines: the evening routine, wake up, and Coming & Going."""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ class Routines:
         if on := lite.on(lights):
             lite.spawn(lite.call("turn_off", on, transition=60))
 
-    # ---- Coming and going ----------------------------------------------------
+    # ---- Coming & Going ------------------------------------------------------
 
     @callback
     def _presence_changed(self, event: Event[EventStateChangedData]) -> None:

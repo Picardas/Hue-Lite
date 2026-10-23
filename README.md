@@ -71,7 +71,7 @@ ticked while the lights are in it.
   bedtime, like wake up's days.
 - **Wake up:** the Wake up lights fade from a warm glow to Energize by your
   wake-up time, and can turn off again afterwards.
-- **Coming & going:** the Coming home lights come on in Natural light when
+- **Coming & Going:** the Coming home lights come on in Natural light when
   someone arrives (optionally only after dark), and every light can go off
   when everyone has left.
 - **Auto:** the button at the end of each light's and room's bar. A light is

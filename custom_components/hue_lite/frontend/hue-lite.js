@@ -11,7 +11,7 @@
 //                               up while its lights are in that scene
 //   custom:hue-lite-rooms       every room as a collapsible, reorderable block
 //                               headed by a bar for all its lights
-//   custom:hue-lite-routines    Wake up, Evening and Coming & going as collapsible blocks
+//   custom:hue-lite-routines    Wake up, Evening and Coming & Going as collapsible blocks
 //
 // Layout: Whole home (fixed at the top, a block that collapses like a room),
 // then the rooms card with one block per area with
@@ -196,18 +196,18 @@
       ],
     }, {
       id: "coming_going",
-      name: "Coming & going",
+      name: "Coming & Going",
       icon: "mdi:home-import-outline",
       cards: [{
         type: "entities",
-        title: "Coming home",
+        title: "Coming",
         entities: [
           { entity: e.coming_home_enabled, name: "Lights on when I arrive" },
           whenOn(e.coming_home_enabled, { entity: e.coming_home_only_dark, name: "Only if I arrive after dark" }),
         ],
       }, {
         type: "entities",
-        title: "Leaving",
+        title: "Going",
         entities: [{ entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" }],
       }],
     }];
@@ -237,7 +237,7 @@
       "",
       `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
-      `**Coming home**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
+      `**Coming & Going**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
       "",
       "**Hue dimmer switches** control the lights in their area: On steps through the scenes, Off turns them off, Up and Down dim them.",
       "",
@@ -998,7 +998,7 @@
 
   // ---- Routines card -------------------------------------------------------
 
-  // Wake up, Evening and Coming & going as blocks holding Home Assistant's own
+  // Wake up, Evening and Coming & Going as blocks holding Home Assistant's own
   // cards (entities, tile, heading). The summary goes on its own line under
   // the title, so it isn't cut off on a phone. Tapping the "Routines"
   // heading folds the whole card away. `footer` cards (the Timings & fades
@@ -1018,7 +1018,7 @@
     },
     coming_going: (hass, e) => {
       const arrive = !isOn(hass, e.coming_home_enabled) ? "nothing" : isOn(hass, e.coming_home_only_dark) ? "lights on after dark" : "lights on";
-      return `Arrive: ${arrive} · Leave: ${isOn(hass, e.leaving_home_enabled) ? "lights off" : "nothing"}`;
+      return `Coming: ${arrive} · Going: ${isOn(hass, e.leaving_home_enabled) ? "lights off" : "nothing"}`;
     },
   };
   // Home Assistant's own cards come from its card helpers, loaded once.
