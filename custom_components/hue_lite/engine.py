@@ -38,7 +38,13 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
-from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_change
+from homeassistant.helpers.event import (
+    TrackStates,
+    async_call_later,
+    async_track_state_change_event,
+    async_track_state_change_filtered,
+    async_track_time_change,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date, is_up
 from homeassistant.util import dt as dt_util
@@ -154,7 +160,14 @@ class HueLite:
                 if key in TIMES and not _is_time(value):
                     continue
                 self.settings[key] = value
-        self.scenes.update({light: scene for light, scene in data.get("scenes", {}).items() if isinstance(scene, str)})
+        # Lights excluded (or hidden) since they were saved are let go.
+        self.scenes.update(
+            {
+                light: scene
+                for light, scene in data.get("scenes", {}).items()
+                if isinstance(scene, str) and not self._excluded(light)
+            }
+        )
         if woke := data.get("last_wake_up"):
             self._last_wake_up = dt_util.parse_datetime(woke)
         self.natural, self.evening = self._targets(dt_util.now())
@@ -168,6 +181,8 @@ class HueLite:
         self._unsubs.append(async_track_time_change(self.hass, self._tick, second=0))
         self._unsubs.append(async_track_state_change_event(self.hass, [self.presence], self._presence_changed))
         self._unsubs.append(self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_updated))
+        scenes = async_track_state_change_filtered(self.hass, TrackStates(False, set(), {"scene"}), self._scene_activated)
+        self._unsubs.append(scenes.async_remove)
         if self.dimmers:
             self._unsubs.append(self.hass.bus.async_listen("zha_event", self._zha_event))
         self._watch_lights()
@@ -290,9 +305,14 @@ class HueLite:
             found |= {entry.entity_id for entry in er.async_entries_for_label(ent_reg, label)}
         return found
 
-    def _takes_part(self, entity_id: str) -> bool:
+    def _excluded(self, entity_id: str) -> bool:
+        """Whether a light is left out of Hue-Lite: labelled Exclude from
+        lighting, hidden, or a config/diagnostic entity."""
         entry = er.async_get(self.hass).async_get(entity_id)
-        if entry and (entry.hidden or entry.entity_category or self.labels["exclude"] in entry.labels):
+        return entry is not None and bool(entry.hidden or entry.entity_category or self.labels["exclude"] in entry.labels)
+
+    def _takes_part(self, entity_id: str) -> bool:
+        if self._excluded(entity_id):
             return False
         # Light groups would double up with their members.
         state = self.hass.states.get(entity_id)
@@ -310,10 +330,11 @@ class HueLite:
     @callback
     def _set_scene(self, lights: list[str], scene: str) -> None:
         """Lights are now in `scene` (NATURAL, ROUTINE or a preset id), or with
-        '' in none (changed by hand, or done with)."""
+        '' in none (changed by hand, or done with). Excluded lights are never
+        kept in one: named in an action they're set once, not followed."""
         changed = False
         for light in lights:
-            if self.scenes.get(light, "") == scene:
+            if self.scenes.get(light, "") == scene or (scene and self._excluded(light)):
                 continue
             changed = True
             if scene:
@@ -599,20 +620,43 @@ class HueLite:
         if self.settings["leaving_home_enabled"] and (on := self._on(self.lights())):
             self._spawn(self._call("turn_off", on, transition=2))
 
+    # ---- Home Assistant's own scenes ---------------------------------------------
+
+    @callback
+    def _scene_activated(self, event: Event[EventStateChangedData]) -> None:
+        """One of Home Assistant's own scenes (scene editor, scenes.yaml) was
+        activated. Like picking a scene in Hue, that takes its lights out of
+        Hue-Lite's scenes, so Natural light and the routine don't override it.
+        Home Assistant records the activation before it sets the lights."""
+        old, new = event.data["old_state"], event.data["new_state"]
+        # Appearing, disappearing or coming back after a reload isn't an activation.
+        if old is None or new is None or old.state == new.state or STATE_UNAVAILABLE in (old.state, new.state):
+            return
+        lights = new.attributes.get(ATTR_ENTITY_ID) or ()
+        if isinstance(lights, str):
+            lights = [lights]
+        self._set_scene([light for light in lights if light.startswith(f"{LIGHT}.")], "")
+
     # ---- Renamed and removed lights --------------------------------------------
 
     @callback
     def _registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
-        """A light keeps its scene when its entity id changes, and one that's
-        deleted is forgotten."""
+        """A light keeps its scene when its entity id changes; one that's
+        deleted, or excluded or hidden, is let go."""
         data = event.data
-        if not data["entity_id"].startswith(f"{LIGHT}."):
+        light = data["entity_id"]
+        if not light.startswith(f"{LIGHT}."):
             return
         if data["action"] == "remove":
-            self._set_scene([data["entity_id"]], "")
-        elif data["action"] == "update" and (old := data.get("old_entity_id")) and (scene := self.scenes.get(old)):
+            self._set_scene([light], "")
+            return
+        if data["action"] != "update":
+            return
+        if (old := data.get("old_entity_id")) and (scene := self.scenes.get(old)):
             self._set_scene([old], "")
-            self._set_scene([data["entity_id"]], scene)
+            self._set_scene([light], scene)
+        if light in self.scenes and self._excluded(light):
+            self._set_scene([light], "")
 
     # ---- Hue dimmer switches -------------------------------------------------
 

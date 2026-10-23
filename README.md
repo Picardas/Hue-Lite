@@ -45,7 +45,8 @@ Give it an **area** and any of these **labels** (Settings → Devices & services
 | Coming home | Comes on in Natural light when someone arrives home |
 | Exclude from lighting | Left out of everything: the dashboard, scenes, routines and dimmers |
 
-Hidden lights are left out too (e.g. one run by its own motion sensor). Any
+Hidden lights are left out too (e.g. one run by its own motion sensor). A light
+that's excluded or hidden while it's in a scene is let go straight away. Any
 other label you create becomes a group on the dashboard, e.g. "Lamps".
 
 ## The Lights dashboard
@@ -97,6 +98,12 @@ Hue-Lite remembers which scene each light is in rather than recognising it
 from its colour, so the dashboard highlights and the dimmer cycle work for
 every kind of bulb. `sensor.hue_lite_light_scenes` lists them (`scenes`).
 Changing a light by hand forgets its scene.
+
+Hue-Lite's scenes aren't Home Assistant scene entities, and it leaves yours
+alone. Activating one of your own scenes (from the scene editor, `scenes.yaml`,
+an automation or a voice assistant) counts like picking a scene in Hue: its
+lights leave Natural light, the evening routine or their preset, so Hue-Lite
+doesn't move them back.
 
 **Natural light** follows the sun from your Home Assistant location:
 
@@ -180,7 +187,10 @@ Settings and which lights are in which scene survive restarts.
 ## Actions
 
 Each takes a light target (entities, areas, floors, devices or labels); with
-none, every light (except hidden, excluded and light groups).
+none, every light. Areas, floors, devices, labels and "every light" skip
+hidden and excluded lights and light groups. A light named directly is set even
+if it's excluded, but only once: Hue-Lite doesn't keep it in a scene. A
+non-admin user can only use lights they may control.
 
 ```yaml
 action: hue_lite.apply_preset   # energize, cool_bright, relax, rest, nightlight
