@@ -24,43 +24,41 @@ TARGET = {vol.Optional(key): cv.entity_ids if key == ATTR_ENTITY_ID else _IDS fo
 
 @callback
 def async_register(hass: HomeAssistant) -> None:
-    def hue_lite() -> HueLite:
+    async def targeted(call: ServiceCall) -> tuple[HueLite, list[str]]:
+        """The running Hue-Lite and the call's lights, checked against the
+        caller's permissions the way Home Assistant checks its own light
+        actions: Hue-Lite then changes them as itself, which Home Assistant
+        doesn't check. With a target, every light must be allowed; without
+        one, only the allowed ones count."""
         if (running := async_get_loaded(hass)) is None:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key="not_loaded")
-        return running
-
-    async def lights(running: HueLite, call: ServiceCall) -> list[str]:
-        """The call's lights, checked against the caller's permissions the way
-        Home Assistant checks its own light actions: Hue-Lite then changes
-        them as itself, which Home Assistant doesn't check. With a target,
-        every light must be allowed; without one, only the allowed ones count."""
         found = running.lights(call.data)
         if not call.context.user_id:
-            return found
+            return running, found
         if (user := await hass.auth.async_get_user(call.context.user_id)) is None:
             raise UnknownUser(context=call.context)
         if user.is_admin:
-            return found
+            return running, found
         denied = [light for light in found if not user.permissions.check_entity(light, POLICY_CONTROL)]
         if denied and any(call.data.get(key) for key in TARGET_KEYS):
             raise Unauthorized(context=call.context, entity_id=denied[0], permission=POLICY_CONTROL)
-        return [light for light in found if light not in denied]
+        return running, [light for light in found if light not in denied]
 
     async def apply_preset(call: ServiceCall) -> None:
-        running = hue_lite()
-        await running.async_preset(await lights(running, call), call.data["preset"], parent=call.context)
+        running, lights = await targeted(call)
+        await running.async_preset(lights, call.data["preset"], parent=call.context)
 
     async def natural_light(call: ServiceCall) -> None:
-        running = hue_lite()
-        await running.async_natural_light(await lights(running, call), call.data["follow"], parent=call.context)
+        running, lights = await targeted(call)
+        await running.async_natural_light(lights, call.data["follow"], parent=call.context)
 
     async def next_scene(call: ServiceCall) -> None:
-        running = hue_lite()
-        await running.async_next_scene(await lights(running, call), parent=call.context)
+        running, lights = await targeted(call)
+        await running.async_next_scene(lights, parent=call.context)
 
     async def set_auto(call: ServiceCall) -> None:
-        running = hue_lite()
-        running.async_set_auto(await lights(running, call), call.data["auto"])
+        running, lights = await targeted(call)
+        running.async_set_auto(lights, call.data["auto"])
 
     hass.services.async_register(
         DOMAIN,

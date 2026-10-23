@@ -1,14 +1,14 @@
-"""Hue-Lite's engine: the settings, which scene each light is in, sending lights
-their scene, and following the clock. The routines are in routines.py, the
-Hue dimmers in dimmers.py, and choosing lights in targets.py.
+"""Hue-Lite's engine: the settings, which scene each light is in, and
+following the clock. The routines are in routines.py, the Hue dimmers in
+dimmers.py, choosing lights in targets.py and sending them commands in
+lights.py.
 
 Each light Hue-Lite has put into a scene remembers it in `scenes`: Natural
 light, the evening routine, a preset, a colour scene (whose colours drift),
-or the wake-up fade-in. Picking another
-scene replaces it; changing the light yourself or from an automation, or
-activating one of Home Assistant's own scenes with it, forgets it. Turning a
-light off keeps its scene, so a light in Natural light or the routine picks it
-up again when it comes back on.
+or the wake-up fade-in. Picking another scene replaces it; changing the light
+yourself or from an automation, or activating one of Home Assistant's own
+scenes with it, forgets it. Turning a light off keeps its scene, so a light in
+Natural light or the routine picks it up again when it comes back on.
 
 A light is on Auto while the evening routine or wake up has it, or while it's
 in `auto` (put there from its Auto button); those the routines take as if
@@ -18,17 +18,13 @@ off Auto; turning it on or off doesn't.
 
 from __future__ import annotations
 
-import asyncio
-from collections import deque
 from collections.abc import Coroutine, Mapping
 from datetime import date, datetime, time
-import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import ATTR_ENTITY_ID, ATTR_LABEL_ID, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, HomeAssistant, State, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import (
     area_registry as ar,
     device_registry as dr,
@@ -41,7 +37,6 @@ from homeassistant.helpers.event import TrackStates, async_track_state_change_ev
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
-from homeassistant.util.color import color_xy_to_RGB
 
 from . import dimmers
 from .const import (
@@ -62,6 +57,7 @@ from .const import (
     WAKE_UP,
     label_option,
 )
+from .lights import Sender
 from .routines import Routines
 from .targets import LIGHT, excluded, resolve
 from .timeline import (
@@ -69,7 +65,6 @@ from .timeline import (
     PRESETS,
     Evening,
     EveningSettings,
-    Light,
     SunTimes,
     Target,
     evening_routine,
@@ -77,10 +72,6 @@ from .timeline import (
     natural_light,
     next_scene,
 )
-
-_LOGGER = logging.getLogger(__name__)
-
-COLOUR_MODES = frozenset({"hs", "xy", "rgb", "rgbw", "rgbww"})
 
 type HueLiteConfigEntry = ConfigEntry[HueLite]
 
@@ -94,18 +85,51 @@ def async_get_loaded(hass: HomeAssistant) -> HueLite | None:
     return None
 
 
-def rgb_color(light: Light) -> list[int]:
-    """The RGB colour a colour bulb reports at `light` (Home Assistant works it
-    out from the xy colour), for the dashboard to show."""
-    return list(color_xy_to_RGB(*light.xy_color))
-
-
 def _is_time(value: str) -> bool:
     try:
         time.fromisoformat(value)
     except ValueError:
         return False
     return True
+
+
+def _stored(data: Any) -> dict[str, Any]:
+    """The stored data, brought up to date from earlier versions (the evening
+    routine's one switch is now one for Sun–Thu nights and one for Fri & Sat
+    nights, both starting as it was; the Movie scene is now Nebula), with
+    anything of the wrong kind left out: a damaged file, or a setting of the
+    wrong type, which keeps its default (a bad time would break every
+    minute's tick)."""
+    data = data if isinstance(data, dict) else {}
+
+    def part(key: str, kind: type) -> Any:
+        return data[key] if isinstance(data.get(key), kind) else kind()
+
+    settings, scenes, auto = part("settings", dict), part("scenes", dict), part("auto", list)
+    if isinstance(was := settings.get("evening_routine_enabled"), bool):
+        settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
+    renamed = {"movie": "nebula"}
+    return {
+        "settings": {
+            key: value
+            for key, value in settings.items()
+            if key in DEFAULT_SETTINGS
+            and type(value) is type(DEFAULT_SETTINGS[key])
+            and (key not in TIMES or _is_time(value))
+        },
+        "scenes": {light: renamed.get(scene, scene) for light, scene in scenes.items() if isinstance(scene, str)},
+        "auto": [light for light in auto if isinstance(light, str)],
+        "last_wake_up": _instant(data.get("last_wake_up")),
+    }
+
+
+def _instant(value: Any) -> datetime | None:
+    """A stored time with its time zone, or None."""
+    try:
+        when = dt_util.parse_datetime(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+    return when if when and when.tzinfo else None
 
 
 class HueLite:
@@ -122,7 +146,7 @@ class HueLite:
         self.labels = {role: entry.options.get(label_option(role), spec[0]) for role, spec in ROLES.items()}
         self.presence: str = entry.options.get(CONF_PRESENCE, DEFAULT_PRESENCE)
         self.settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
-        # Light -> the scene it's in: NATURAL, ROUTINE, WAKE_UP or a preset id.
+        # Light -> the scene it's in: NATURAL, ROUTINE, WAKE_UP, a preset or a colour scene.
         self.scenes: dict[str, str] = {}
         # Lights put on Auto: the routines take them as if they had the
         # routines' labels (see async_set_auto).
@@ -133,6 +157,7 @@ class HueLite:
         self.last_wake_up: datetime | None = None
         # The target each followed scene's lights were last moved to.
         self.followed: dict[str, Target] = {}
+        self.sender = Sender(hass)
         self.routines = Routines(self)
         self._dimmers: bool = entry.options.get(CONF_DIMMERS, True)
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -141,12 +166,6 @@ class HueLite:
         self._unsubs: list[CALLBACK_TYPE] = []
         self._unwatch: CALLBACK_TYPE | None = None
         self._watched: frozenset[str] = frozenset()
-        # Contexts of Hue-Lite's own light changes, so they're not taken for changes by others.
-        self._ours: deque[str] = deque(maxlen=100)
-        # Lights a command is on its way to, and the latest command waiting
-        # for each (see call).
-        self._sending: set[str] = set()
-        self._waiting: dict[str, tuple[str, dict[str, Any], Context | None]] = {}
         # Each light's brightness when it was last turned off, to tell a plain
         # switch-on from one at a brightness of someone's own.
         self._off_brightness: dict[str, int] = {}
@@ -157,34 +176,21 @@ class HueLite:
 
     async def async_load(self) -> None:
         """Load the saved settings and scenes, and work out where the timelines are."""
-        data = await self._store.async_load() or {}
-        settings = data.get("settings", {})
-        # The evening routine's one switch is now one for Sun–Thu nights and
-        # one for Fri & Sat nights: both start as it was.
-        if isinstance(was := settings.get("evening_routine_enabled"), bool):
-            settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
-        # A stored value of the wrong kind (a bad time, say) would break every
-        # minute's tick, so those keep their defaults.
-        for key, value in settings.items():
-            if key in self.settings and type(value) is type(self.settings[key]):
-                if key in TIMES and not _is_time(value):
-                    continue
-                self.settings[key] = value
-        if woke := data.get("last_wake_up"):
-            self.last_wake_up = dt_util.parse_datetime(woke)
+        data = _stored(await self._store.async_load())
+        self.settings.update(data["settings"])
+        self.last_wake_up = data["last_wake_up"]
         self.natural, self.evening = self._targets(dt_util.now())
         self.followed = {NATURAL: self.natural, ROUTINE: self.evening}
         self._shown = (self.natural, self.evening)
         # Lights excluded since are let go, and so are the routine's when bedtime
         # passed while Home Assistant was down.
         routine_over = self.evening.phase not in EVENING_PHASES
-        renamed = {"movie": "nebula"}
         self.scenes = {
-            light: renamed.get(scene, scene)
-            for light, scene in data.get("scenes", {}).items()
-            if isinstance(scene, str) and not self.excluded(light) and not (routine_over and scene == ROUTINE)
+            light: scene
+            for light, scene in data["scenes"].items()
+            if not self.excluded(light) and not (routine_over and scene == ROUTINE)
         }
-        self.auto = {light for light in data.get("auto", []) if isinstance(light, str) and not self.excluded(light)}
+        self.auto = {light for light in data["auto"] if not self.excluded(light)}
 
     @callback
     def async_start(self) -> None:
@@ -232,7 +238,12 @@ class HueLite:
     async def async_save(self) -> None:
         await self._store.async_save(self._data())
 
-    # ---- Entities and the dashboard ------------------------------------------
+    @callback
+    def spawn(self, target: Coroutine[Any, Any, None]) -> None:
+        """Run light commands in the background (stopped with the entry)."""
+        self.entry.async_create_background_task(self.hass, target, f"{DOMAIN} lights")
+
+    # ---- Entities ------------------------------------------------------------
 
     @callback
     def async_add_listener(self, update: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -256,40 +267,24 @@ class HueLite:
         self._notify()
 
     @callback
-    def frontend_config(self) -> dict[str, Any]:
-        """What the dashboard needs: the role labels, the labels it can show
-        (role labels and labels on lights, their devices and areas; Home
-        Assistant only lists every label to admins), Hue-Lite's entity ids,
-        and the colours of each preset and colour scene as a colour bulb
-        reports them, for their tiles."""
-        devices, areas = dr.async_get(self.hass), ar.async_get(self.hass)
-        wanted = set(self.labels.values())
-        for entry in er.async_get(self.hass).entities.values():
-            if entry.domain != LIGHT:
-                continue
-            wanted |= entry.labels
-            device = devices.async_get(entry.device_id) if entry.device_id else None
-            if device:
-                wanted |= device.labels
-            area_id = entry.area_id or (device.area_id if device else None)
-            if area_id and (area := areas.async_get_area(area_id)):
-                wanted |= area.labels
-        return {
-            "roles": self.labels,
-            "labels": [
-                {"label_id": label.label_id, "name": label.name, "icon": label.icon}
-                for label in lr.async_get(self.hass).async_list_labels()
-                if label.label_id in wanted
-            ],
-            "entities": self.entity_ids,
-            "presets": {
-                **{preset: {"rgb_colors": [rgb_color(light)]} for preset, light in PRESETS.items()},
-                **{
-                    scene: {"rgb_colors": [rgb_color(palette.colour(i)) for i in range(len(palette.colours))]}
-                    for scene, palette in PALETTES.items()
-                },
-            },
-        }
+    def _check_labels(self, _event: Event | None = None) -> None:
+        """Raise a Repairs issue for a role whose label has been deleted (that
+        role then has no lights), and clear it once there's a label again."""
+        registry = lr.async_get(self.hass)
+        for role, label_id in self.labels.items():
+            issue_id = f"missing_label_{role}"
+            if registry.async_get_label(label_id):
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            else:
+                ir.async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    issue_id,
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key="missing_label",
+                    translation_placeholders={"role": ROLES[role][1]},
+                )
 
     # ---- Choosing lights -----------------------------------------------------
 
@@ -306,6 +301,14 @@ class HueLite:
         """The lights a routine ("evening" or "wake_up") takes: those with its
         label, and those on Auto."""
         return self.lights({ATTR_LABEL_ID: [self.labels[role]], ATTR_ENTITY_ID: sorted(self.auto)})
+
+    def excluded(self, entity_id: str) -> bool:
+        return excluded(self.hass, entity_id, self.labels["exclude"])
+
+    def on(self, lights: list[str]) -> list[str]:
+        return [entity_id for entity_id in lights if self.hass.states.is_state(entity_id, STATE_ON)]
+
+    # ---- Auto ----------------------------------------------------------------
 
     def on_auto(self) -> list[str]:
         """The lights on Auto: put on it, or held by the evening routine or
@@ -341,36 +344,10 @@ class HueLite:
             self.auto.difference_update(lights)
         return len(self.auto) != before
 
-    def excluded(self, entity_id: str) -> bool:
-        return excluded(self.hass, entity_id, self.labels["exclude"])
-
-    def on(self, lights: list[str]) -> list[str]:
-        return [entity_id for entity_id in lights if self.hass.states.is_state(entity_id, STATE_ON)]
-
-    @callback
-    def _check_labels(self, _event: Event | None = None) -> None:
-        """Raise a Repairs issue for a role whose label has been deleted (that
-        role then has no lights), and clear it once there's a label again."""
-        registry = lr.async_get(self.hass)
-        for role, label_id in self.labels.items():
-            issue_id = f"missing_label_{role}"
-            if registry.async_get_label(label_id):
-                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
-            else:
-                ir.async_create_issue(
-                    self.hass,
-                    DOMAIN,
-                    issue_id,
-                    is_fixable=False,
-                    severity=ir.IssueSeverity.WARNING,
-                    translation_key="missing_label",
-                    translation_placeholders={"role": ROLES[role][1]},
-                )
-
     # ---- Scenes --------------------------------------------------------------
 
     def in_scene(self, scene: str) -> list[str]:
-        """The lights in a scene (NATURAL, ROUTINE, WAKE_UP or a preset id)."""
+        """The lights in a scene (NATURAL, ROUTINE, WAKE_UP, a preset or a colour scene)."""
         return sorted(light for light, current in self.scenes.items() if current == scene)
 
     def target(self, scene: str) -> Target:
@@ -423,7 +400,7 @@ class HueLite:
         if preset in PALETTES:
             await self.send_palette(preset, lights, 0.4, parent)
         else:
-            await self.send(lights, PRESETS[preset], 0.4, parent)
+            await self.sender.send(lights, PRESETS[preset], 0.4, parent)
 
     async def async_natural_light(self, lights: list[str], follow: bool = True, parent: Context | None = None) -> None:
         """Someone picked Natural light: the lights leave Auto, go into it
@@ -436,9 +413,9 @@ class HueLite:
             await self.apply(NATURAL, lights, 2, parent)
 
     async def async_next_scene(self, lights: list[str], parent: Context | None = None) -> None:
-        """Like pressing a Hue dimmer's On button again: Natural light,
-        Energize, Cool bright, Relax, Rest, Nightlight, and round. Lights that
-        are off, or in something unrecognised, go to Natural light."""
+        """Like pressing a Hue dimmer's On button again: Natural light, then
+        the presets in turn, and round. Lights that are off, or in something
+        not in that cycle, go to Natural light."""
         if not lights:
             return
         scene = next_scene(self.current_scene(lights))
@@ -454,34 +431,26 @@ class HueLite:
         target = self.target(scene)
         night = target.phase == ("night" if scene == NATURAL else "nightlight")
         nightlights = set(self.labelled("nightlight")) if night else set()
-        await self.send([light for light in lights if light in nightlights], PRESETS["nightlight"], transition, parent)
-        await self.send([light for light in lights if light not in nightlights], target.light, transition, parent)
+        await self.sender.send([light for light in lights if light in nightlights], PRESETS["nightlight"], transition, parent)
+        await self.sender.send([light for light in lights if light not in nightlights], target.light, transition, parent)
 
-    async def send(self, lights: list[str], light: Light, transition: float, parent: Context | None = None) -> None:
-        """Turn lights on at `light`: its xy colour on bulbs with colour, its
-        colour temperature on the rest."""
-        colour = [entity_id for entity_id in lights if self._has_colour(entity_id)]
-        white = [entity_id for entity_id in lights if entity_id not in colour]
-        if colour:
-            await self.call("turn_on", colour, parent=parent, **light.colour_data(), transition=transition)
-        if white:
-            await self.call("turn_on", white, parent=parent, **light.white_data(), transition=transition)
+    # ---- Colour scenes -------------------------------------------------------
 
     async def send_palette(self, scene: str, lights: list[str], transition: float, parent: Context | None = None) -> None:
         """Turn lights on in a colour scene. Each colour bulb gets the colour
         for its place among the scene's colour bulbs, moved on one colour
         every DRIFT_MINUTES, so a room shows several and they drift; white
         bulbs get the scene's white."""
-        palette = PALETTES[scene]
-        colour = [light for light in lights if self._has_colour(light)]
-        order = sorted({*colour, *(light for light in self.in_scene(scene) if self._has_colour(light))})
+        palette, has_colour = PALETTES[scene], self.sender.has_colour
+        colour = [light for light in lights if has_colour(light)]
+        order = sorted({*colour, *(light for light in self.in_scene(scene) if has_colour(light))})
         step = self._drift_step()
         by_colour: dict[int, list[str]] = {}
         for light in colour:
             by_colour.setdefault((order.index(light) + step) % len(palette.colours), []).append(light)
         for index, group in sorted(by_colour.items()):
-            await self.send(group, palette.colour(index), transition, parent)
-        await self.send([light for light in lights if light not in colour], palette.white, transition, parent)
+            await self.sender.send(group, palette.colour(index), transition, parent)
+        await self.sender.send([light for light in lights if light not in colour], palette.white, transition, parent)
 
     @staticmethod
     def _drift_step() -> int:
@@ -495,60 +464,10 @@ class HueLite:
             return
         self._drifted = step
         for scene in PALETTES:
-            if lights := [light for light in self.on(self.in_scene(scene)) if self._has_colour(light)]:
+            if lights := [light for light in self.on(self.in_scene(scene)) if self.sender.has_colour(light)]:
                 self.spawn(self.send_palette(scene, lights, DRIFT_MINUTES * 60))
 
-    def _has_colour(self, entity_id: str) -> bool:
-        state = self.hass.states.get(entity_id)
-        modes = state.attributes.get("supported_color_modes") if state else None
-        # Unknown: send colour, which Home Assistant converts if it has to.
-        return modes is None or bool(COLOUR_MODES.intersection(modes))
-
-    async def call(self, service: str, lights: list[str], *, parent: Context | None = None, **data: Any) -> None:
-        """Call a light action as Hue-Lite: a context with no user, so the
-        change isn't taken for someone else's, linked to what caused it (an
-        action call, a dimmer press) so the logbook can say.
-
-        Commands don't pile up behind a slow or unreachable bulb (Zigbee
-        sends to a bulb one request at a time, and an unanswered one takes
-        seconds to fail, holding up everything after it, yours included): a
-        command for a light that's still being sent the last one waits,
-        replacing any already waiting, so only the latest goes."""
-        command = (service, data, parent)
-        for light in lights:
-            self._waiting[light] = command
-        await self._send_waiting([light for light in lights if light not in self._sending])
-
-    async def _send_waiting(self, lights: list[str]) -> None:
-        """Send lights their waiting commands (lights waiting on the same one
-        together), then any that came in for them meanwhile."""
-        while lights:
-            commands: dict[int, tuple[tuple[str, dict[str, Any], Context | None], list[str]]] = {}
-            for light in lights:
-                command = self._waiting.pop(light)
-                commands.setdefault(id(command), (command, []))[1].append(light)
-            self._sending.update(lights)
-            try:
-                await asyncio.gather(*(self._send(*command, group) for command, group in commands.values()))
-            finally:
-                self._sending.difference_update(lights)
-            lights = [light for light in lights if light in self._waiting]
-
-    async def _send(self, service: str, data: dict[str, Any], parent: Context | None, lights: list[str]) -> None:
-        """One light action call. A bulb that doesn't answer is logged and
-        doesn't stop the rest."""
-        context = Context(parent_id=parent.id if parent else None)
-        self._ours.append(context.id)
-        try:
-            await self.hass.services.async_call(
-                LIGHT, service, {ATTR_ENTITY_ID: lights, **data}, blocking=True, context=context
-            )
-        except HomeAssistantError as err:
-            _LOGGER.warning("Couldn't %s %s: %s", service.replace("_", " "), ", ".join(lights), err)
-
-    @callback
-    def spawn(self, target: Coroutine[Any, Any, None]) -> None:
-        self.entry.async_create_background_task(self.hass, target, f"{DOMAIN} lights")
+    # ---- Changes to the lights -----------------------------------------------
 
     @callback
     def _watch_lights(self) -> None:
@@ -583,7 +502,7 @@ class HueLite:
                 self._off_brightness[light] = brightness
             if scene == WAKE_UP:
                 self.set_scene([light], "")
-        if new.state != STATE_ON or new.context.id in self._ours:
+        if new.state != STATE_ON or self.sender.is_ours(new.context):
             return
         by_someone = bool(new.context.user_id or new.context.parent_id)
         if by_someone and (old.state == STATE_ON or self._own_brightness(new)):

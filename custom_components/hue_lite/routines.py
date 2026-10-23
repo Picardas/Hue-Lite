@@ -111,7 +111,7 @@ class Routines:
             return
         lite.set_scene(lights, "")
         if on := lite.on(lights):
-            await lite.call("turn_off", on, transition=lite.settings["bedtime_fade_minutes"] * 60)
+            await lite.sender.call("turn_off", on, transition=lite.settings["bedtime_fade_minutes"] * 60)
 
     # ---- Wake up -------------------------------------------------------------
 
@@ -156,9 +156,9 @@ class Routines:
         lite = self.lite
         lite.last_wake_up = dt_util.utcnow()
         lite.set_scene(lights, WAKE_UP)
-        await lite.call("turn_on", lights, brightness=1, color_temp_kelvin=2200)
+        await lite.sender.call("turn_on", lights, brightness=1, color_temp_kelvin=2200)
         await asyncio.sleep(2)
-        await lite.send(lights, PRESETS["energize"], lite.settings["wake_up_fade_minutes"] * 60)
+        await lite.sender.send(lights, PRESETS["energize"], lite.settings["wake_up_fade_minutes"] * 60)
 
     @callback
     def _wake_up_over(self) -> None:
@@ -171,7 +171,7 @@ class Routines:
         lights = lite.in_scene(WAKE_UP)
         lite.set_scene(lights, "")
         if on := lite.on(lights):
-            lite.spawn(lite.call("turn_off", on, transition=60))
+            lite.spawn(lite.sender.call("turn_off", on, transition=60))
 
     # ---- Coming & Going ------------------------------------------------------
 
@@ -210,4 +210,4 @@ class Routines:
         self._leaving = None
         lite = self.lite
         if lite.settings["leaving_home_enabled"] and (on := lite.on(lite.lights())):
-            lite.spawn(lite.call("turn_off", on, transition=2))
+            lite.spawn(lite.sender.call("turn_off", on, transition=2))

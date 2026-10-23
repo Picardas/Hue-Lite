@@ -12,7 +12,7 @@ from homeassistant.setup import async_setup_component
 from custom_components.hue_lite.engine import HueLite
 from custom_components.hue_lite.timeline import PALETTES, PRESETS
 
-from .conftest import Home, action, add_light, natural, on, set_up, settle, tick
+from .conftest import Home, action, add_light, natural, on, ours, set_up, settle, tick
 
 RELAX = {"brightness_pct": 56, "xy_color": [0.5019, 0.4152]}
 
@@ -41,7 +41,7 @@ async def test_colour_scene(hass: HomeAssistant, freezer: FrozenDateTimeFactory,
     # Every few minutes the colour bulbs that are on drift on to their next
     # colour, taking until the next move; the white one stays put.
     on(hass, hue_lite, lamp, "light.living_room")
-    hass.states.async_set(desk, "on", {"supported_color_modes": ["color_temp"]}, context=Context(id=hue_lite._ours[-1]))
+    hass.states.async_set(desk, "on", {"supported_color_modes": ["color_temp"]}, context=ours(hue_lite))
     home.turn_on.clear()
     await tick(hass, freezer, "13:03")
     moved = sent()
@@ -117,7 +117,7 @@ async def test_lights_turned_on_or_changed(hass: HomeAssistant, home: Home, hue_
     by_hand = Context(user_id="someone")
     await action(hass, "natural_light", {"entity_id": "light.living_room"})
     on(hass, hue_lite, "light.living_room")
-    hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=Context(id=hue_lite._ours[-1]))
+    hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=ours(hue_lite))
     hass.states.async_set("light.living_room", "off", context=by_hand)
     home.turn_on.clear()
     hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=by_hand)

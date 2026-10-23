@@ -38,7 +38,7 @@ async def _press(lite: HueLite, button: str, lights: list[str], parent: Context)
     if button == "on":
         await lite.async_next_scene(lights, parent)
     elif button == "off":
-        await lite.call("turn_off", lights, parent=parent, transition=1)
+        await lite.sender.call("turn_off", lights, parent=parent, transition=1)
     else:
         up = button == "up"
         dimming = [
@@ -48,4 +48,4 @@ async def _press(lite: HueLite, button: str, lights: list[str], parent: Context)
         ]
         if dimming:
             lite.set_scene(dimming, "", leave_auto=True)
-            await lite.call("turn_on", dimming, parent=parent, brightness_step_pct=10 if up else -10, transition=0.4)
+            await lite.sender.call("turn_on", dimming, parent=parent, brightness_step_pct=10 if up else -10, transition=0.4)

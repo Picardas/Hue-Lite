@@ -163,7 +163,12 @@ async def settle(hass: HomeAssistant) -> None:
 def on(hass: HomeAssistant, hue_lite: HueLite, *lights: str) -> None:
     """Lights reporting that Hue-Lite turned them on."""
     for light in lights:
-        hass.states.async_set(light, "on", {}, context=Context(id=hue_lite._ours[-1]))
+        hass.states.async_set(light, "on", {}, context=ours(hue_lite))
+
+
+def ours(hue_lite: HueLite) -> Context:
+    """The context of Hue-Lite's latest light command."""
+    return Context(id=hue_lite.sender._ours[-1])
 
 
 def natural(hass: HomeAssistant) -> list[str]:

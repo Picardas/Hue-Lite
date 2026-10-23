@@ -17,6 +17,7 @@ async def test_commands_dont_pile_up_behind_a_slow_bulb(hass: HomeAssistant, hom
     """Zigbee sends to a bulb one request at a time, so a bulb that's slow to
     answer would hold up every command after it. While one is on its way,
     newer ones for that light replace each other, and only the latest goes."""
+    sender = hue_lite.sender
     answer = asyncio.Event()
     sent: list[tuple[list[str], int]] = []
 
@@ -34,13 +35,13 @@ async def test_commands_dont_pile_up_behind_a_slow_bulb(hass: HomeAssistant, hom
             await turn
 
     living_room, bedroom = "light.living_room", "light.bedroom"
-    with patch.object(hue_lite, "_send", slow_bulbs):
-        first = hass.async_create_task(hue_lite.call("turn_on", [living_room], brightness_pct=10))
+    with patch.object(sender, "_call", slow_bulbs):
+        first = hass.async_create_task(sender.call("turn_on", [living_room], brightness_pct=10))
         await until_sent(1)
         # The living room is still being sent its first: these wait, the later
         # replacing the earlier. The bedroom isn't busy, so it's sent straight away.
-        await hue_lite.call("turn_on", [living_room], brightness_pct=20)
-        third = hass.async_create_task(hue_lite.call("turn_on", [living_room, bedroom], brightness_pct=30))
+        await sender.call("turn_on", [living_room], brightness_pct=20)
+        third = hass.async_create_task(sender.call("turn_on", [living_room, bedroom], brightness_pct=30))
         await until_sent(2)
         assert sent == [([living_room], 10), ([bedroom], 30)]
 

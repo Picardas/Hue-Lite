@@ -123,7 +123,6 @@
   // ---- Views ---------------------------------------------------------------
 
   function mainView(hass, setup, path) {
-    const e = setup.entities;
     const roleLabels = Object.values(setup.roles);
     const lights = allLights(hass, setup.roles.exclude);
     const ids = (entries) => entries.map((x) => x.entity_id).sort(byName(hass));
@@ -162,8 +161,14 @@
     if (rooms.length) {
       sections.push({ type: "grid", column_span: 2, cards: [{ type: "custom:hue-lite-rooms", rooms }] });
     }
+    sections.push({ type: "grid", column_span: 3, cards: [routinesCard(setup.entities, path)] });
 
-    // The routines go in one card of collapsible blocks, like the rooms.
+    return { title: "Lights", path: "lights", icon: "mdi:lightbulb-group", type: "sections", max_columns: 3, sections };
+  }
+
+  // The routines, in one card of collapsible blocks like the rooms, with the
+  // Timings & fades link at the end. `e` are Hue-Lite's entity ids.
+  function routinesCard(e, path) {
     const routines = [{
       id: "wake_up",
       name: "Wake up",
@@ -211,7 +216,6 @@
         entities: [{ entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" }],
       }],
     }];
-    // Wake up's and the evening's timings, at the end of them all.
     const footer = [{
       type: "heading",
       heading: "Timings & fades",
@@ -219,13 +223,14 @@
       icon: "mdi:tune-variant",
       tap_action: { action: "navigate", navigation_path: `/${path}/settings` },
     }];
-    sections.push({ type: "grid", column_span: 3, cards: [{ type: "custom:hue-lite-routines", routines, footer, entities: e }] });
-
-    return { title: "Lights", path: "lights", icon: "mdi:lightbulb-group", type: "sections", max_columns: 3, sections };
+    return { type: "custom:hue-lite-routines", routines, footer, entities: e };
   }
 
+  // Text as it is in Markdown: its punctuation can't make links or formatting.
+  const markdownText = (text) => text.replace(/[\\`*_{}[\]()<>#+\-.!|~]/g, "\\$&");
+
   function howItWorks(setup) {
-    const label = (role) => setup.labels.find((l) => l.label_id === setup.roles[role])?.name || role;
+    const label = (role) => markdownText(setup.labels.find((l) => l.label_id === setup.roles[role])?.name || role);
     return [
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
@@ -302,14 +307,6 @@
     }
   }
 
-  // ---- Shared card bits ----------------------------------------------------
-
-  // The round icon used by the light bars and the scene tiles.
-  const CIRCLE_CSS = `
-    .circle { --mdc-icon-size: 24px; width: 36px; height: 36px; border-radius: 50%; flex: none;
-              display: flex; align-items: center; justify-content: center; transition: background-color 180ms, color 180ms;
-              background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.05); color: var(--state-inactive-color, var(--secondary-text-color)); }`;
-
   // ---- Colours -------------------------------------------------------------
 
   // How a light's colour shows on its icon, its slider and its scene's tile:
@@ -352,6 +349,14 @@
       "--ink": luminance < 0.18 ? "#fff" : "rgba(0, 0, 0, 0.87)",
     };
   }
+
+  // ---- Shared card bits ----------------------------------------------------
+
+  // The round icon used by the light bars and the scene tiles.
+  const CIRCLE_CSS = `
+    .circle { --mdc-icon-size: 24px; width: 36px; height: 36px; border-radius: 50%; flex: none;
+              display: flex; align-items: center; justify-content: center; transition: background-color 180ms, color 180ms;
+              background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.05); color: var(--state-inactive-color, var(--secondary-text-color)); }`;
 
   // A focus ring for keyboard use only, not left behind by a tap.
   const FOCUS_CSS = `
@@ -452,7 +457,7 @@
     }
 
     _watching() {
-      return this._config.scenes_entity ? [...this._config.entities, this._config.scenes_entity] : this._config.entities;
+      return [...this._config.entities, this._config.scenes_entity].filter(Boolean);
     }
 
     _call(service, data, entities = this._config.entities) {
@@ -523,9 +528,9 @@
         slider: $("input"), auto: $(".auto"),
       };
       const { card, light, slider, auto } = this._el;
-      const all = this._single ? "on or off" : "all on or off";
-      card.title = expandable ? "Tap to show or hide the lights and scenes" : `Tap to switch ${all}${this._single ? ", hold for colour" : ""}`;
-      if (expandable) light.title = `Switch ${all}`;
+      const which = this._single ? "on or off" : "all on or off";
+      card.title = expandable ? "Tap to show or hide the lights and scenes" : `Tap to switch ${which}${this._single ? ", hold for colour" : ""}`;
+      if (expandable) light.title = `Switch ${which}`;
 
       // Auto: on for all the bar's lights unless they're all on it already.
       if (auto) {
@@ -572,10 +577,17 @@
     _toggle() {
       const states = this._states();
       const on = !(this._pending?.on ?? states.some((s) => s.state === "on"));
-      clearTimeout(this._pending?.timer);
-      this._pending = { on, states, timer: setTimeout(() => { this._pending = null; this._update(); }, PENDING_MS) };
+      this._settle();
+      const seen = new Map(states.map((s) => [s.entity_id, s]));
+      this._pending = { on, seen, timer: setTimeout(() => { this._settle(); this._update(); }, PENDING_MS) };
       this._call(on ? "turn_on" : "turn_off", {});
       this._update();
+    }
+
+    // Stop showing a tap.
+    _settle() {
+      clearTimeout(this._pending?.timer);
+      this._pending = null;
     }
 
     _update() {
@@ -589,11 +601,8 @@
       const unavailable = this._single && (!single || single.state === "unavailable");
       // Settled once the lights report where the tap was taking them (a
       // report since the tap, not the state they were already in).
-      const reported = this._pending && states.some((s, i) => s !== this._pending.states[i]);
-      if (reported && this._pending.on === on.length > 0) {
-        clearTimeout(this._pending.timer);
-        this._pending = null;
-      }
+      const reported = this._pending && states.some((s) => s !== this._pending.seen.get(s.entity_id));
+      if (reported && this._pending.on === on.length > 0) this._settle();
       const pending = this._pending;
 
       card.classList.toggle("on", pending ? pending.on : on.length > 0);
@@ -666,7 +675,7 @@
     }
 
     _watching() {
-      return [...this._config.entities, this._config.scenes_entity, ...(this._config.natural ? [this._config.natural_entity] : [])];
+      return [...this._config.entities, this._config.scenes_entity, this._config.natural_entity].filter(Boolean);
     }
 
     _selected() {
@@ -708,14 +717,17 @@
         </ha-card>`;
       this._card = this._root.querySelector("ha-card");
       this._now = this._root.querySelector(".now");
+      this._looked = false;
       onActivate(this._card, () => {
         const target = this._config.target || {};
         if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
         else this._hass.callService(DOMAIN, "apply_preset", { preset: this._scene.id }, target);
         const key = JSON.stringify(target);
-        pickedTiles.get(key)?._settle();
+        const last = pickedTiles.get(key);
+        last?._settle();
+        last?._update();
         pickedTiles.set(key, this);
-        this._picked = setTimeout(() => this._settle(), PENDING_MS);
+        this._picked = setTimeout(() => { this._settle(); this._update(); }, PENDING_MS);
         this._update();
       });
     }
@@ -724,21 +736,23 @@
     _settle() {
       clearTimeout(this._picked);
       this._picked = null;
-      this._update();
     }
 
     _update() {
       if (!this._card || !this._hass) return;
-      // Natural light's tile shows where it is now: its colour and phase.
+      // Natural light's tile shows where it is now: its colour and phase. The
+      // look is only worked out again when the colours change.
       const now = this._config.natural ? this._hass.states[this._config.natural_entity] : undefined;
-      const rgbs = now ? [now.attributes.rgb_color].filter(Array.isArray) : this._config.light?.rgb_colors;
-      for (const [name, value] of Object.entries(sceneLook(rgbs))) this._card.style.setProperty(name, value);
+      const colours = now ? now.attributes.rgb_color : this._config.light?.rgb_colors;
+      if (colours !== this._colours || !this._looked) {
+        this._colours = colours;
+        this._looked = true;
+        const look = sceneLook(now ? [colours].filter(Array.isArray) : colours);
+        for (const [name, value] of Object.entries(look)) this._card.style.setProperty(name, value);
+      }
       this._now.textContent = (now && PHASES[now.state]) || "";
       const actual = this._selected();
-      if (actual && this._picked) {
-        clearTimeout(this._picked);
-        this._picked = null;
-      }
+      if (actual) this._settle();
       const selected = actual || Boolean(this._picked);
       this._card.classList.toggle("on", selected);
       this._card.setAttribute("aria-pressed", String(selected));
@@ -750,12 +764,17 @@
 
   // Saved per signed-in user in Home Assistant's frontend storage (so it
   // follows you across devices), falling back to this browser.
+  // Lists of block ids only: anything else (a damaged layout) is dropped.
   async function loadLayout(hass, key) {
+    let saved;
     try {
-      const res = await hass.callWS({ type: "frontend/get_user_data", key });
-      if (res && res.value) return res.value;
+      saved = (await hass.callWS({ type: "frontend/get_user_data", key }))?.value;
     } catch (err) { /* fall through */ }
-    try { return JSON.parse(localStorage.getItem(key)) || {}; } catch (err) { return {}; }
+    if (!saved) {
+      try { saved = JSON.parse(localStorage.getItem(key)); } catch (err) { /* none */ }
+    }
+    const ids = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === "string") : []);
+    return { order: ids(saved?.order), collapsed: ids(saved?.collapsed) };
   }
 
   function saveLayout(hass, key, layout) {
@@ -807,8 +826,7 @@
 
     async _load() {
       this._loaded = true;
-      const saved = await loadLayout(this._hass, this._layoutKey);
-      this._layout = { order: saved.order || [], collapsed: saved.collapsed || [] };
+      this._layout = await loadLayout(this._hass, this._layoutKey);
       this._arrange();
     }
 

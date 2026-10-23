@@ -84,6 +84,21 @@ async def test_the_old_evening_switch_becomes_two(
     assert registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_evening_routine_enabled") is None
 
 
+async def test_damaged_saved_data_is_left_out(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """Parts of the wrong kind are left out rather than stopping Hue-Lite
+    starting (or a string of a light being read as many one-letter lights)."""
+    hass_storage[STORAGE_KEY] = {
+        "version": 1,
+        "key": STORAGE_KEY,
+        "data": {"settings": ["off"], "scenes": "light.bedroom", "auto": "light.bedroom", "last_wake_up": "2026-10-22T07:00:00"},
+    }
+    hue_lite = await set_up(hass, entry)
+    assert (hue_lite.scenes, hue_lite.auto, hue_lite.last_wake_up) == ({}, set(), None)
+    assert hue_lite.settings["evening_weeknights"] is True
+
+
 async def test_bad_or_stale_saved_data_is_dropped(
     hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
 ) -> None:

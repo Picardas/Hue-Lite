@@ -8,12 +8,12 @@ from unittest.mock import patch
 from freezegun.api import FrozenDateTimeFactory
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import HomeAssistant
 
 from custom_components.hue_lite.engine import HueLite
 from custom_components.hue_lite.timeline import PRESETS
 
-from .conftest import FRIDAY, Home, action, add_device, natural, on, routine, set_up, settle, switch, tick
+from .conftest import FRIDAY, Home, action, add_device, natural, on, ours, routine, set_up, settle, switch, tick
 
 COOL_BRIGHT_XY = list(PRESETS["cool_bright"].xy_color)
 EVENING = "switch.hue_lite_evening_routine_sun_thu_nights"  # the tests' Thursday
@@ -266,7 +266,7 @@ async def test_hue_dimmer(hass: HomeAssistant, home: Home, hue_lite: HueLite) ->
     assert home.turn_on[-1].context.parent_id is not None  # linked to the press
 
     # Down dims and counts as a change by hand.
-    hass.states.async_set("light.living_room", "on", {"brightness": 200}, context=Context(id=hue_lite._ours[-1]))
+    hass.states.async_set("light.living_room", "on", {"brightness": 200}, context=ours(hue_lite))
     await press("down_press")
     assert home.turn_on[-1].data == {"entity_id": ["light.living_room"], "brightness_step_pct": -10, "transition": 0.4}
     assert natural(hass) == []
