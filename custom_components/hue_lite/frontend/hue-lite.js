@@ -173,13 +173,15 @@
       icon: "mdi:home-import-outline",
       cards: [{
         type: "entities",
+        title: "Coming home",
         entities: [
-          { type: "section", label: "Coming home" },
           { entity: e.coming_home_enabled, name: "Lights on when I arrive" },
           whenOn(e.coming_home_enabled, { entity: e.coming_home_only_dark, name: "Only if I arrive after dark" }),
-          { type: "section", label: "Leaving" },
-          { entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" },
         ],
+      }, {
+        type: "entities",
+        title: "Leaving",
+        entities: [{ entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" }],
       }],
     }];
     sections.push({ type: "grid", column_span: 3, cards: [{ type: "custom:hue-lite-routines", routines, entities: e }] });
@@ -516,7 +518,9 @@
   // The look of a collapsible block's heading, shared by rooms and routines.
   const BLOCK_CSS = `
     .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
-            color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; }
+            color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; border-radius: 8px; }
+    .head:focus { outline: none; }
+    .head:focus-visible { outline: 2px solid var(--primary-color); }
     .head .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
     .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .summary { flex: 1; min-width: 0; font-size: 13px; color: var(--secondary-text-color); white-space: nowrap;
