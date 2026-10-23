@@ -20,8 +20,7 @@
 (() => {
   const DOMAIN = "hue_lite";
   const HOLD_MS = 500;
-  // How each scene looks; `rgb` is its highlight colour. Preset values come
-  // from the integration.
+  // How each scene looks; `rgb` is its highlight colour.
   const NATURAL = { name: "Natural", icon: "mdi:theme-light-dark", rgb: "255, 193, 7" };
   const PRESETS = [
     { id: "energize", name: "Energize", icon: "mdi:lightning-bolt", rgb: "90, 150, 255" },
@@ -33,17 +32,27 @@
 
   // ---- Registry helpers ----------------------------------------------------
 
+  function areaOf(hass, entity) {
+    return entity.area_id || hass.devices?.[entity.device_id]?.area_id || null;
+  }
+
+  // A light's labels with its device's and its area's, which Home Assistant
+  // (and so Hue-Lite) counts too.
+  function labelsOf(hass, entity) {
+    return new Set([
+      ...(entity.labels || []),
+      ...(hass.devices?.[entity.device_id]?.labels || []),
+      ...(hass.areas?.[areaOf(hass, entity)]?.labels || []),
+    ]);
+  }
+
   // Lights that take part: not hidden, not labelled Exclude from lighting and
   // not light groups (which would double up with their members).
   function allLights(hass, exclude) {
     return Object.values(hass.entities || {}).filter((e) =>
       e.entity_id.startsWith("light.") && !e.hidden && !e.entity_category && hass.states[e.entity_id] &&
-      !(e.labels || []).includes(exclude) &&
+      !labelsOf(hass, e).has(exclude) &&
       !Array.isArray(hass.states[e.entity_id].attributes.entity_id));
-  }
-
-  function areaOf(hass, entity) {
-    return entity.area_id || hass.devices?.[entity.device_id]?.area_id || null;
   }
 
   function byName(hass) {
@@ -125,7 +134,7 @@
       .filter((l) => !roleLabels.includes(l.label_id))
       .sort((a, b) => a.name.localeCompare(b.name));
     for (const label of labels) {
-      const tagged = ids(lights.filter((x) => (x.labels || []).includes(label.label_id)));
+      const tagged = ids(lights.filter((x) => labelsOf(hass, x).has(label.label_id)));
       if (tagged.length) rooms.push(room(setup, `label:${label.label_id}`, label.name, label.icon || "mdi:label-outline", tagged, { label_id: label.label_id }));
     }
     if (rooms.length) {
@@ -151,7 +160,8 @@
       name: "Evening",
       icon: "mdi:weather-sunset",
       cards: [
-        { type: "tile", entity: e.evening_routine, name: "Tonight", state_content: ["state", "summary"] },
+        // The times are in the block's heading already.
+        { type: "tile", entity: e.evening_routine, name: "Now", state_content: ["state"] },
         {
           type: "entities",
           entities: [
@@ -195,13 +205,13 @@
     return [
       `**Wake up**: lights labelled *${label("wake_up")}* fade from a dim warm glow to Energize, reaching full brightness *at* your wake-up time.`,
       "",
-      `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene or change them by hand.`,
+      `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
       `**Evening routine**: before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
       `**Coming home**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
       "",
-      `**Adding a light**: give it an area, and the labels for the routines it should join (Settings → Devices & services → Entities). It appears here on the next reload. To keep a light out of all of this (e.g. one run by its own motion sensor), give it the *${label("exclude")}* label.`,
+      `**Adding a light**: give it an area, and the labels for the routines it should join (on the light, its device or its area). It appears here on the next reload. To keep a light out of all of this (e.g. one run by its own motion sensor), give it the *${label("exclude")}* label.`,
     ].join("\n");
   }
 
@@ -270,6 +280,11 @@
               display: flex; align-items: center; justify-content: center; transition: background-color 180ms, color 180ms;
               background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.05); color: var(--state-inactive-color, var(--secondary-text-color)); }`;
 
+  // A focus ring for keyboard use only, not left behind by a tap.
+  const FOCUS_CSS = `
+    [tabindex]:focus { outline: none; }
+    [tabindex]:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }`;
+
   // Click, Enter or Space.
   function onActivate(el, fn) {
     el.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
@@ -310,7 +325,8 @@
     return changed;
   }
 
-  // Base for both cards: config, hass and one-off rendering into a shadow root.
+  // Base for the light bar and scene tile: config, hass and one-off rendering
+  // into a shadow root.
   class HueLiteCard extends HTMLElement {
     setConfig(config) {
       if (!Array.isArray(config.entities) || !config.entities.length) throw new Error("entities must be a non-empty list of lights");
@@ -363,6 +379,7 @@
       this._root.innerHTML = `
         <style>
           ${CIRCLE_CSS}
+          ${FOCUS_CSS}
           :host { --icon-rgb: 255, 193, 7; }
           ha-card { height: 72px; box-sizing: border-box; padding: 0 12px; display: flex; align-items: center; gap: 12px;
                     cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
@@ -486,6 +503,7 @@
       this._root.innerHTML = `
         <style>
           ${CIRCLE_CSS}
+          ${FOCUS_CSS}
           :host { --scene-rgb: ${this._scene.rgb}; }
           ha-card { height: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 10px;
                     padding: 0 10px; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
@@ -515,15 +533,10 @@
     }
   }
 
-  // ---- Rooms card ----------------------------------------------------------
+  // ---- Collapsible blocks (rooms and routines) -----------------------------
 
-  // Remembers the room order and which rooms and routines are collapsed for
-  // the signed-in user (Home Assistant's per-user frontend storage, so it
-  // follows you across devices), falling back to this browser if that isn't
-  // available.
-  const ROOMS_KEY = "hue_lite_rooms";
-  const ROUTINES_KEY = "hue_lite_routines";
-
+  // Saved per signed-in user in Home Assistant's frontend storage (so it
+  // follows you across devices), falling back to this browser.
   async function loadLayout(hass, key) {
     try {
       const res = await hass.callWS({ type: "frontend/get_user_data", key });
@@ -537,45 +550,44 @@
     hass.callWS({ type: "frontend/set_user_data", key, value: layout }).catch(() => {});
   }
 
-  // The look of a collapsible block's heading, shared by rooms and routines.
-  const BLOCK_CSS = `
+  const BLOCKS_CSS = `
+    :host { display: block; }
+    .blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
     .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
             color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; border-radius: 8px; }
-    .head:focus { outline: none; }
-    .head:focus-visible { outline: 2px solid var(--primary-color); }
-    .head .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); }
+    .head .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); flex: none; }
+    .text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
     .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .summary { flex: 1; min-width: 0; font-size: 13px; color: var(--secondary-text-color); white-space: nowrap;
                overflow: hidden; text-overflow: ellipsis; }
-    .chev { --mdc-icon-size: 22px; color: var(--secondary-text-color); transition: transform 180ms; }
+    .chev { --mdc-icon-size: 22px; color: var(--secondary-text-color); transition: transform 180ms; flex: none; }
     .collapsed .chev { transform: rotate(-90deg); }
-    .collapsed .body { display: none; }`;
+    .collapsed .body { display: none; }
+    ${FOCUS_CSS}`;
 
-  // Every room (and label group) as a collapsible block: tap the heading to fold
-  // it away (it still shows how many lights are on, with a power button), and
-  // use Reorder to move rooms up or down. New rooms join at the end.
-  class HueLiteRooms extends HTMLElement {
+  // A card of collapsible blocks: tap a heading to fold its block away (the
+  // heading still shows a summary). Which blocks are collapsed is saved per
+  // user under `layoutKey`. Subclasses render the blocks and their summaries.
+  class CollapsibleBlocks extends HTMLElement {
     setConfig(config) {
-      if (!Array.isArray(config.rooms)) throw new Error("rooms is required");
+      this._validate(config);
       this._config = config;
-      this._lights = [...new Set(config.rooms.flatMap((r) => r.lights))];
       this._seen = null;
       this._layout = this._layout || { order: [], collapsed: [] };
-      this._reordering = false;
+      this._root = this._root || this.attachShadow({ mode: "open" });
+      this._blocks = new Map();
+      this._children = [];
       this._render();
+      this._arrange();
       if (this._hass && !this._loaded) this._load();
     }
 
     set hass(hass) {
       this._hass = hass;
       if (!this._loaded) this._load();
-      // The cards inside skip redrawing themselves when their lights haven't changed.
-      for (const child of this._children || []) child.hass = hass;
-      if (statesChanged(this, hass, this._lights)) this._update();
-    }
-
-    getCardSize() {
-      return 10;
+      // The cards inside skip redrawing themselves when their own states haven't changed.
+      for (const child of this._children) child.hass = hass;
+      if (statesChanged(this, hass, this._watching())) this._update();
     }
 
     getGridOptions() {
@@ -584,13 +596,80 @@
 
     async _load() {
       this._loaded = true;
-      const saved = await loadLayout(this._hass, ROOMS_KEY);
+      const saved = await loadLayout(this._hass, this.constructor.layoutKey);
       this._layout = { order: saved.order || [], collapsed: saved.collapsed || [] };
       this._arrange();
     }
 
     _save() {
-      saveLayout(this._hass, ROOMS_KEY, this._layout);
+      saveLayout(this._hass, this.constructor.layoutKey, this._layout);
+    }
+
+    // A block: heading (chevron, icon, title, summary, then `extra` controls)
+    // and an empty body. Names and icons come from the registries, so they're
+    // set as text and attributes, never parsed as HTML.
+    _block(id, name, icon, extra = "") {
+      const el = document.createElement("div");
+      el.className = "block";
+      el.innerHTML = `
+        <div class="head" role="button" tabindex="0" aria-expanded="true">
+          <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
+          <ha-icon class="block-icon"></ha-icon>
+          <span class="text"><span class="title"></span><span class="summary"></span></span>
+          ${extra}
+        </div>
+        <div class="body"></div>`;
+      el.querySelector(".title").textContent = name;
+      el.querySelector(".block-icon").setAttribute("icon", icon);
+      onActivate(el.querySelector(".head"), () => {
+        if (!this._reordering) this._toggleCollapsed(id);
+      });
+      this._blocks.set(id, el);
+      return el;
+    }
+
+    _toggleCollapsed(id) {
+      const c = this._layout.collapsed;
+      this._layout.collapsed = c.includes(id) ? c.filter((x) => x !== id) : [...c, id];
+      this._save();
+      this._arrange();
+    }
+
+    // Applies the collapsed state, then refreshes the summaries.
+    _arrange() {
+      for (const [id, el] of this._blocks) {
+        const collapsed = this._layout.collapsed.includes(id);
+        el.classList.toggle("collapsed", collapsed);
+        el.querySelector(".head").setAttribute("aria-expanded", String(!collapsed));
+      }
+      this._update();
+    }
+
+    _summary(el, text) {
+      el.querySelector(".summary").textContent = text;
+    }
+  }
+
+  // ---- Rooms card ----------------------------------------------------------
+
+  // Every room (and label group) as a block with its light bars and scenes.
+  // Collapsed, it still says how many lights are on, with a power button.
+  // Reorder moves rooms up or down; new rooms join at the end.
+  class HueLiteRooms extends CollapsibleBlocks {
+    static layoutKey = "hue_lite_rooms";
+
+    _validate(config) {
+      if (!Array.isArray(config.rooms)) throw new Error("rooms is required");
+      this._lights = [...new Set(config.rooms.flatMap((r) => r.lights))];
+      this._reordering = false;
+    }
+
+    _watching() {
+      return this._lights;
+    }
+
+    getCardSize() {
+      return 10;
     }
 
     // Saved order first, then any rooms the saved order doesn't know yet.
@@ -600,18 +679,15 @@
     }
 
     _render() {
-      this._root = this._root || this.attachShadow({ mode: "open" });
       this._root.innerHTML = `
         <style>
-          :host { display: block; }
+          ${BLOCKS_CSS}
           .toolbar { display: flex; align-items: center; gap: 4px; padding: 0 4px 8px; }
           .toolbar h2 { flex: 1; margin: 0; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
           button { border: none; background: none; color: var(--secondary-text-color); font: inherit; font-size: 13px; cursor: pointer;
                    display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 18px; --mdc-icon-size: 20px; }
           button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
           button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
-          .rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
-          ${BLOCK_CSS}
           .power.on { color: var(--amber-color, #ffc107); }
           .move { display: none; }
           .reordering .move { display: inline-flex; }
@@ -628,31 +704,16 @@
           <button class="fold" title="Collapse or expand every room"><ha-icon icon="mdi:unfold-less-horizontal"></ha-icon><span>Collapse all</span></button>
           <button class="reorder" title="Move rooms up or down"><ha-icon icon="mdi:swap-vertical"></ha-icon><span>Reorder</span></button>
         </div>
-        <div class="rooms"></div>`;
+        <div class="blocks"></div>`;
 
-      const list = this._root.querySelector(".rooms");
-      this._rooms = new Map();
-      this._children = [];
+      const list = this._root.querySelector(".blocks");
       for (const r of this._config.rooms) {
-        const el = document.createElement("div");
-        el.className = "room";
-        el.innerHTML = `
-          <div class="head" role="button" tabindex="0" aria-expanded="true">
-            <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
-            <ha-icon class="block-icon"></ha-icon>
-            <span class="title"></span>
-            <span class="summary"></span>
-            <button class="power" title="Turn ${r.lights.length > 1 ? "all " : ""}on or off"><ha-icon icon="mdi:power"></ha-icon></button>
-            <span class="move">
-              <button class="up" title="Move up"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
-              <button class="down" title="Move down"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
-            </span>
-          </div>
-          <div class="body"></div>`;
-        // Names and icons come from the registries, so they're set as text
-        // and attributes, never parsed as HTML.
-        el.querySelector(".title").textContent = r.name;
-        el.querySelector(".block-icon").setAttribute("icon", r.icon);
+        const el = this._block(r.id, r.name, r.icon, `
+          <button class="power" title="Turn ${r.lights.length > 1 ? "all " : ""}on or off"><ha-icon icon="mdi:power"></ha-icon></button>
+          <span class="move">
+            <button class="up" title="Move up"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+            <button class="down" title="Move down"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+          </span>`);
         const body = el.querySelector(".body");
         for (const cfg of r.cards) {
           const card = document.createElement(cfg.type.replace(/^custom:/, ""));
@@ -664,16 +725,12 @@
           body.appendChild(cell);
           this._children.push(card);
         }
-        onActivate(el.querySelector(".head"), () => {
-          if (!this._reordering) this._toggleCollapsed(r.id);
-        });
         onActivate(el.querySelector(".power"), () => {
           const anyOn = r.lights.some((id) => this._hass?.states[id]?.state === "on");
           this._hass.callService("light", anyOn ? "turn_off" : "turn_on", {}, { entity_id: r.lights });
         });
         onActivate(el.querySelector(".up"), () => this._move(r.id, -1));
         onActivate(el.querySelector(".down"), () => this._move(r.id, 1));
-        this._rooms.set(r.id, el);
         list.appendChild(el);
       }
 
@@ -688,14 +745,6 @@
         this._reordering = !this._reordering;
         this._arrange();
       });
-      this._arrange();
-    }
-
-    _toggleCollapsed(id) {
-      const c = this._layout.collapsed;
-      this._layout.collapsed = c.includes(id) ? c.filter((x) => x !== id) : [...c, id];
-      this._save();
-      this._arrange();
     }
 
     _move(id, step) {
@@ -709,17 +758,13 @@
       this._arrange();
     }
 
-    // Puts the rooms in order and applies collapsed / reorder state.
+    // Puts the rooms in order, and applies the collapsed and reorder states.
     _arrange() {
-      if (!this._rooms) return;
-      const list = this._root.querySelector(".rooms");
+      const list = this._root.querySelector(".blocks");
       const order = this._orderedIds();
       order.forEach((id, i) => {
-        const el = this._rooms.get(id);
+        const el = this._blocks.get(id);
         list.appendChild(el);
-        const collapsed = this._layout.collapsed.includes(id);
-        el.classList.toggle("collapsed", collapsed);
-        el.querySelector(".head").setAttribute("aria-expanded", String(!collapsed));
         el.querySelector(".up").disabled = i === 0;
         el.querySelector(".down").disabled = i === order.length - 1;
       });
@@ -731,16 +776,15 @@
       const fold = this._root.querySelector(".fold");
       fold.querySelector("span").textContent = allCollapsed ? "Expand all" : "Collapse all";
       fold.querySelector("ha-icon").setAttribute("icon", allCollapsed ? "mdi:unfold-more-horizontal" : "mdi:unfold-less-horizontal");
-      this._update();
+      super._arrange();
     }
 
     _update() {
-      if (!this._rooms || !this._hass) return;
+      if (!this._hass) return;
       for (const r of this._config.rooms) {
-        const el = this._rooms.get(r.id);
+        const el = this._blocks.get(r.id);
         const on = r.lights.filter((id) => this._hass.states[id]?.state === "on").length;
-        el.querySelector(".summary").textContent = r.lights.length === 1 ? (on ? "On" : "Off")
-          : on ? `${on} of ${r.lights.length} on` : "All off";
+        this._summary(el, r.lights.length === 1 ? (on ? "On" : "Off") : on ? `${on} of ${r.lights.length} on` : "All off");
         el.querySelector(".power").classList.toggle("on", on > 0);
       }
     }
@@ -748,16 +792,13 @@
 
   // ---- Routines card -------------------------------------------------------
 
-  // Wake up, Evening and Coming & going as collapsible blocks like the rooms;
-  // collapsed, each still says what it will do. The blocks hold Home
-  // Assistant's own cards (entities, tile, heading).
+  // Wake up, Evening and Coming & going as blocks holding Home Assistant's own
+  // cards (entities, tile, heading). The summary goes on its own line under
+  // the title, so it isn't cut off on a phone.
   //   {routines: [{id, name, icon, cards}], entities}
   // `entities` are Hue-Lite's entity ids, for the summaries.
   const isOn = (hass, id) => hass.states[id]?.state === "on";
   const clock = (hass, id) => (hass.states[id]?.state || "").slice(0, 5);
-  // Home Assistant's own cards come from its card helpers, loaded once.
-  let cardHelpers;
-  const loadCardHelpers = () => (cardHelpers = cardHelpers || window.loadCardHelpers());
   const SUMMARIES = {
     wake_up: (hass, e) => {
       const days = (toggle, time, label) => `${label} ${isOn(hass, toggle) ? clock(hass, time) : "off"}`;
@@ -769,77 +810,43 @@
       return `Arrive: ${arrive} · Leave: ${isOn(hass, e.leaving_home_enabled) ? "lights off" : "nothing"}`;
     },
   };
+  // Home Assistant's own cards come from its card helpers, loaded once.
+  let cardHelpers;
+  const loadCardHelpers = () => (cardHelpers = cardHelpers || window.loadCardHelpers());
 
-  class HueLiteRoutines extends HTMLElement {
-    setConfig(config) {
+  class HueLiteRoutines extends CollapsibleBlocks {
+    static layoutKey = "hue_lite_routines";
+
+    _validate(config) {
       if (!Array.isArray(config.routines)) throw new Error("routines is required");
-      this._config = config;
-      this._seen = null;
-      this._collapsed = this._collapsed || [];
-      this._render();
-      if (this._hass && !this._loaded) this._load();
     }
 
-    set hass(hass) {
-      this._hass = hass;
-      if (!this._loaded) this._load();
-      for (const child of this._children || []) child.hass = hass;
-      if (statesChanged(this, hass, Object.values(this._config.entities || {}))) this._update();
+    _watching() {
+      return Object.values(this._config.entities || {});
     }
 
     getCardSize() {
       return 6;
     }
 
-    getGridOptions() {
-      return { columns: "full", rows: "auto" };
-    }
-
-    async _load() {
-      this._loaded = true;
-      this._collapsed = (await loadLayout(this._hass, ROUTINES_KEY)).collapsed || [];
-      this._arrange();
-    }
-
     _render() {
-      this._root = this._root || this.attachShadow({ mode: "open" });
       this._root.innerHTML = `
         <style>
-          :host { display: block; }
+          ${BLOCKS_CSS}
           h2 { margin: 0; padding: 0 4px 8px; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
-          .routines { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
-          ${BLOCK_CSS}
+          .text { flex-direction: column; align-items: stretch; gap: 0; padding: 4px 0; }
+          .summary { white-space: normal; }
           .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
         </style>
         <h2>Routines</h2>
-        <div class="routines"></div>`;
-      const list = this._root.querySelector(".routines");
-      this._blocks = new Map();
-      this._children = [];
+        <div class="blocks"></div>`;
+      const list = this._root.querySelector(".blocks");
       const render = (this._rendering = {});
       for (const r of this._config.routines) {
-        const el = document.createElement("div");
-        el.innerHTML = `
-          <div class="head" role="button" tabindex="0" aria-expanded="true">
-            <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
-            <ha-icon class="block-icon"></ha-icon>
-            <span class="title"></span>
-            <span class="summary"></span>
-          </div>
-          <div class="body"></div>`;
-        el.querySelector(".title").textContent = r.name;
-        el.querySelector(".block-icon").setAttribute("icon", r.icon);
-        onActivate(el.querySelector(".head"), () => {
-          const c = this._collapsed;
-          this._collapsed = c.includes(r.id) ? c.filter((x) => x !== r.id) : [...c, r.id];
-          saveLayout(this._hass, ROUTINES_KEY, { collapsed: this._collapsed });
-          this._arrange();
-        });
+        const el = this._block(r.id, r.name, r.icon);
         this._fill(render, el.querySelector(".body"), r.cards);
-        this._blocks.set(r.id, el);
         list.appendChild(el);
       }
-      this._arrange();
     }
 
     // Fills a block once the card helpers have loaded, unless the card has
@@ -855,30 +862,18 @@
       }
     }
 
-    _arrange() {
-      if (!this._blocks) return;
-      for (const [id, el] of this._blocks) {
-        const collapsed = this._collapsed.includes(id);
-        el.classList.toggle("collapsed", collapsed);
-        el.querySelector(".head").setAttribute("aria-expanded", String(!collapsed));
-      }
-      this._update();
-    }
-
     _update() {
-      if (!this._blocks || !this._hass) return;
-      for (const [id, el] of this._blocks) {
-        el.querySelector(".summary").textContent = SUMMARIES[id]?.(this._hass, this._config.entities || {}) || "";
-      }
+      if (!this._hass) return;
+      for (const [id, el] of this._blocks) this._summary(el, SUMMARIES[id]?.(this._hass, this._config.entities || {}) || "");
     }
   }
 
   for (const [tag, cls] of [
     ["ll-strategy-dashboard-hue-lite", HueLiteStrategy],
-    ["hue-lite-routines", HueLiteRoutines],
     ["hue-lite-light-bar", HueLiteLightBar],
     ["hue-lite-scene-tile", HueLiteSceneTile],
     ["hue-lite-rooms", HueLiteRooms],
+    ["hue-lite-routines", HueLiteRoutines],
   ]) {
     if (!customElements.get(tag)) customElements.define(tag, cls);
   }

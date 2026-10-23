@@ -5,12 +5,12 @@ from __future__ import annotations
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from . import dashboard, services
-from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
+from .const import DOMAIN, ROLES, STORAGE_KEY, STORAGE_VERSION
 from .engine import HueLite, HueLiteConfigEntry
 
 PLATFORMS = [Platform.NUMBER, Platform.SENSOR, Platform.SWITCH, Platform.TIME]
@@ -43,8 +43,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> 
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> None:
-    """Forget the settings and scene lists (the labels stay)."""
+    """Forget the settings, scenes and any Repairs issues (the labels stay)."""
     await Store(hass, STORAGE_VERSION, STORAGE_KEY).async_remove()
+    for role in ROLES:
+        ir.async_delete_issue(hass, DOMAIN, f"missing_label_{role}")
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: HueLiteConfigEntry) -> None:

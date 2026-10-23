@@ -25,7 +25,7 @@
     "step": {
       "init": {
         "title": "Hue-Lite options",
-        "description": "Which label puts a light into each routine. Lights without an area or label take part in scenes from the dashboard and dimmers only.",
+        "description": "Which label puts a light into each routine. A label counts on the light, its device or its area. Lights without a routine label still take part in scenes from the dashboard, and in their area's dimmer.",
         "data": {
           "label_evening": "Evening routine",
           "label_wake_up": "Wake up",
@@ -40,7 +40,7 @@
           "label_wake_up": "Lights that fade up at the wake-up time.",
           "label_nightlight": "Lights that get Nightlight instead of Rest overnight (Natural light) and before bed (evening routine).",
           "label_coming_home": "Lights that come on in Natural light when someone arrives home.",
-          "label_exclude": "Lights left out of everything: the dashboard, scenes, routines and dimmers. Hidden lights are left out too.",
+          "label_exclude": "Lights left out of everything (the dashboard, scenes, routines and dimmers) when they, their device or their area has this label. Hidden lights are left out too.",
           "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
           "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area."
         }
@@ -150,5 +150,11 @@
   },
   "exceptions": {
     "not_loaded": { "message": "Hue-Lite isn't set up." }
+  },
+  "issues": {
+    "missing_label": {
+      "title": "Hue-Lite's {role} label was deleted",
+      "description": "Hue-Lite chooses its {role} lights by a label that no longer exists, so {role} has no lights. Open **Settings → Devices & services → Hue-Lite → Configure** and pick a label for it."
+    }
   }
 }

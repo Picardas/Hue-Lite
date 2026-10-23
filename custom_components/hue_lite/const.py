@@ -31,9 +31,12 @@ def label_option(role: str) -> str:
     return f"label_{role}"
 
 
-# Scenes a light can be kept in (followed over time); presets are applied once.
+# Scenes a light can be in besides the presets: Natural light and the evening
+# routine are followed over time; wake-up marks lights its fade-in has, until
+# they're changed, so turning them off afterwards leaves other lights alone.
 NATURAL: Final = "natural"
 ROUTINE: Final = "routine"
+WAKE_UP: Final = "wake_up"
 
 # The evening routine's phases in which it has lights.
 EVENING_PHASES: Final = ("evening", "wind_down", "nightlight")

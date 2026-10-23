@@ -43,7 +43,7 @@ def async_add_script(hass: HomeAssistant) -> Callable[[], None]:
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/config"})
 @callback
 def websocket_config(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """Hue-Lite's role labels, all labels and entity ids."""
+    """Hue-Lite's role labels, the labels the dashboard shows, and its entity ids."""
     if (hue_lite := async_get_loaded(hass)) is None:
         connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
         return

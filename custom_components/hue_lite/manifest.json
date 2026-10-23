@@ -4,11 +4,11 @@
   "codeowners": ["@Picardas"],
   "config_flow": true,
   "dependencies": ["frontend", "http"],
-  "documentation": "https://github.com/Picardas/hue-lite",
+  "documentation": "https://github.com/Picardas/Hue-Lite",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/Picardas/hue-lite/issues",
+  "issue_tracker": "https://github.com/Picardas/Hue-Lite/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.3.2"
+  "version": "0.4.0"
 }

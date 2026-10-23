@@ -107,7 +107,8 @@
     window.hass = {
       states,
       entities,
-      devices: { kitchen_bulb: { area_id: "kitchen" } },
+      // The kitchen bulb's device carries the Lamps label, so it joins that group too.
+      devices: { kitchen_bulb: { area_id: "kitchen", labels: ["lamps"] } },
       areas: {
         bedroom: { area_id: "bedroom", name: "Bedroom", floor_id: "first" },
         office: { area_id: "office", name: "Office", floor_id: "first", icon: "mdi:desk" },
