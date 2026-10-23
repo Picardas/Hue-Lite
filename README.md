@@ -46,8 +46,10 @@ strategy:
 ```
 
 It builds itself from your areas and labels on every load: the whole home and
-each room (collapsible, and the rooms reorderable) with their lights and the
-six scenes, and the routines with their settings.
+each room (reorderable), and the routines with their settings. Each room is a
+bar for all its lights: tap its icon to switch them on or off, slide to dim,
+**Auto** at the end, and tap its name to show or hide each light's bar and
+the six scenes. Icons take the colour of their lights.
 
 ## How it works
 
@@ -66,10 +68,12 @@ six scenes, and the routines with their settings.
 - **Coming & going:** the Coming home lights come on in Natural light when
   someone arrives (optionally only after dark), and every light can go off
   when everyone has left.
-- **Auto:** the button at the end of each light's bar (and a room's or the
-  whole home's All lights bar) puts lights on Auto. On Auto, a light follows
-  wake up and the evening routine whether or not it has their labels. Off
-  Auto, labelled lights still follow their routines.
+- **Auto:** the button at the end of each light's and room's bar. A light is
+  on Auto while wake up or the evening routine has it, or once you put it on
+  Auto: then it follows both routines whether or not it has their labels,
+  and stays on Auto (on or off) until you pick a scene for it or change it.
+  Taking a light off Auto lets the routine holding it go; its labels still
+  count next time.
 - **Hue dimmers** (RWL02x on ZHA) control their area: On steps through the
   scenes, Off turns the lights off, Up and Down dim.
 

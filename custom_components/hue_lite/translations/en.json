@@ -132,14 +132,14 @@
   "services": {
     "apply_preset": {
       "name": "Apply preset",
-      "description": "Sets lights to a Hue-style preset, taking them out of the Natural light scene and the evening routine. With no target, every light.",
+      "description": "Sets lights to a Hue-style preset, taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
       "fields": {
         "preset": { "name": "Preset", "description": "The preset to apply." }
       }
     },
     "natural_light": {
       "name": "Natural light",
-      "description": "Puts lights into the Natural light scene: they turn on and follow the sun until another scene is picked or they're changed by hand. With no target, every light.",
+      "description": "Puts lights into the Natural light scene (taking them off Auto): they turn on and follow the sun until another scene is picked or they're changed by hand. With no target, every light.",
       "fields": {
         "follow": { "name": "Follow natural light", "description": "Turn off to take the lights out of the scene instead." }
       }
@@ -150,9 +150,9 @@
     },
     "set_auto": {
       "name": "Set Auto",
-      "description": "Puts lights on Auto, or takes them off it. On Auto, a light does what the routines ask (wake up, the evening routine) whether or not it has their labels; off Auto, labelled lights still follow their routines. With no target, every light.",
+      "description": "Puts lights on Auto, or takes them off it. On Auto, a light leaves its scene and does what the routines ask (wake up, the evening routine) whether or not it has their labels, until a scene is picked for it or it's changed. Off Auto, it leaves the routine holding it now; labelled lights are taken again next time. With no target, every light.",
       "fields": {
-        "auto": { "name": "Auto", "description": "On to follow the routines, off to stop following them through Auto." }
+        "auto": { "name": "Auto", "description": "On to follow the routines, off to leave them." }
       }
     }
   },

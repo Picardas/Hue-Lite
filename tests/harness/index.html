@@ -14,8 +14,6 @@
     body { margin: 16px; font-family: system-ui, sans-serif; background: #f5f5f5;
            --primary-text-color: #212121; --secondary-text-color: #727272; --rgb-primary-text-color: 33, 33, 33;
            --primary-color: #03a9f4; --rgb-primary-color: 3, 169, 244; }
-    ha-card { display: block; background: #fff; border-radius: 12px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15); }
-    ha-icon { display: inline-flex; max-width: 100%; overflow: hidden; font-size: 8px; line-height: 1; }
     h2 { font-size: 15px; margin: 20px 0 8px; }
     .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; max-width: 420px; }
     .grid > * { grid-column: span 12; }
@@ -24,8 +22,20 @@
     pre { font-size: 11px; max-height: 300px; overflow: auto; background: #fff; padding: 8px; }
   </style>
   <script>
-    customElements.define("ha-card", class extends HTMLElement {});
-    customElements.define("ha-icon", class extends HTMLElement {
+    // Styled in their own shadow roots, as Home Assistant's are, so they look
+    // right inside the cards' shadow roots: a card, and an icon-sized box
+    // with the icon's name in tiny type.
+    const styled = (css) => class extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: "open" }).innerHTML = `<style>:host { ${css} }</style><slot></slot>`;
+      }
+    };
+    customElements.define("ha-card", styled(`display: block; background: #fff; border-radius: 12px;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);`));
+    customElements.define("ha-icon", class extends styled(`display: inline-flex; align-items: center; justify-content: center;
+      width: var(--mdc-icon-size, 24px); height: var(--mdc-icon-size, 24px); overflow: hidden; font-size: 6px;
+      line-height: 1; text-align: center; word-break: break-all;`) {
       static get observedAttributes() { return ["icon"]; }
       attributeChangedCallback() { this.textContent = (this.getAttribute("icon") || "").replace("mdi:", ""); }
     });
@@ -66,8 +76,9 @@
       {
         entity_id: "sensor.hue_lite_light_scenes", state: "4",
         attributes: {
-          scenes: { "light.office": "natural", "light.lamp": "natural", "light.living_room": "relax", "light.kitchen": "relax" },
-          auto: ["light.living_room"],
+          // The routine has the living room; the kitchen was put on Auto.
+          scenes: { "light.office": "natural", "light.lamp": "natural", "light.living_room": "routine" },
+          auto: ["light.kitchen", "light.living_room"],
         },
       },
     ].map((s) => [s.entity_id, s]));

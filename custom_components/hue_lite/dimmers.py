@@ -1,7 +1,7 @@
 """Hue Dimmer Switches (RWL02x, paired with ZHA): each controls the lights in
 its area. On: next scene. Off: off. Up and Down: 10% brighter or dimmer, for
 the lights that are on (Down stops at about 10%), which counts as a change by
-hand."""
+hand (taking them out of their scene and off Auto)."""
 
 from __future__ import annotations
 
@@ -47,5 +47,5 @@ async def _press(lite: HueLite, button: str, lights: list[str], parent: Context)
             if up or ((state := lite.hass.states.get(light)) and (state.attributes.get("brightness") or 0) > 26)
         ]
         if dimming:
-            lite.set_scene(dimming, "")
+            lite.set_scene(dimming, "", leave_auto=True)
             await lite.call("turn_on", dimming, parent=parent, brightness_step_pct=10 if up else -10, transition=0.4)

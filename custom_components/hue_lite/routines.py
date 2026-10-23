@@ -12,7 +12,7 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 from homeassistant.helpers.sun import is_up
 from homeassistant.util import dt as dt_util
 
-from .const import EVENING_PHASES, LEAVING_DELAY, ROUTINE, WAKE_UP
+from .const import EVENING_PHASES, LEAVING_DELAY, NATURAL, ROUTINE, WAKE_UP
 from .timeline import PRESETS, Evening
 
 if TYPE_CHECKING:
@@ -72,22 +72,11 @@ class Routines:
         elif self.lite.evening.phase in EVENING_PHASES:
             self._start_evening()
 
-    @callback
-    def auto_changed(self, lights: list[str], auto: bool) -> None:
-        """Lights put on Auto during the evening join the routine at once:
-        those that are on take its light, those that are off pick it up when
-        they're turned on. Lights taken off Auto are let go by a routine that
-        only had them through Auto; ones with its label stay."""
-        lite = self.lite
-        if auto:
-            if lite.settings["evening_routine_enabled"] and lite.evening.phase in EVENING_PHASES:
-                lite.set_scene(lights, ROUTINE)
-                if on := lite.on(lights):
-                    lite.spawn(lite.apply(ROUTINE, on, 2))
-            return
-        for scene, role in ((ROUTINE, "evening"), (WAKE_UP, "wake_up")):
-            labelled = set(lite.labelled(role))
-            lite.set_scene([light for light in lights if lite.scenes.get(light) == scene and light not in labelled], "")
+    @property
+    def evening_running(self) -> bool:
+        """Whether the evening routine is on and it's the evening, so lights
+        put on Auto join it straight away."""
+        return self.lite.settings["evening_routine_enabled"] and self.lite.evening.phase in EVENING_PHASES
 
     @callback
     def _start_evening(self) -> None:
@@ -193,14 +182,16 @@ class Routines:
     @callback
     def _someone_arrived(self, parent: Context) -> None:
         """Put the Coming home lights that are off into Natural light
-        (optionally only after dark)."""
+        (optionally only after dark). That's the routine's doing, not a scene
+        someone picked, so lights on Auto stay on it."""
         lite = self.lite
         s = lite.settings
         if not s["coming_home_enabled"] or (s["coming_home_only_dark"] and is_up(lite.hass)):
             return
         lights = [light for light in lite.labelled("coming_home") if lite.hass.states.is_state(light, STATE_OFF)]
         if lights:
-            lite.spawn(lite.async_natural_light(lights, parent=parent))
+            lite.set_scene(lights, NATURAL)
+            lite.spawn(lite.apply(NATURAL, lights, 2, parent))
 
     @callback
     def _everyone_left(self, _now: datetime) -> None:

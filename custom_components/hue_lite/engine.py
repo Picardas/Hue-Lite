@@ -8,6 +8,11 @@ scene replaces it; changing the light yourself or from an automation, or
 activating one of Home Assistant's own scenes with it, forgets it. Turning a
 light off keeps its scene, so a light in Natural light or the routine picks it
 up again when it comes back on.
+
+A light is on Auto while the evening routine or wake up has it, or while it's
+in `auto` (put there from its Auto button); those the routines take as if
+they had their labels. Picking a scene for a light or changing it takes it
+off Auto; turning it on or off doesn't.
 """
 
 from __future__ import annotations
@@ -97,8 +102,8 @@ class HueLite:
         self.settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
         # Light -> the scene it's in: NATURAL, ROUTINE, WAKE_UP or a preset id.
         self.scenes: dict[str, str] = {}
-        # Lights on Auto: the routines take them as if they had the routines'
-        # labels (see async_set_auto).
+        # Lights put on Auto: the routines take them as if they had the
+        # routines' labels (see async_set_auto).
         self.auto: set[str] = set()
         # Hue-Lite's entity ids by key, for the dashboard (filled in as they're added).
         self.entity_ids: dict[str, str] = {}
@@ -254,28 +259,39 @@ class HueLite:
         label, and those on Auto."""
         return self.lights({ATTR_LABEL_ID: [self.labels[role]], ATTR_ENTITY_ID: sorted(self.auto)})
 
+    def on_auto(self) -> list[str]:
+        """The lights on Auto: put on it, or held by the evening routine or
+        wake up now."""
+        return sorted(self.auto.union(light for light, scene in self.scenes.items() if scene in (ROUTINE, WAKE_UP)))
+
     @callback
     def async_set_auto(self, lights: list[str], auto: bool) -> None:
-        """Put lights on Auto, or take them off it. On Auto, a light does what
-        the routines ask whether or not it has their labels; off Auto, the
-        routines behave exactly as before (a labelled light is still taken)."""
+        """Put lights on Auto, or take them off it. Put on it, a light leaves
+        the scene it was in (it does what the routines ask, whether or not it
+        has their labels) and joins the evening routine if that's running,
+        taking its light now if it's on. Taken off, it leaves the routine or
+        wake up holding it, staying as it is; its labels still count next time."""
         lights = [light for light in lights if not self.excluded(light)]
+        held = [light for light in lights if self.scenes.get(light) in (ROUTINE, WAKE_UP)]
+        if auto:
+            joining = [light for light in lights if light not in self.auto and light not in held]
+            evening = self.routines.evening_running
+            changed = self._set_auto(lights, True) | self._put(joining, ROUTINE if evening else "")
+            if evening and (on := self.on(joining)):
+                self.spawn(self.apply(ROUTINE, on, 2))
+        else:
+            changed = self._set_auto(lights, False) | self._put(held, "")
+        if changed:
+            self._changed()
+
+    def _set_auto(self, lights: list[str], auto: bool) -> bool:
+        """Add lights to `auto` or remove them; whether that changed it."""
         before = len(self.auto)
         if auto:
             self.auto.update(lights)
         else:
             self.auto.difference_update(lights)
-        if len(self.auto) != before:
-            self.save()
-            self._notify()
-            self.routines.auto_changed(lights, auto)
-
-    @callback
-    def _drop_auto(self, lights: list[str]) -> None:
-        if self.auto.intersection(lights):
-            self.auto.difference_update(lights)
-            self.save()
-            self._notify()
+        return len(self.auto) != before
 
     def excluded(self, entity_id: str) -> bool:
         return excluded(self.hass, entity_id, self.labels["exclude"])
@@ -314,10 +330,17 @@ class HueLite:
         return self.natural if scene == NATURAL else self.evening
 
     @callback
-    def set_scene(self, lights: list[str], scene: str) -> None:
+    def set_scene(self, lights: list[str], scene: str, *, leave_auto: bool = False) -> None:
         """Lights are now in `scene`, or with '' in none (changed, or done
-        with). Excluded lights are never kept in one: named in an action
-        they're set once, not followed."""
+        with). With `leave_auto` they come off Auto too: someone picked a
+        scene for them or changed them. Excluded lights are never kept in
+        one: named in an action they're set once, not followed."""
+        left = leave_auto and self._set_auto(lights, False)
+        if self._put(lights, scene) or left:
+            self._changed()
+
+    def _put(self, lights: list[str], scene: str) -> bool:
+        """Put lights in `scene` ('' for none); whether any changed."""
         changed = False
         for light in lights:
             if self.scenes.get(light, "") == scene or (scene and self.excluded(light)):
@@ -327,10 +350,15 @@ class HueLite:
                 self.scenes[light] = scene
             else:
                 del self.scenes[light]
-        if changed:
-            self.save()
-            self._watch_lights()
-            self._notify()
+        return changed
+
+    @callback
+    def _changed(self) -> None:
+        """The scenes or Auto changed: save them, follow the lights now in
+        them, and update the sensors."""
+        self.save()
+        self._watch_lights()
+        self._notify()
 
     def current_scene(self, lights: list[str]) -> str:
         """The scene every light that's on is in, or '' when none are on or
@@ -339,18 +367,20 @@ class HueLite:
         return scenes.pop() if len(scenes) == 1 else ""
 
     async def async_preset(self, lights: list[str], preset: str, parent: Context | None = None) -> None:
+        """Someone picked a preset: the lights leave Auto and go into it."""
         if not lights:
             return
-        self.set_scene(lights, preset)
+        self.set_scene(lights, preset, leave_auto=True)
         await self.send(lights, PRESETS[preset], 0.4, parent)
 
     async def async_natural_light(self, lights: list[str], follow: bool = True, parent: Context | None = None) -> None:
-        """Put lights into the Natural light scene (turning them on), or with
-        follow off take the ones in it out (leaving other scenes alone)."""
+        """Someone picked Natural light: the lights leave Auto, go into it
+        and turn on. With follow off, the ones in it are taken out instead
+        (leaving other scenes and Auto alone)."""
         if not follow:
             self.set_scene([light for light in lights if self.scenes.get(light) == NATURAL], "")
         elif lights:
-            self.set_scene(lights, NATURAL)
+            self.set_scene(lights, NATURAL, leave_auto=True)
             await self.apply(NATURAL, lights, 2, parent)
 
     async def async_next_scene(self, lights: list[str], parent: Context | None = None) -> None:
@@ -411,9 +441,9 @@ class HueLite:
 
     @callback
     def _watch_lights(self) -> None:
-        """Follow state changes of the lights in a scene (re-subscribing only
-        when that set of lights changes)."""
-        watched = frozenset(self.scenes)
+        """Follow state changes of the lights in a scene or on Auto
+        (re-subscribing only when that set of lights changes)."""
+        watched = frozenset(self.scenes.keys() | self.auto)
         if watched == self._watched:
             return
         if self._unwatch:
@@ -428,8 +458,9 @@ class HueLite:
         """A light in Natural light or the routine that's turned on picks up
         its scene's current light. A light that's on and changed by someone
         else (from the dashboard, a light dialog, an automation) leaves its
-        scene; bulbs reporting their own state don't count. A wake-up light
-        that's turned off is done with."""
+        scene and Auto; bulbs reporting their own state don't count, and nor
+        does turning a light on or off. A wake-up light that's turned off is
+        done with."""
         old, new = event.data["old_state"], event.data["new_state"]
         if old is None or new is None:
             return
@@ -442,14 +473,15 @@ class HueLite:
             if scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES):
                 self.spawn(self.apply(scene, [light], 2))
         elif new.context.user_id or new.context.parent_id:
-            self.set_scene([light], "")
+            self.set_scene([light], "", leave_auto=True)
 
     @callback
     def _scene_activated(self, event: Event[EventStateChangedData]) -> None:
         """One of Home Assistant's own scenes (scene editor, scenes.yaml) was
         activated. Like picking a scene in Hue, that takes its lights out of
-        Hue-Lite's scenes, so Natural light and the routine don't override it.
-        Home Assistant records the activation before it sets the lights."""
+        Hue-Lite's scenes and off Auto, so Natural light and the routines
+        don't override it. Home Assistant records the activation before it
+        sets the lights."""
         old, new = event.data["old_state"], event.data["new_state"]
         # Appearing, disappearing or coming back after a reload isn't an activation.
         if old is None or new is None or old.state == new.state or STATE_UNAVAILABLE in (old.state, new.state):
@@ -457,7 +489,7 @@ class HueLite:
         lights = new.attributes.get(ATTR_ENTITY_ID) or ()
         if isinstance(lights, str):
             lights = [lights]
-        self.set_scene([light for light in lights if light.startswith(f"{LIGHT}.")], "")
+        self.set_scene([light for light in lights if light.startswith(f"{LIGHT}.")], "", leave_auto=True)
 
     @callback
     def _entity_registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
@@ -468,24 +500,22 @@ class HueLite:
         if not light.startswith(f"{LIGHT}."):
             return
         if data["action"] == "remove":
-            self.set_scene([light], "")
-            self._drop_auto([light])
+            self.set_scene([light], "", leave_auto=True)
         elif data["action"] == "update":
-            if old := data.get("old_entity_id"):
-                if scene := self.scenes.get(old):
-                    self.set_scene([old], "")
-                    self.set_scene([light], scene)
+            if (old := data.get("old_entity_id")) and (old in self.scenes or old in self.auto):
+                if scene := self.scenes.pop(old, ""):
+                    self.scenes[light] = scene
                 if old in self.auto:
+                    self.auto.remove(old)
                     self.auto.add(light)
-                    self._drop_auto([old])
+                self._changed()
             self._release_excluded()
 
     @callback
     def _release_excluded(self, _event: Event | None = None) -> None:
         """Let go of lights that are now excluded (by their own, their
         device's or their area's label, or hidden)."""
-        self.set_scene([light for light in self.scenes if self.excluded(light)], "")
-        self._drop_auto([light for light in self.auto if self.excluded(light)])
+        self.set_scene([light for light in self.scenes.keys() | self.auto if self.excluded(light)], "", leave_auto=True)
 
     # ---- Timelines -----------------------------------------------------------
 

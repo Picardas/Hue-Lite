@@ -5,11 +5,12 @@
 // new lights, rooms and labels appear without editing anything. The
 // integration tells it which labels drive the routines and its own entity ids
 // (websocket `hue_lite/config`). Also defines four cards:
-//   custom:hue-lite-light-bar   a light, or "All lights": tap to toggle, slide
-//                               to dim, hold a single light for its colour dialog
+//   custom:hue-lite-light-bar   a light or a room: tap to toggle, slide to dim,
+//                               Auto at the end, hold a single light for its colour dialog
 //   custom:hue-lite-scene-tile  a scene button (Natural or a preset) that lights
 //                               up while its lights are in that scene
 //   custom:hue-lite-rooms       every room as a collapsible, reorderable block
+//                               headed by a bar for all its lights
 //   custom:hue-lite-routines    Wake up, Evening and Coming & going as collapsible blocks
 //
 // Layout: Whole home (fixed at the top, a block that collapses like a room),
@@ -84,18 +85,15 @@
     return [tile({ natural: true }), ...PRESETS.map((p) => tile({ preset: p.id }))];
   }
 
-  // A room (or label group, or the whole home) for the rooms card: an "All
-  // lights" bar when it has several lights, a bar per light unless `eachLight`
-  // is false, and the scenes.
+  // A room (or label group, or the whole home) for the rooms card: a bar for
+  // all its lights, with its icon, heading the block; inside, a bar per light
+  // when it has several (unless `eachLight` is false) and the scenes.
   function room(setup, id, name, icon, lights, target, eachLight = true) {
     return {
       id,
-      name,
-      icon,
-      lights,
+      head: lightBar(setup, lights, { name, icon, expandable: true }),
       cards: [
-        ...(lights.length > 1 ? [lightBar(setup, lights, { name: "All lights" })] : []),
-        ...(eachLight || lights.length === 1 ? lights.map((l) => lightBar(setup, [l])) : []),
+        ...(eachLight && lights.length > 1 ? lights.map((l) => lightBar(setup, [l])) : []),
         ...sceneTiles(setup, lights, target),
       ],
     };
@@ -287,12 +285,22 @@
               display: flex; align-items: center; justify-content: center; transition: background-color 180ms, color 180ms;
               background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.05); color: var(--state-inactive-color, var(--secondary-text-color)); }`;
 
+  // A light's colour for its icon: halfway to the fully saturated colour of
+  // the same hue, so whites still show on the card (warm ones as amber, cool
+  // ones as pale blue). Pure white shows as amber.
+  function iconColour([r, g, b]) {
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max - min < 8) return "255, 193, 7";
+    return [r, g, b].map((c) => Math.round((c + (255 * (c - min)) / (max - min)) / 2)).join(", ");
+  }
+
   // A focus ring for keyboard use only, not left behind by a tap.
   const FOCUS_CSS = `
     [tabindex]:focus { outline: none; }
     [tabindex]:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }`;
 
-  // Click, Enter or Space.
+  // Click, Enter or Space (not bubbling up to whatever holds `el`).
   function onActivate(el, fn) {
     el.addEventListener("click", (ev) => { ev.stopPropagation(); fn(); });
     el.addEventListener("keydown", (ev) => {
@@ -361,11 +369,16 @@
 
   // ---- Light bar -----------------------------------------------------------
 
-  // One bar for a single light or a set ("All lights"): tap to toggle, slide to
-  // dim, hold a single light to open Home Assistant's light dialog (colour
-  // wheel, colour temperature). With `scenes_entity`, an Auto button at the end
-  // puts the lights on Auto (following the routines) or takes them off it; on a
-  // set it shows when only some are on Auto, and a tap sets them all.
+  // One bar for a single light or a set (a room): tap to toggle, slide to dim,
+  // hold a single light to open Home Assistant's light dialog (colour wheel,
+  // colour temperature). The icon (`icon`, or a bulb) takes the lights' own
+  // colour, so it follows what Auto and the scenes do to them. With
+  // `scenes_entity`, an Auto button at the end puts the lights on Auto
+  // (following the routines) or takes them off it; on a set it shows when only
+  // some are on Auto, and a tap sets them all.
+  // With `expandable` the bar heads a block: the icon toggles, and tapping the
+  // rest of it (the name has a chevron) sends `hue-lite-expand`, for the block
+  // to open or close; setting `expanded` turns the chevron.
   class HueLiteLightBar extends HueLiteCard {
     getCardSize() {
       return 2;
@@ -394,7 +407,15 @@
       return this._config.entities.filter((id) => auto.includes(id)).length;
     }
 
+    set expanded(open) {
+      this._open = open;
+      if (!this._el) return;
+      this._el.card.classList.toggle("collapsed", !open);
+      this._el.card.setAttribute("aria-expanded", String(open));
+    }
+
     _render() {
+      const expandable = Boolean(this._config.expandable);
       this._root.innerHTML = `
         <style>
           ${CIRCLE_CSS}
@@ -407,9 +428,13 @@
           .light { width: 40px; height: 40px; }
           ha-card.on .light { background: rgba(var(--icon-rgb), 0.25); color: rgb(var(--icon-rgb)); }
           .text { flex: 0 1 38%; min-width: 0; }
-          .name, .state { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          .name { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--primary-text-color); }
+          .name { display: flex; align-items: center; gap: 2px; font-size: 14px; font-weight: 500; line-height: 20px;
+                  color: var(--primary-text-color); }
+          .expandable .name { font-size: 16px; }
+          .name span, .state { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
           .state { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }
+          .chev { --mdc-icon-size: 20px; flex: none; color: var(--secondary-text-color); transition: transform 180ms; }
+          .collapsed .chev { transform: rotate(-90deg); }
           input { -webkit-appearance: none; appearance: none; flex: 1; min-width: 60px; height: 36px; margin: 0;
                   background: transparent; cursor: pointer; --pct: 0%; --fill: 255, 193, 7; }
           ha-card:not(.on) input { --fill: 150, 150, 150; }
@@ -424,16 +449,25 @@
           .auto.some { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1); color: var(--primary-color); }
           .auto.all { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.25); color: var(--primary-color); }
         </style>
-        <ha-card role="button" tabindex="0">
-          <div class="circle light"><ha-icon></ha-icon></div>
-          <div class="text"><div class="name"></div><div class="state"></div></div>
+        <ha-card class="${expandable ? "expandable" : ""}" role="button" tabindex="0">
+          <div class="circle light"${expandable ? ` role="button" tabindex="0"` : ""}><ha-icon></ha-icon></div>
+          <div class="text">
+            <div class="name"><span></span>${expandable ? `<ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>` : ""}</div>
+            <div class="state"></div>
+          </div>
           <input type="range" min="1" max="100" step="1">
           ${this._config.scenes_entity ? `<div class="circle auto" role="button" tabindex="0"><ha-icon icon="mdi:brightness-auto"></ha-icon></div>` : ""}
         </ha-card>`;
 
       const $ = (sel) => this._root.querySelector(sel);
-      this._el = { card: $("ha-card"), icon: $(".light ha-icon"), name: $(".name"), state: $(".state"), slider: $("input"), auto: $(".auto") };
-      const { card, slider, auto } = this._el;
+      this._el = {
+        card: $("ha-card"), light: $(".light"), icon: $(".light ha-icon"), name: $(".name span"), state: $(".state"),
+        slider: $("input"), auto: $(".auto"),
+      };
+      const { card, light, slider, auto } = this._el;
+      const all = this._single ? "on or off" : "all on or off";
+      card.title = expandable ? "Tap to show or hide the lights and scenes" : `Tap to switch ${all}${this._single ? ", hold for colour" : ""}`;
+      if (expandable) light.title = `Switch ${all}`;
 
       // Auto: on for all the bar's lights unless they're all on it already.
       if (auto) {
@@ -444,15 +478,24 @@
         });
       }
 
-      // Tap toggles; holding a single light opens its dialog instead.
+      // Tap toggles (heading a block, only the icon does, and the rest opens
+      // or closes the block); holding a single light opens its dialog instead.
       const wasHold = onHold(card, () => {
         if (!this._single) return;
         this.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId: this._config.entities[0] }, bubbles: true, composed: true }));
       });
-      onActivate(card, () => {
-        if (wasHold()) return;
-        this._call(this._states().some((s) => s.state === "on") ? "turn_off" : "turn_on", {});
-      });
+      const toggle = () => {
+        if (!wasHold()) this._call(this._states().some((s) => s.state === "on") ? "turn_off" : "turn_on", {});
+      };
+      if (expandable) {
+        onActivate(light, toggle);
+        onActivate(card, () => {
+          if (!wasHold()) this.dispatchEvent(new CustomEvent("hue-lite-expand", { bubbles: true, composed: true }));
+        });
+        this.expanded = this._open ?? true;
+      } else {
+        onActivate(card, toggle);
+      }
 
       // The slider handles its own input.
       slider.addEventListener("pointerdown", (ev) => ev.stopPropagation());
@@ -477,12 +520,12 @@
 
       card.classList.toggle("on", on.length > 0);
       card.classList.toggle("unavailable", Boolean(unavailable));
-      card.title = this._single ? "Tap to switch on or off, hold for colour" : "Tap to switch all on or off";
-      // A single light's icon shows its own colour when it's on.
-      const rgb = single?.attributes.rgb_color;
-      card.style.setProperty("--icon-rgb", on.length && Array.isArray(rgb) ? rgb.join(", ") : "255, 193, 7");
-      icon.setAttribute("icon", !this._single ? "mdi:lightbulb-group"
-        : single?.attributes.icon || (on.length ? "mdi:lightbulb" : "mdi:lightbulb-outline"));
+      // The icon shows the colour of the lights that are on (their average).
+      const rgbs = on.map((s) => s.attributes.rgb_color).filter(Array.isArray);
+      const rgb = rgbs.length && [0, 1, 2].map((i) => rgbs.reduce((sum, c) => sum + c[i], 0) / rgbs.length);
+      card.style.setProperty("--icon-rgb", rgb ? iconColour(rgb) : "255, 193, 7");
+      icon.setAttribute("icon", this._config.icon || (!this._single ? "mdi:lightbulb-group"
+        : single?.attributes.icon || (on.length ? "mdi:lightbulb" : "mdi:lightbulb-outline")));
       name.textContent = this._config.name || single?.attributes.friendly_name || "Lights";
       state.textContent = unavailable ? "Unavailable"
         : this._single ? (on.length ? `${pct}%` : "Off")
@@ -510,11 +553,13 @@
   // ---- Scene tile ----------------------------------------------------------
 
   // A scene button styled like a tile: tap to put the lights in that scene; lit
-  // while every light that's on is in it.
+  // while every light that's on is in it and not on Auto (which shows on the
+  // Auto button instead).
   //   {natural: true, entities, target, scenes_entity}   the Natural light scene
   //   {preset: id, entities, target, scenes_entity}      a preset
-  // `scenes_entity` says which scene each light is in (attribute `scenes`);
-  // `target` is passed to the actions: {area_id}, {label_id}, {entity_id} or {} for all.
+  // `scenes_entity` says which scene each light is in (attributes `scenes` and
+  // `auto`); `target` is passed to the actions: {area_id}, {label_id},
+  // {entity_id} or {} for all.
   class HueLiteSceneTile extends HueLiteCard {
     setConfig(config) {
       this._scene = config.natural ? NATURAL : PRESETS.find((p) => p.id === config.preset);
@@ -536,9 +581,9 @@
 
     _selected() {
       const on = this._states().filter((s) => s.state === "on");
-      const scenes = this._hass.states[this._config.scenes_entity]?.attributes.scenes || {};
+      const { scenes = {}, auto = [] } = this._hass.states[this._config.scenes_entity]?.attributes || {};
       const scene = this._config.natural ? "natural" : this._config.preset;
-      return on.length > 0 && on.every((s) => scenes[s.entity_id] === scene);
+      return on.length > 0 && on.every((s) => scenes[s.entity_id] === scene && !auto.includes(s.entity_id));
     }
 
     _render() {
@@ -595,22 +640,15 @@
   const BLOCKS_CSS = `
     :host { display: block; }
     .blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
-    .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
-            color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; border-radius: 8px; }
-    .head .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); flex: none; }
-    .text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
-    .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .summary { flex: 1; min-width: 0; font-size: 13px; color: var(--secondary-text-color); white-space: nowrap;
-               overflow: hidden; text-overflow: ellipsis; }
-    .chev { --mdc-icon-size: 22px; color: var(--secondary-text-color); transition: transform 180ms; flex: none; }
-    .collapsed .chev { transform: rotate(-90deg); }
     .collapsed .body { display: none; }
     ${FOCUS_CSS}`;
 
-  // A card of collapsible blocks: tap a heading to fold its block away (the
-  // heading still shows a summary). Which blocks are collapsed is saved per
-  // user under the card's `layout_key`, or the class's `layoutKey`.
-  // Subclasses render the blocks and their summaries.
+  // A card of collapsible blocks, each a heading above a body that folds away.
+  // Which blocks are collapsed is saved per user under the card's
+  // `layout_key`, or the class's `layoutKey`. Subclasses render the blocks
+  // (their headings calling `_toggleCollapsed`), show on a heading whether
+  // its block is open (`_showOpen`), and can redraw from the states of the
+  // entities they're `_watching` (`_update`).
   class CollapsibleBlocks extends HTMLElement {
     setConfig(config) {
       this._validate(config);
@@ -652,69 +690,57 @@
       saveLayout(this._hass, this._layoutKey, this._layout);
     }
 
-    // A block: heading (chevron, icon, title, summary, then `extra` controls)
-    // and an empty body. Names and icons come from the registries, so they're
-    // set as text and attributes, never parsed as HTML.
-    _block(id, name, icon, extra = "") {
+    _watching() {
+      return [];
+    }
+
+    _update() {}
+
+    // A block: `head` above an empty body.
+    _block(id, head) {
       const el = document.createElement("div");
       el.className = "block";
-      el.innerHTML = `
-        <div class="head" role="button" tabindex="0" aria-expanded="true">
-          <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
-          <ha-icon class="block-icon"></ha-icon>
-          <span class="text"><span class="title"></span><span class="summary"></span></span>
-          ${extra}
-        </div>
-        <div class="body"></div>`;
-      el.querySelector(".title").textContent = name;
-      el.querySelector(".block-icon").setAttribute("icon", icon);
-      onActivate(el.querySelector(".head"), () => {
-        if (!this._reordering) this._toggleCollapsed(id);
-      });
+      const body = document.createElement("div");
+      body.className = "body";
+      el.append(head, body);
       this._blocks.set(id, el);
       return el;
     }
 
     _toggleCollapsed(id) {
+      if (this._reordering) return;
       const c = this._layout.collapsed;
       this._layout.collapsed = c.includes(id) ? c.filter((x) => x !== id) : [...c, id];
       this._save();
       this._arrange();
     }
 
-    // Applies the collapsed state, then refreshes the summaries.
+    // Applies the collapsed state, then redraws.
     _arrange() {
       for (const [id, el] of this._blocks) {
         const collapsed = this._layout.collapsed.includes(id);
         el.classList.toggle("collapsed", collapsed);
-        el.querySelector(".head").setAttribute("aria-expanded", String(!collapsed));
+        this._showOpen(el, !collapsed);
       }
       this._update();
-    }
-
-    _summary(el, text) {
-      el.querySelector(".summary").textContent = text;
     }
   }
 
   // ---- Rooms card ----------------------------------------------------------
 
-  // Every room (and label group) as a block with its light bars and scenes.
-  // Collapsed, it still says how many lights are on, with a power button.
-  // Reorder moves rooms up or down; new rooms join at the end. With
-  // `toolbar: false` there's no Rooms heading, Collapse all or Reorder (the
-  // Whole home block uses that, with a `layout_key` of its own).
+  // Every room (and label group) as a block headed by a light bar for all its
+  // lights (`head`): its icon switches them on or off, the slider dims them,
+  // Auto puts them on Auto, and tapping the rest of it shows or hides the
+  // room's own light bars and scenes (`cards`). Reorder moves rooms up or
+  // down; new rooms join at the end. With `toolbar: false` there's no Rooms
+  // heading, Collapse all or Reorder (the Whole home block uses that, with a
+  // `layout_key` of its own).
   class HueLiteRooms extends CollapsibleBlocks {
     static layoutKey = "hue_lite_rooms";
 
     _validate(config) {
       if (!Array.isArray(config.rooms)) throw new Error("rooms is required");
-      this._lights = [...new Set(config.rooms.flatMap((r) => r.lights))];
       this._reordering = false;
-    }
-
-    _watching() {
-      return this._lights;
     }
 
     getCardSize() {
@@ -737,10 +763,10 @@
                    display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 18px; --mdc-icon-size: 20px; }
           button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
           button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
-          .power.on { color: var(--amber-color, #ffc107); }
+          .head { display: flex; align-items: center; gap: 4px; }
+          .head > hue-lite-light-bar { flex: 1; min-width: 0; }
           .move { display: none; }
           .reordering .move { display: inline-flex; }
-          .reordering .power { display: none; }
           .move button:disabled { opacity: 0.3; cursor: default; }
           .body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
           .body > .cell { grid-column: span 12; }
@@ -758,27 +784,24 @@
 
       const list = this._root.querySelector(".blocks");
       for (const r of this._config.rooms) {
-        const el = this._block(r.id, r.name, r.icon, `
-          <button class="power" title="Turn ${r.lights.length > 1 ? "all " : ""}on or off"><ha-icon icon="mdi:power"></ha-icon></button>
+        const head = document.createElement("div");
+        head.className = "head";
+        head.innerHTML = `
           <span class="move">
             <button class="up" title="Move up"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
             <button class="down" title="Move down"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
-          </span>`);
+          </span>`;
+        const bar = this._card(r.head);
+        bar.addEventListener("hue-lite-expand", () => this._toggleCollapsed(r.id));
+        head.prepend(bar);
+        const el = this._block(r.id, head);
         const body = el.querySelector(".body");
         for (const cfg of r.cards) {
-          const card = document.createElement(cfg.type.replace(/^custom:/, ""));
-          card.setConfig(cfg);
-          if (this._hass) card.hass = this._hass;
           const cell = document.createElement("div");
           cell.className = `cell${cfg.type === "custom:hue-lite-scene-tile" ? " tile" : ""}${cfg.grid_options?.columns === 6 ? " half" : ""}`;
-          cell.appendChild(card);
+          cell.appendChild(this._card(cfg));
           body.appendChild(cell);
-          this._children.push(card);
         }
-        onActivate(el.querySelector(".power"), () => {
-          const anyOn = r.lights.some((id) => this._hass?.states[id]?.state === "on");
-          this._hass.callService("light", anyOn ? "turn_off" : "turn_on", {}, { entity_id: r.lights });
-        });
         onActivate(el.querySelector(".up"), () => this._move(r.id, -1));
         onActivate(el.querySelector(".down"), () => this._move(r.id, 1));
         list.appendChild(el);
@@ -796,6 +819,19 @@
         this._reordering = !this._reordering;
         this._arrange();
       });
+    }
+
+    // One of the Hue-Lite cards inside, handed hass along with the rest.
+    _card(config) {
+      const card = document.createElement(config.type.replace(/^custom:/, ""));
+      card.setConfig(config);
+      if (this._hass) card.hass = this._hass;
+      this._children.push(card);
+      return card;
+    }
+
+    _showOpen(el, open) {
+      el.querySelector(".head > hue-lite-light-bar").expanded = open;
     }
 
     _move(id, step) {
@@ -830,16 +866,6 @@
         fold.querySelector("ha-icon").setAttribute("icon", allCollapsed ? "mdi:unfold-more-horizontal" : "mdi:unfold-less-horizontal");
       }
       super._arrange();
-    }
-
-    _update() {
-      if (!this._hass) return;
-      for (const r of this._config.rooms) {
-        const el = this._blocks.get(r.id);
-        const on = r.lights.filter((id) => this._hass.states[id]?.state === "on").length;
-        this._summary(el, r.lights.length === 1 ? (on ? "On" : "Off") : on ? `${on} of ${r.lights.length} on` : "All off");
-        el.querySelector(".power").classList.toggle("on", on > 0);
-      }
     }
   }
 
@@ -887,8 +913,14 @@
         <style>
           ${BLOCKS_CSS}
           h2 { margin: 0; padding: 0 4px 8px; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
-          .text { flex-direction: column; align-items: stretch; gap: 0; padding: 4px 0; }
-          .summary { white-space: normal; }
+          .head { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; cursor: pointer; user-select: none;
+                  color: var(--primary-text-color); -webkit-tap-highlight-color: transparent; border-radius: 8px; }
+          .block-icon { --mdc-icon-size: 20px; color: var(--secondary-text-color); flex: none; }
+          .text { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 4px 0; }
+          .title { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .summary { font-size: 13px; color: var(--secondary-text-color); }
+          .chev { --mdc-icon-size: 22px; color: var(--secondary-text-color); transition: transform 180ms; flex: none; }
+          .collapsed .chev { transform: rotate(-90deg); }
           .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
         </style>
         <h2>Routines</h2>
@@ -896,10 +928,31 @@
       const list = this._root.querySelector(".blocks");
       const render = (this._rendering = {});
       for (const r of this._config.routines) {
-        const el = this._block(r.id, r.name, r.icon);
+        const el = this._block(r.id, this._heading(r));
         this._fill(render, el.querySelector(".body"), r.cards);
         list.appendChild(el);
       }
+    }
+
+    // A routine's heading: chevron, icon, title and summary; tapping it opens
+    // or closes the block.
+    _heading(r) {
+      const head = document.createElement("div");
+      head.className = "head";
+      head.setAttribute("role", "button");
+      head.tabIndex = 0;
+      head.innerHTML = `
+        <ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
+        <ha-icon class="block-icon"></ha-icon>
+        <span class="text"><span class="title"></span><span class="summary"></span></span>`;
+      head.querySelector(".title").textContent = r.name;
+      head.querySelector(".block-icon").setAttribute("icon", r.icon);
+      onActivate(head, () => this._toggleCollapsed(r.id));
+      return head;
+    }
+
+    _showOpen(el, open) {
+      el.querySelector(".head").setAttribute("aria-expanded", String(open));
     }
 
     // Fills a block once the card helpers have loaded, unless the card has
@@ -917,7 +970,9 @@
 
     _update() {
       if (!this._hass) return;
-      for (const [id, el] of this._blocks) this._summary(el, SUMMARIES[id]?.(this._hass, this._config.entities || {}) || "");
+      for (const [id, el] of this._blocks) {
+        el.querySelector(".summary").textContent = SUMMARIES[id]?.(this._hass, this._config.entities || {}) || "";
+      }
     }
   }
 
@@ -934,6 +989,6 @@
   window.customCards.push({
     type: "hue-lite-light-bar",
     name: "Hue-Lite light bar",
-    description: "Tap to toggle, slide to dim, hold for the light dialog; one light or several.",
+    description: "Tap to toggle, slide to dim, Auto, hold for the light dialog; one light or several.",
   });
 })();

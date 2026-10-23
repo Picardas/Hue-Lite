@@ -1,6 +1,9 @@
-"""Auto: a light that does what the routines ask, whether or not it has their labels."""
+"""Auto: a light that does what the routines ask, whether or not it has their
+labels, until a scene is picked for it or it's changed."""
 
 from __future__ import annotations
+
+from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
@@ -8,14 +11,19 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUs
 
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import Unauthorized
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.hue_lite.engine import HueLite
 
-from .conftest import Home, action, add_light, routine, set_up, settle, switch, tick
+from .conftest import FRIDAY, Home, action, add_light, routine, set_up, settle, switch, tick
 
 
 def auto(hass: HomeAssistant) -> list[str]:
     return hass.states.get("sensor.hue_lite_light_scenes").attributes["auto"]
+
+
+def scenes(hass: HomeAssistant) -> dict[str, str]:
+    return hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"]
 
 
 async def test_auto_lights_follow_wake_up_and_the_evening(
@@ -46,7 +54,9 @@ async def test_auto_during_the_evening(
     desk = add_light(hass, "desk")
     await tick(hass, freezer, "16:29")
     hue_lite = await set_up(hass, entry)
-    await tick(hass, freezer, "16:30")  # the routine takes the Evening-labelled lights
+    # The routine takes the Evening-labelled lights, which puts them on Auto.
+    await tick(hass, freezer, "16:30")
+    assert auto(hass) == ["light.bedroom", "light.living_room"]
     await tick(hass, freezer, "17:00")
     hass.states.async_set(office, "on")
     home.turn_on.clear()
@@ -64,11 +74,56 @@ async def test_auto_during_the_evening(
     await settle(hass)
     assert [c.data["entity_id"] for c in home.turn_on] == [[desk]]
 
-    # Off Auto: the routine lets go of lights it only had through Auto, and
-    # keeps labelled ones (Auto doesn't change what the labels do).
+    # Off Auto, lights leave the routine, labelled or not...
     await action(hass, "set_auto", {"auto": False, "entity_id": [office, "light.bedroom"]})
-    assert routine(hass) == ["light.bedroom", desk, "light.living_room"]
+    assert routine(hass) == [desk, "light.living_room"]
+    assert auto(hass) == [desk, "light.living_room"]
+
+    # ...and the routine lets go of the rest at bedtime, but Auto stays on...
+    await tick(hass, freezer, "23:00")
     assert auto(hass) == [desk]
+
+    # ...and the labels still count the next evening.
+    await tick(hass, freezer, f"{FRIDAY} 12:00:00+01:00")
+    await tick(hass, freezer, f"{FRIDAY} 16:30:00+01:00")
+    assert routine(hass) == ["light.bedroom", desk, "light.living_room"]
+
+
+async def test_picking_a_scene_or_a_change_takes_a_light_off_auto(
+    hass: HomeAssistant, home: Home, hue_lite: HueLite, hass_admin_user: MockUser
+) -> None:
+    by_hand = Context(user_id=hass_admin_user.id)
+    await action(hass, "apply_preset", {"preset": "relax", "entity_id": "light.living_room"})
+    # Put on Auto, a light leaves its scene: it's on Auto, not in Relax.
+    await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
+    assert (auto(hass), scenes(hass)) == (["light.living_room"], {})
+
+    # Turning it on and off isn't a change: it stays on Auto...
+    for state in ("on", "off", "on"):
+        hass.states.async_set("light.living_room", state, context=by_hand)
+    await settle(hass)
+    assert auto(hass) == ["light.living_room"]
+
+    # ...but changing it takes it off.
+    hass.states.async_set("light.living_room", "on", {"brightness": 50}, context=by_hand)
+    await settle(hass)
+    assert auto(hass) == []
+
+    # So does picking a scene for it, which then shows instead.
+    await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
+    await action(hass, "apply_preset", {"preset": "rest", "area_id": "living_room"})
+    assert (auto(hass), scenes(hass)) == ([], {"light.living_room": "rest"})
+
+
+async def test_coming_home_keeps_auto(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
+    with patch("custom_components.hue_lite.routines.is_up", return_value=False):
+        hass.states.async_set("zone.home", "0")
+        hass.states.async_set("zone.home", "1")
+        await settle(hass)
+    # Natural light is what the routine asks for, not a scene someone picked.
+    assert [c.data["entity_id"] for c in home.turn_on] == [["light.living_room"]]
+    assert (auto(hass), scenes(hass)) == (["light.living_room"], {"light.living_room": "natural"})
 
 
 async def test_auto_is_kept_and_checked(
@@ -77,10 +132,14 @@ async def test_auto_is_kept_and_checked(
     await action(hass, "set_auto", {"auto": True, "entity_id": ["light.living_room", "light.garden"]})
     # Excluded lights can't be on Auto.
     assert auto(hass) == ["light.living_room"]
-    # It's kept across a reload.
-    assert await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
-    assert auto(hass) == ["light.living_room"]
     # Like the other actions, it checks the caller's permissions.
     with pytest.raises(Unauthorized):
         await action(hass, "set_auto", {"auto": False, "entity_id": "light.living_room"}, Context(user_id=hass_read_only_user.id))
+    # It's kept across a reload...
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert auto(hass) == ["light.living_room"]
+    # ...and a new entity id.
+    er.async_get(hass).async_update_entity("light.living_room", new_entity_id="light.lounge")
+    await hass.async_block_till_done()
+    assert auto(hass) == ["light.lounge"]
