@@ -1,0 +1,37 @@
+{
+  "entity": {
+    "number": {
+      "wake_up_fade_minutes": { "default": "mdi:timer-sand" },
+      "wake_up_off_after_minutes": { "default": "mdi:timer-off-outline" },
+      "bedtime_fade_minutes": { "default": "mdi:timer-sand" },
+      "evening_start_before_sunset": { "default": "mdi:weather-sunset-down" },
+      "evening_brighten_minutes": { "default": "mdi:brightness-6" },
+      "evening_wind_down_minutes": { "default": "mdi:sofa" },
+      "evening_nightlight_minutes": { "default": "mdi:weather-night" }
+    },
+    "sensor": {
+      "natural_light": { "default": "mdi:theme-light-dark" },
+      "evening_routine": { "default": "mdi:weather-sunset" }
+    },
+    "switch": {
+      "evening_routine_enabled": { "default": "mdi:weather-sunset" },
+      "coming_home_enabled": { "default": "mdi:home-import-outline" },
+      "coming_home_only_dark": { "default": "mdi:weather-night" },
+      "leaving_home_enabled": { "default": "mdi:home-export-outline" },
+      "wake_up_weekdays": { "default": "mdi:calendar-week" },
+      "wake_up_weekends": { "default": "mdi:calendar-weekend" },
+      "wake_up_auto_off": { "default": "mdi:lightbulb-auto-outline" }
+    },
+    "time": {
+      "wake_up_weekday": { "default": "mdi:alarm" },
+      "wake_up_weekend": { "default": "mdi:alarm" },
+      "bedtime_weeknight": { "default": "mdi:bed-clock" },
+      "bedtime_weekend": { "default": "mdi:bed-clock" }
+    }
+  },
+  "services": {
+    "apply_preset": { "service": "mdi:palette" },
+    "natural_light": { "service": "mdi:theme-light-dark" },
+    "next_scene": { "service": "mdi:palette-swatch-variant" }
+  }
+}

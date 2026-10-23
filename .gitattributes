@@ -1,0 +1,2 @@
+# Home Assistant runs on Linux: keep LF endings regardless of the Windows checkout.
+* text=auto eol=lf

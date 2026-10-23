@@ -1,0 +1,146 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hue-Lite",
+        "description": "Hue-style scenes, a Natural light scene that follows the sun, and wake-up, evening and coming-home routines for your lights.\n\nLights take part through labels: Evening, Wake up, Nightlight, Coming home and Exclude from lighting. Hue-Lite uses the ones you already have and creates the rest.",
+        "data": {
+          "presence": "Home zone",
+          "dimmers": "Hue dimmer switches"
+        },
+        "data_description": {
+          "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
+          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Hue-Lite is already set up."
+    },
+    "create_entry": {
+      "default": "Give your lights an area and the labels of the routines they should join. For the Lights dashboard, add a dashboard (Settings → Dashboards → Add dashboard → New dashboard from scratch), open it, choose Edit dashboard → ⋮ → Raw configuration editor, and replace everything with:\n\nstrategy:\n  type: custom:hue-lite\n\nReload the browser first so it has Hue-Lite's dashboard."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hue-Lite options",
+        "description": "Which label puts a light into each routine. Lights without an area or label take part in scenes from the dashboard and dimmers only.",
+        "data": {
+          "label_evening": "Evening routine",
+          "label_wake_up": "Wake up",
+          "label_nightlight": "Nightlight",
+          "label_coming_home": "Coming home",
+          "label_exclude": "Excluded",
+          "presence": "Home zone",
+          "dimmers": "Hue dimmer switches"
+        },
+        "data_description": {
+          "label_evening": "Lights the evening routine takes: on before sunset, through the scenes, off at bedtime.",
+          "label_wake_up": "Lights that fade up at the wake-up time.",
+          "label_nightlight": "Lights that get Nightlight instead of Rest overnight (Natural light) and before bed (evening routine).",
+          "label_coming_home": "Lights that come on in Natural light when someone arrives home.",
+          "label_exclude": "Lights left out of everything: the dashboard, scenes, routines and dimmers. Hidden lights are left out too.",
+          "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
+          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area."
+        }
+      }
+    }
+  },
+  "entity": {
+    "number": {
+      "wake_up_fade_minutes": { "name": "Wake-up fade-in" },
+      "wake_up_off_after_minutes": { "name": "Wake-up lights off after" },
+      "bedtime_fade_minutes": { "name": "Bedtime fade-out" },
+      "evening_start_before_sunset": { "name": "Evening start before sunset" },
+      "evening_brighten_minutes": { "name": "Evening brighten over" },
+      "evening_wind_down_minutes": { "name": "Evening wind down" },
+      "evening_nightlight_minutes": { "name": "Evening nightlight before bed" }
+    },
+    "sensor": {
+      "natural_light": {
+        "name": "Natural light",
+        "state": {
+          "night": "Night",
+          "sunrise": "Sunrise",
+          "morning": "Morning",
+          "day": "Day",
+          "sunset": "Sunset",
+          "evening": "Evening"
+        },
+        "state_attributes": {
+          "brightness_pct": { "name": "Brightness" },
+          "xy_color": { "name": "Colour (xy)" },
+          "lights": { "name": "Lights in the scene" }
+        }
+      },
+      "evening_routine": {
+        "name": "Evening routine",
+        "state": {
+          "day": "Day",
+          "evening": "Evening",
+          "wind_down": "Wind down",
+          "nightlight": "Nightlight",
+          "night": "Night"
+        },
+        "state_attributes": {
+          "brightness_pct": { "name": "Brightness" },
+          "xy_color": { "name": "Colour (xy)" },
+          "lights": { "name": "Lights in the routine" },
+          "start": { "name": "Starts" },
+          "bedtime": { "name": "Bedtime" },
+          "summary": { "name": "Summary" }
+        }
+      }
+    },
+    "switch": {
+      "evening_routine_enabled": { "name": "Evening routine" },
+      "coming_home_enabled": { "name": "Coming home" },
+      "coming_home_only_dark": { "name": "Coming home only when dark" },
+      "leaving_home_enabled": { "name": "Lights off when everyone leaves" },
+      "wake_up_weekdays": { "name": "Wake up on weekdays" },
+      "wake_up_weekends": { "name": "Wake up on weekends" },
+      "wake_up_auto_off": { "name": "Wake-up lights turn off" }
+    },
+    "time": {
+      "wake_up_weekday": { "name": "Wake up Mon–Fri" },
+      "wake_up_weekend": { "name": "Wake up Sat & Sun" },
+      "bedtime_weeknight": { "name": "Bedtime Sun–Thu nights" },
+      "bedtime_weekend": { "name": "Bedtime Fri & Sat nights" }
+    }
+  },
+  "selector": {
+    "preset": {
+      "options": {
+        "energize": "Energize",
+        "cool_bright": "Cool bright",
+        "relax": "Relax",
+        "rest": "Rest",
+        "nightlight": "Nightlight"
+      }
+    }
+  },
+  "services": {
+    "apply_preset": {
+      "name": "Apply preset",
+      "description": "Sets lights to a Hue-style preset, taking them out of the Natural light scene and the evening routine. With no target, every light.",
+      "fields": {
+        "preset": { "name": "Preset", "description": "The preset to apply." }
+      }
+    },
+    "natural_light": {
+      "name": "Natural light",
+      "description": "Puts lights into the Natural light scene: they turn on and follow the sun until another scene is picked or they're changed by hand. With no target, every light.",
+      "fields": {
+        "follow": { "name": "Follow natural light", "description": "Turn off to take the lights out of the scene instead." }
+      }
+    },
+    "next_scene": {
+      "name": "Next scene",
+      "description": "Moves lights to the next scene, like pressing a Hue dimmer's On button again: Natural light, Energize, Cool bright, Relax, Rest, Nightlight, and round. Lights that are off come on in Natural light."
+    }
+  },
+  "exceptions": {
+    "not_loaded": { "message": "Hue-Lite isn't set up." }
+  }
+}

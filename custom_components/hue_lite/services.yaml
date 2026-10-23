@@ -1,0 +1,31 @@
+apply_preset:
+  target:
+    entity:
+      domain: light
+  fields:
+    preset:
+      required: true
+      selector:
+        select:
+          translation_key: preset
+          options:
+            - energize
+            - cool_bright
+            - relax
+            - rest
+            - nightlight
+
+natural_light:
+  target:
+    entity:
+      domain: light
+  fields:
+    follow:
+      default: true
+      selector:
+        boolean:
+
+next_scene:
+  target:
+    entity:
+      domain: light

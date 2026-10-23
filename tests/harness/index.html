@@ -1,0 +1,138 @@
+<!doctype html>
+<!--
+  Local harness for the dashboard script: a mock `hass` (states, registries,
+  callWS, callService) and stand-ins for ha-card and ha-icon. Serve the repo
+  root and open /tests/harness/ (e.g. python3 -m http.server --bind 127.0.0.1).
+  window.dash is the generated dashboard and window.calls the actions called.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hue-Lite harness</title>
+  <style>
+    body { margin: 16px; font-family: system-ui, sans-serif; background: #f5f5f5;
+           --primary-text-color: #212121; --secondary-text-color: #727272; --rgb-primary-text-color: 33, 33, 33;
+           --primary-color: #03a9f4; --rgb-primary-color: 3, 169, 244; }
+    ha-card { display: block; background: #fff; border-radius: 12px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15); }
+    ha-icon { display: inline-flex; max-width: 100%; overflow: hidden; font-size: 8px; line-height: 1; }
+    h2 { font-size: 15px; margin: 20px 0 8px; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; max-width: 420px; }
+    .grid > * { grid-column: span 12; }
+    .grid > .half { grid-column: span 6; height: 56px; }
+    #rooms { max-width: 900px; }
+    pre { font-size: 11px; max-height: 300px; overflow: auto; background: #fff; padding: 8px; }
+  </style>
+  <script>
+    customElements.define("ha-card", class extends HTMLElement {});
+    customElements.define("ha-icon", class extends HTMLElement {
+      static get observedAttributes() { return ["icon"]; }
+      attributeChangedCallback() { this.textContent = (this.getAttribute("icon") || "").replace("mdi:", ""); }
+    });
+  </script>
+  <script src="../../custom_components/hue_lite/frontend/hue-lite.js"></script>
+</head>
+<body>
+  <h2>Whole home</h2>
+  <div id="home" class="grid"></div>
+  <h2>Rooms</h2>
+  <div id="rooms"></div>
+  <h2>Generated dashboard</h2>
+  <pre id="config"></pre>
+  <script>
+    const light = (id, name, state, attributes = {}) =>
+      ({ entity_id: id, state, attributes: { friendly_name: name, ...attributes } });
+    const relax = { brightness: 143, color_mode: "xy", xy_color: [0.5019, 0.4152], rgb_color: [255, 180, 100] };
+    const coolBright = { brightness: 255, color_mode: "xy", xy_color: [0.3812, 0.3794], rgb_color: [255, 240, 220] };
+
+    const states = Object.fromEntries([
+      light("light.living_room", "Living Room", "on", relax),
+      light("light.kitchen", "Kitchen", "on", relax),
+      light("light.bedroom", "Bedroom", "off"),
+      light("light.office", "Office", "on", coolBright),
+      light("light.lamp", "Reading lamp", "on", coolBright),
+      light("light.garden", "Garden", "on"),
+      light("light.cupboard", "Cupboard", "off"),
+      light("light.all", "All", "on", { entity_id: ["light.living_room", "light.kitchen"] }),
+      { entity_id: "sensor.hue_lite_natural_light", state: "day", attributes: { lights: ["light.office", "light.lamp"] } },
+    ].map((s) => [s.entity_id, s]));
+
+    const entities = {
+      "light.living_room": { entity_id: "light.living_room", area_id: "living_room", labels: ["evening", "coming_home"] },
+      "light.kitchen": { entity_id: "light.kitchen", device_id: "kitchen_bulb", labels: [] },
+      "light.bedroom": { entity_id: "light.bedroom", area_id: "bedroom", labels: ["evening", "wake_up", "nightlight"] },
+      "light.office": { entity_id: "light.office", area_id: "office", labels: ["evening"] },
+      "light.lamp": { entity_id: "light.lamp", labels: ["lamps"] },
+      "light.garden": { entity_id: "light.garden", labels: ["lighting_exclude"] },
+      "light.cupboard": { entity_id: "light.cupboard", area_id: "bedroom", hidden: true },
+      "light.all": { entity_id: "light.all", labels: [] },
+    };
+
+    const setup = {
+      roles: { evening: "evening", wake_up: "wake_up", nightlight: "nightlight", coming_home: "coming_home", exclude: "lighting_exclude" },
+      labels: [
+        { label_id: "evening", name: "Evening", icon: "mdi:weather-sunset" },
+        { label_id: "lighting_exclude", name: "Exclude from lighting", icon: null },
+        { label_id: "lamps", name: "Lamps", icon: "mdi:lamp" },
+        { label_id: "empty", name: "Nothing here", icon: null },
+      ],
+      presets: {
+        energize: { brightness_pct: 100, xy_color: [0.3143, 0.3301] },
+        cool_bright: { brightness_pct: 100, xy_color: [0.3812, 0.3794] },
+        relax: { brightness_pct: 56, xy_color: [0.5019, 0.4152] },
+        rest: { brightness_pct: 35, xy_color: [0.561, 0.4042] },
+        nightlight: { brightness_pct: 1, xy_color: [0.67, 0.32] },
+      },
+      entities: {
+        natural_light: "sensor.hue_lite_natural_light",
+        evening_routine: "sensor.hue_lite_evening_routine",
+        evening_routine_enabled: "switch.hue_lite_evening_routine",
+        wake_up_weekdays: "switch.hue_lite_wake_up_on_weekdays",
+        wake_up_weekday: "time.hue_lite_wake_up_mon_fri",
+      },
+    };
+
+    window.calls = [];
+    window.hass = {
+      states,
+      entities,
+      devices: { kitchen_bulb: { area_id: "kitchen" } },
+      areas: {
+        bedroom: { area_id: "bedroom", name: "Bedroom", floor_id: "first" },
+        office: { area_id: "office", name: "Office", floor_id: "first", icon: "mdi:desk" },
+        living_room: { area_id: "living_room", name: "Living Room", floor_id: "ground", icon: "mdi:sofa" },
+        kitchen: { area_id: "kitchen", name: "Kitchen", floor_id: "ground" },
+        hall: { area_id: "hall", name: "Hall", floor_id: "ground" },
+      },
+      floors: { ground: { level: 0 }, first: { level: 1 } },
+      async callWS(msg) {
+        if (msg.type === "hue_lite/config") {
+          if (window.notSetUp) throw { code: "not_loaded" };
+          return setup;
+        }
+        if (msg.type === "frontend/get_user_data") return { value: null };
+        return null;
+      },
+      callService(domain, service, data, target) {
+        window.calls.push({ domain, service, data, target });
+      },
+    };
+
+    function card(config) {
+      const el = document.createElement(config.type.replace(/^custom:/, ""));
+      el.setConfig(config);
+      el.hass = window.hass;
+      if (config.grid_options?.columns === 6) el.className = "half";
+      return el;
+    }
+
+    window.ready = (async () => {
+      window.dash = await customElements.get("ll-strategy-dashboard-hue-lite").generate({}, window.hass);
+      document.getElementById("config").textContent = JSON.stringify(window.dash, null, 1);
+      const [home, rooms] = window.dash.views[0].sections;
+      for (const config of home.cards.filter((c) => c.type.startsWith("custom:"))) document.getElementById("home").appendChild(card(config));
+      document.getElementById("rooms").appendChild(card(rooms.cards[0]));
+    })();
+  </script>
+</body>
+</html>

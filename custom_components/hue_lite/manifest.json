@@ -1,0 +1,14 @@
+{
+  "domain": "hue_lite",
+  "name": "Hue-Lite",
+  "codeowners": ["@Picardas"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http"],
+  "documentation": "https://github.com/Picardas/hue-lite",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/Picardas/hue-lite/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}
