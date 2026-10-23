@@ -3,7 +3,8 @@ their scene, and following the clock. The routines are in routines.py, the
 Hue dimmers in dimmers.py, and choosing lights in targets.py.
 
 Each light Hue-Lite has put into a scene remembers it in `scenes`: Natural
-light, the evening routine, a preset, or the wake-up fade-in. Picking another
+light, the evening routine, a preset, a colour scene (whose colours drift),
+the wake-up fade-in, or a sleep fade-out. Picking another
 scene replaces it; changing the light yourself or from an automation, or
 activating one of Home Assistant's own scenes with it, forgets it. Turning a
 light off keeps its scene, so a light in Natural light or the routine picks it
@@ -48,11 +49,13 @@ from .const import (
     DEFAULT_PRESENCE,
     DEFAULT_SETTINGS,
     DOMAIN,
+    DRIFT_MINUTES,
     EVENING_PHASES,
     NAME,
     NATURAL,
     ROLES,
     ROUTINE,
+    SLEEP,
     STORAGE_KEY,
     STORAGE_VERSION,
     TIMES,
@@ -61,7 +64,19 @@ from .const import (
 )
 from .routines import Routines
 from .targets import LIGHT, excluded, resolve
-from .timeline import PRESETS, Evening, EveningSettings, Light, SunTimes, Target, evening_routine, minutes, natural_light, next_scene
+from .timeline import (
+    PALETTES,
+    PRESETS,
+    Evening,
+    EveningSettings,
+    Light,
+    SunTimes,
+    Target,
+    evening_routine,
+    minutes,
+    natural_light,
+    next_scene,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -128,6 +143,8 @@ class HueLite:
         self._watched: frozenset[str] = frozenset()
         # Contexts of Hue-Lite's own light changes, so they're not taken for changes by others.
         self._ours: deque[str] = deque(maxlen=100)
+        # The colour scenes' drift step their bulbs were last moved on at.
+        self._drifted = self._drift_step()
 
     # ---- Lifecycle -----------------------------------------------------------
 
@@ -228,7 +245,8 @@ class HueLite:
         """What the dashboard needs: the role labels, the labels it can show
         (role labels and labels on lights, their devices and areas; Home
         Assistant only lists every label to admins), Hue-Lite's entity ids,
-        and each preset's colour as a colour bulb reports it, for its tile."""
+        and the colours of each preset and colour scene as a colour bulb
+        reports them, for their tiles."""
         devices, areas = dr.async_get(self.hass), ar.async_get(self.hass)
         wanted = set(self.labels.values())
         for entry in er.async_get(self.hass).entities.values():
@@ -249,7 +267,13 @@ class HueLite:
                 if label.label_id in wanted
             ],
             "entities": self.entity_ids,
-            "presets": {preset: {"rgb_color": rgb_color(light)} for preset, light in PRESETS.items()},
+            "presets": {
+                **{preset: {"rgb_colors": [rgb_color(light)]} for preset, light in PRESETS.items()},
+                **{
+                    scene: {"rgb_colors": [rgb_color(palette.colour(i)) for i in range(len(palette.colours))]}
+                    for scene, palette in PALETTES.items()
+                },
+            },
         }
 
     # ---- Choosing lights -----------------------------------------------------
@@ -270,8 +294,10 @@ class HueLite:
 
     def on_auto(self) -> list[str]:
         """The lights on Auto: put on it, or held by the evening routine or
-        wake up now."""
-        return sorted(self.auto.union(light for light, scene in self.scenes.items() if scene in (ROUTINE, WAKE_UP)))
+        wake up now. Lights fading out to sleep show that instead (they're
+        back on Auto once they're off)."""
+        held = {light for light, scene in self.scenes.items() if scene in (ROUTINE, WAKE_UP)}
+        return sorted((self.auto | held).difference(self.in_scene(SLEEP)))
 
     @callback
     def async_set_auto(self, lights: list[str], auto: bool) -> None:
@@ -376,11 +402,15 @@ class HueLite:
         return scenes.pop() if len(scenes) == 1 else ""
 
     async def async_preset(self, lights: list[str], preset: str, parent: Context | None = None) -> None:
-        """Someone picked a preset: the lights leave Auto and go into it."""
+        """Someone picked a preset or a colour scene: the lights leave Auto
+        and go into it."""
         if not lights:
             return
         self.set_scene(lights, preset, leave_auto=True)
-        await self.send(lights, PRESETS[preset], 0.4, parent)
+        if preset in PALETTES:
+            await self.send_palette(preset, lights, 0.4, parent)
+        else:
+            await self.send(lights, PRESETS[preset], 0.4, parent)
 
     async def async_natural_light(self, lights: list[str], follow: bool = True, parent: Context | None = None) -> None:
         """Someone picked Natural light: the lights leave Auto, go into it
@@ -424,6 +454,37 @@ class HueLite:
         if white:
             await self.call("turn_on", white, parent=parent, **light.white_data(), transition=transition)
 
+    async def send_palette(self, scene: str, lights: list[str], transition: float, parent: Context | None = None) -> None:
+        """Turn lights on in a colour scene. Each colour bulb gets the colour
+        for its place among the scene's colour bulbs, moved on one colour
+        every DRIFT_MINUTES, so a room shows several and they drift; white
+        bulbs get the scene's white."""
+        palette = PALETTES[scene]
+        colour = [light for light in lights if self._has_colour(light)]
+        order = sorted({*colour, *(light for light in self.in_scene(scene) if self._has_colour(light))})
+        step = self._drift_step()
+        by_colour: dict[int, list[str]] = {}
+        for light in colour:
+            by_colour.setdefault((order.index(light) + step) % len(palette.colours), []).append(light)
+        for index, group in sorted(by_colour.items()):
+            await self.send(group, palette.colour(index), transition, parent)
+        await self.send([light for light in lights if light not in colour], palette.white, transition, parent)
+
+    @staticmethod
+    def _drift_step() -> int:
+        return int(dt_util.utcnow().timestamp()) // (DRIFT_MINUTES * 60)
+
+    @callback
+    def _drift(self) -> None:
+        """Every DRIFT_MINUTES, start the colour scenes' bulbs that are on
+        moving to their next colour, taking until the next move."""
+        if (step := self._drift_step()) == self._drifted:
+            return
+        self._drifted = step
+        for scene in PALETTES:
+            if lights := [light for light in self.on(self.in_scene(scene)) if self._has_colour(light)]:
+                self.spawn(self.send_palette(scene, lights, DRIFT_MINUTES * 60))
+
     def _has_colour(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
         modes = state.attributes.get("supported_color_modes") if state else None
@@ -464,23 +525,25 @@ class HueLite:
 
     @callback
     def _light_changed(self, event: Event[EventStateChangedData]) -> None:
-        """A light in Natural light or the routine that's turned on picks up
-        its scene's current light. A light that's on and changed by someone
-        else (from the dashboard, a light dialog, an automation) leaves its
-        scene and Auto; bulbs reporting their own state don't count, and nor
-        does turning a light on or off. A wake-up light that's turned off is
-        done with."""
+        """A light in Natural light, the routine or a colour scene that's
+        turned on picks up its scene's current light. A light that's on and
+        changed by someone else (from the dashboard, a light dialog, an
+        automation) leaves its scene and Auto; bulbs reporting their own state
+        don't count, and nor does turning a light on or off. A wake-up or
+        sleep light that's turned off is done with."""
         old, new = event.data["old_state"], event.data["new_state"]
         if old is None or new is None:
             return
         light, scene = new.entity_id, self.scenes.get(new.entity_id)
-        if new.state == STATE_OFF and scene == WAKE_UP:
+        if new.state == STATE_OFF and scene in (WAKE_UP, SLEEP):
             self.set_scene([light], "")
         if new.state != STATE_ON or new.context.id in self._ours:
             return
         if old.state != STATE_ON:
             if scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES):
                 self.spawn(self.apply(scene, [light], 2))
+            elif scene in PALETTES:
+                self.spawn(self.send_palette(scene, [light], 2))
         elif new.context.user_id or new.context.parent_id:
             self.set_scene([light], "", leave_auto=True)
 
@@ -564,6 +627,7 @@ class HueLite:
     @callback
     def _tick(self, _now: datetime) -> None:
         self._refresh()
+        self._drift()
         self.routines.tick(dt_util.now())
 
     @callback

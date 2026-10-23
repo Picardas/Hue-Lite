@@ -92,7 +92,7 @@ def test_evening_routine_weekend_bedtime_after_midnight() -> None:
 
 def test_white_bulbs_get_their_own_colour_temperature() -> None:
     # Warm all the way down: converting Nightlight's red would give ~4100 K.
-    assert [p.kelvin for p in PRESETS.values()] == [6410, 4000, 2237, 2000, 2000]
+    assert [p.kelvin for p in PRESETS.values()] == [6410, 4000, 2890, 2237, 2000, 2000]
     assert PRESETS["nightlight"].white_data() == {"brightness_pct": 1, "color_temp_kelvin": 2000}
     # Blends blend the colour temperature too: halfway through the morning.
     assert natural_light(at("09:45"), SUN).light.kelvin == round((6410 + 4000) / 2)
@@ -122,5 +122,10 @@ def test_moved_from() -> None:
 def test_next_scene() -> None:
     assert next_scene("") == "natural"
     assert next_scene("natural") == "energize"
+    assert next_scene("cool_bright") == "read"
+    assert next_scene("read") == "relax"
     assert next_scene("rest") == "nightlight"
     assert next_scene("nightlight") == "natural"
+    # The colour scenes and sleep aren't in the cycle: on to Natural light.
+    assert next_scene("movie") == "natural"
+    assert next_scene("sleep") == "natural"

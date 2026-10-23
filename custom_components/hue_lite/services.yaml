@@ -11,9 +11,12 @@ apply_preset:
           options:
             - energize
             - cool_bright
+            - read
             - relax
             - rest
             - nightlight
+            - golden_hour
+            - movie
 
 natural_light:
   target:
@@ -26,6 +29,11 @@ natural_light:
         boolean:
 
 next_scene:
+  target:
+    entity:
+      domain: light
+
+sleep:
   target:
     entity:
       domain: light

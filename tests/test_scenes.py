@@ -10,11 +10,51 @@ from homeassistant.core import Context, HomeAssistant
 from homeassistant.setup import async_setup_component
 
 from custom_components.hue_lite.engine import HueLite
-from custom_components.hue_lite.timeline import PRESETS
+from custom_components.hue_lite.timeline import PALETTES, PRESETS
 
 from .conftest import Home, action, add_light, natural, on, set_up, settle, tick
 
 RELAX = {"brightness_pct": 56, "xy_color": [0.5019, 0.4152]}
+
+
+async def test_colour_scene(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, hue_lite: HueLite) -> None:
+    lamp = add_light(hass, "lamp", "living_room")
+    desk = add_light(hass, "desk", "living_room")
+    hass.states.async_set(desk, "off", {"supported_color_modes": ["color_temp"]})
+    colours = list(PALETTES["golden_hour"].colours)
+
+    def sent() -> dict[str, dict]:
+        return {c.data["entity_id"][0]: c.data for c in home.turn_on}
+
+    def colour(data: dict) -> int:
+        return colours.index(tuple(data["xy_color"]))
+
+    # The colour bulbs get the palette's colours, one after another; white
+    # bulbs get its white.
+    await action(hass, "apply_preset", {"preset": "golden_hour", "area_id": "living_room"})
+    first = sent()
+    assert colour(first["light.living_room"]) == (colour(first[lamp]) + 1) % len(colours)
+    assert first[lamp]["brightness_pct"] == 70
+    assert first[desk] == {"entity_id": [desk], "brightness_pct": 70, "color_temp_kelvin": 2500, "transition": 0.4}
+    assert set(hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"].values()) == {"golden_hour"}
+
+    # Every few minutes the colour bulbs that are on drift on to their next
+    # colour, taking until the next move; the white one stays put.
+    on(hass, hue_lite, lamp, "light.living_room")
+    hass.states.async_set(desk, "on", {"supported_color_modes": ["color_temp"]}, context=Context(id=hue_lite._ours[-1]))
+    home.turn_on.clear()
+    await tick(hass, freezer, "13:03")
+    moved = sent()
+    assert set(moved) == {lamp, "light.living_room"}
+    assert colour(moved[lamp]) == (colour(first[lamp]) + 1) % len(colours)
+    assert moved[lamp]["transition"] == 180
+
+    # Turned off and on again, a bulb picks its colour up again.
+    home.turn_on.clear()
+    hass.states.async_set(lamp, "off")
+    hass.states.async_set(lamp, "on")
+    await settle(hass)
+    assert colour(sent()[lamp]) == colour(moved[lamp])
 
 
 async def test_apply_preset(hass: HomeAssistant, home: Home, hue_lite: HueLite, hass_admin_user: MockUser) -> None:

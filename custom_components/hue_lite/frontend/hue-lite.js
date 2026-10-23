@@ -22,14 +22,19 @@
 (() => {
   const DOMAIN = "hue_lite";
   const HOLD_MS = 500;
-  // The scenes' names and icons (their colours come from Hue-Lite).
-  const NATURAL = { name: "Natural", icon: "mdi:theme-light-dark" };
+  // The scenes' names and icons (their colours come from Hue-Lite): Sleep and
+  // Natural light, the presets, then the colour scenes, in the tiles' order.
+  const SLEEP = { id: "sleep", name: "Sleep", icon: "mdi:power-sleep" };
+  const NATURAL = { id: "natural", name: "Natural", icon: "mdi:theme-light-dark" };
   const PRESETS = [
     { id: "energize", name: "Energize", icon: "mdi:lightning-bolt" },
     { id: "cool_bright", name: "Cool bright", icon: "mdi:white-balance-sunny" },
+    { id: "read", name: "Read", icon: "mdi:book-open-variant" },
     { id: "relax", name: "Relax", icon: "mdi:sofa" },
-    { id: "rest", name: "Rest", icon: "mdi:book-open-page-variant" },
+    { id: "rest", name: "Rest", icon: "mdi:candle" },
     { id: "nightlight", name: "Nightlight", icon: "mdi:weather-night" },
+    { id: "golden_hour", name: "Golden hour", icon: "mdi:weather-sunset" },
+    { id: "movie", name: "Movie", icon: "mdi:movie-open-outline" },
   ];
 
   // ---- Registry helpers ----------------------------------------------------
@@ -75,15 +80,17 @@
     return { type: "custom:hue-lite-light-bar", entities, scenes_entity: setup.entities.light_scenes, ...extra };
   }
 
-  // The scenes, two per row: Natural light first (coloured as it is now),
-  // then the presets (coloured by their light). `target` is the action
-  // target: {area_id}, {label_id}, {entity_id} or {} for every light.
+  // The scenes, two per row: Sleep (coloured as Rest, which it fades out
+  // from) and Natural light (coloured as it is now), then the presets and
+  // colour scenes (coloured by their lights). `target` is the action target:
+  // {area_id}, {label_id}, {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
     const tile = (extra) => ({
       type: "custom:hue-lite-scene-tile", entities: lights, target, scenes_entity: setup.entities.light_scenes,
       grid_options: { columns: 6, rows: 1 }, ...extra,
     });
     return [
+      tile({ sleep: true, light: setup.presets?.rest }),
       tile({ natural: true, natural_entity: setup.entities.natural_light }),
       ...PRESETS.map((p) => tile({ preset: p.id, light: setup.presets?.[p.id] })),
     ];
@@ -216,6 +223,8 @@
       "",
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
+      "**Scenes**: Golden hour and Movie spread their colours across a room's colour bulbs and drift slowly between them. Sleep takes a room to Rest and fades it out over the bedtime fade below; lights on Auto stay on it.",
+      "",
       `**Evening routine**: before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
       `**Coming home**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
@@ -305,10 +314,31 @@
     return rgb.map((c) => Math.round((c + (255 * (c - min)) / (max - min)) / 2));
   }
 
+  const average = (rgbs) => [0, 1, 2].map((i) => rgbs.reduce((sum, c) => sum + c[i], 0) / rgbs.length);
+
   // The colour of these lights (their average), as shown.
   function lightsColour(states) {
     const rgbs = states.map((s) => s.attributes.rgb_color).filter(Array.isArray);
-    return shownColour(rgbs.length ? [0, 1, 2].map((i) => rgbs.reduce((sum, c) => sum + c[i], 0) / rgbs.length) : null);
+    return shownColour(rgbs.length ? average(rgbs) : null);
+  }
+
+  // How a scene tile looks, from its scene's colours (as shown): a tint that
+  // runs through them, a fill for while it's on, a swatch, and the ink that
+  // reads on the fill and swatch (white on dark ones like Movie's).
+  function sceneLook(rgbs) {
+    const colours = (rgbs?.length ? rgbs : [null]).map(shownColour);
+    if (colours.length === 1) colours.push(colours[0]);
+    const last = colours.length - 1;
+    const stops = (alpha, upTo) =>
+      colours.map((c, i) => `rgba(${c}, ${alpha(i / last).toFixed(2)}) ${Math.round((i / last) * upTo)}%`).join(", ");
+    const luminance = average(colours).reduce((sum, c, i) => sum + [0.2126, 0.7152, 0.0722][i] * (c / 255) ** 2.2, 0);
+    return {
+      "--tint": `linear-gradient(115deg, ${stops((f) => 0.32 - 0.28 * f, 85)})`,
+      "--fill": `linear-gradient(115deg, ${stops((f) => 1 - 0.25 * f, 100)})`,
+      "--swatch": `radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.55), transparent 60%),
+        conic-gradient(from 200deg, ${[...colours, colours[0]].map((c) => `rgb(${c})`).join(", ")})`,
+      "--ink": luminance < 0.18 ? "#fff" : "rgba(0, 0, 0, 0.87)",
+    };
   }
 
   // A focus ring for keyboard use only, not left behind by a tap.
@@ -569,20 +599,21 @@
   // Natural light's phases, as its tile shows them.
   const PHASES = { night: "Night", sunrise: "Sunrise", morning: "Morning", day: "Day", sunset: "Sunset", evening: "Evening" };
 
-  // A scene button styled like a tile, tinted with the scene's colour: tap to
-  // put the lights in that scene. Filled with the colour and ticked while
-  // every light that's on is in it and not on Auto (which shows on the Auto
-  // button instead).
+  // A scene button styled like a tile, tinted with the scene's colours: tap to
+  // put the lights in that scene. Filled with them and ticked while every
+  // light that's on is in it and not on Auto (which shows on the Auto button
+  // instead).
+  //   {sleep: true, light, entities, target, scenes_entity}              Sleep
   //   {natural: true, natural_entity, entities, target, scenes_entity}   Natural light
-  //   {preset: id, light, entities, target, scenes_entity}               a preset
+  //   {preset: id, light, entities, target, scenes_entity}               a preset or colour scene
   // Natural light's tile takes its colour and phase from `natural_entity`, as
-  // it is now; a preset's colour is its `light` ({rgb_color}).
+  // it is now; the others' colours are their `light` ({rgb_colors}).
   // `scenes_entity` says which scene each light is in (attributes `scenes` and
   // `auto`); `target` is passed to the actions: {area_id}, {label_id},
   // {entity_id} or {} for all.
   class HueLiteSceneTile extends HueLiteCard {
     setConfig(config) {
-      this._scene = config.natural ? NATURAL : PRESETS.find((p) => p.id === config.preset);
+      this._scene = config.sleep ? SLEEP : config.natural ? NATURAL : PRESETS.find((p) => p.id === config.preset);
       if (!this._scene) throw new Error(`unknown preset ${config.preset}`);
       super.setConfig(config);
     }
@@ -602,8 +633,7 @@
     _selected() {
       const on = this._states().filter((s) => s.state === "on");
       const { scenes = {}, auto = [] } = this._hass.states[this._config.scenes_entity]?.attributes || {};
-      const scene = this._config.natural ? "natural" : this._config.preset;
-      return on.length > 0 && on.every((s) => scenes[s.entity_id] === scene && !auto.includes(s.entity_id));
+      return on.length > 0 && on.every((s) => scenes[s.entity_id] === this._scene.id && !auto.includes(s.entity_id));
     }
 
     _render() {
@@ -611,21 +641,20 @@
         <style>
           ${CIRCLE_CSS}
           ${FOCUS_CSS}
-          :host { --scene-rgb: ${AMBER}; --card-bg: var(--ha-card-background, var(--card-background-color, #fff)); }
+          :host { --card-bg: var(--ha-card-background, var(--card-background-color, #fff)); }
           ha-card { height: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 0 10px;
                     cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; overflow: hidden;
-                    background: linear-gradient(115deg, rgba(var(--scene-rgb), 0.3), rgba(var(--scene-rgb), 0.04) 80%), var(--card-bg); }
-          .circle { background: radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.6), rgb(var(--scene-rgb)) 70%);
-                    color: rgba(0, 0, 0, 0.6); }
+                    background: var(--tint, none), var(--card-bg); }
+          .circle { background: var(--swatch); color: var(--ink); }
           .text { flex: 1; min-width: 0; }
           .name, .now { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
           .name { font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0.1px; color: var(--primary-text-color); }
           .now { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }
           .now:empty { display: none; }
           .check { display: none; flex: none; --mdc-icon-size: 20px; }
-          ha-card.on { background: linear-gradient(115deg, rgb(var(--scene-rgb)), rgba(var(--scene-rgb), 0.7)), var(--card-bg); }
-          ha-card.on .circle { background: rgba(255, 255, 255, 0.5); }
-          ha-card.on :is(.name, .now, .check) { color: rgba(0, 0, 0, 0.87); }
+          ha-card.on { background: var(--fill), var(--card-bg); }
+          ha-card.on .circle { background: rgba(255, 255, 255, 0.3); }
+          ha-card.on :is(.name, .now, .check) { color: var(--ink); }
           ha-card.on .check { display: block; }
         </style>
         <ha-card role="button" tabindex="0">
@@ -637,7 +666,8 @@
       this._now = this._root.querySelector(".now");
       onActivate(this._card, () => {
         const target = this._config.target || {};
-        if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
+        if (this._config.sleep) this._hass.callService(DOMAIN, "sleep", {}, target);
+        else if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
         else this._hass.callService(DOMAIN, "apply_preset", { preset: this._scene.id }, target);
       });
     }
@@ -646,8 +676,8 @@
       if (!this._card || !this._hass) return;
       // Natural light's tile shows where it is now: its colour and phase.
       const now = this._config.natural ? this._hass.states[this._config.natural_entity] : undefined;
-      const rgb = now ? now.attributes.rgb_color : this._config.light?.rgb_color;
-      this._card.style.setProperty("--scene-rgb", shownColour(rgb).join(", "));
+      const rgbs = now ? [now.attributes.rgb_color].filter(Array.isArray) : this._config.light?.rgb_colors;
+      for (const [name, value] of Object.entries(sceneLook(rgbs))) this._card.style.setProperty(name, value);
       this._now.textContent = (now && PHASES[now.state]) || "";
       const selected = this._selected();
       this._card.classList.toggle("on", selected);

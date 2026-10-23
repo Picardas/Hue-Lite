@@ -49,15 +49,20 @@ It builds itself from your areas and labels on every load: the whole home and
 each room (reorderable), and the routines with their settings. Each room is a
 bar for all its lights: tap its icon to switch them on or off, slide to dim,
 **Auto** at the end, and tap its name to show or hide each light's bar and
-the six scenes. Icons and sliders take the colour the bulbs report; each
+the scenes. Icons and sliders take the colour the bulbs report; each
 scene shows the colour it gives (Natural light's as it is now), filled and
 ticked while the lights are in it.
 
 ## How it works
 
-- **Scenes:** Natural light, Energize, Cool bright, Relax, Rest and
+- **Scenes:** Natural light, Energize, Cool bright, Read, Relax, Rest and
   Nightlight. Colour bulbs get Hue's colours, white bulbs a colour
   temperature, and dimmable bulbs the brightness.
+- **Colour scenes:** Golden hour and Movie, from colours in Hue's own
+  scenes. Each room's colour bulbs get different colours from the scene,
+  drifting slowly from one to the next; white bulbs get a warm white.
+- **Sleep:** the lights that are on go to Rest and fade out over the bedtime
+  fade. Lights on Auto stay on it, so wake up still takes them.
 - **Natural light** follows the sun: Energize from dawn, Cool bright by
   midday, Relax at sunset, Rest at night. A light stays in it, on or off,
   until you pick another scene, change the light yourself or from an
@@ -86,9 +91,12 @@ which scene each light is in.
 ## Actions
 
 ```yaml
-action: hue_lite.apply_preset   # energize, cool_bright, relax, rest, nightlight
-target: {area_id: living_room}
+action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
+target: {area_id: living_room}  # nightlight, golden_hour, movie
 data: {preset: relax}
+---
+action: hue_lite.sleep          # Rest, then fade out
+target: {area_id: bedroom}
 ---
 action: hue_lite.natural_light  # follow: false takes the lights out instead
 target: {label_id: lamps}

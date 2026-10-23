@@ -1,5 +1,6 @@
-"""Hue-Lite's actions: a preset, the Natural light scene, the next scene (a Hue
-dimmer's On button) and Auto. Each takes a light target; none means every light."""
+"""Hue-Lite's actions: a preset or colour scene, the Natural light scene, the
+next scene (a Hue dimmer's On button), sleep and Auto. Each takes a light
+target; none means every light."""
 
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .engine import HueLite, async_get_loaded
-from .timeline import PRESETS
+from .timeline import PALETTES, PRESETS
 
 _IDS = vol.All(cv.ensure_list, [cv.string])
 
@@ -57,13 +58,21 @@ def async_register(hass: HomeAssistant) -> None:
         running = hue_lite()
         await running.async_next_scene(await lights(running, call), parent=call.context)
 
+    async def sleep(call: ServiceCall) -> None:
+        running = hue_lite()
+        running.routines.async_sleep(await lights(running, call), parent=call.context)
+
     async def set_auto(call: ServiceCall) -> None:
         running = hue_lite()
         running.async_set_auto(await lights(running, call), call.data["auto"])
 
     hass.services.async_register(
-        DOMAIN, "apply_preset", apply_preset, vol.Schema({vol.Required("preset"): vol.In(list(PRESETS)), **TARGET})
+        DOMAIN,
+        "apply_preset",
+        apply_preset,
+        vol.Schema({vol.Required("preset"): vol.In([*PRESETS, *PALETTES]), **TARGET}),
     )
+    hass.services.async_register(DOMAIN, "sleep", sleep, vol.Schema(TARGET))
     hass.services.async_register(
         DOMAIN, "natural_light", natural_light, vol.Schema({vol.Optional("follow", default=True): cv.boolean, **TARGET})
     )

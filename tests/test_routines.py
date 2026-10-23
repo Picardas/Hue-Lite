@@ -85,6 +85,30 @@ async def test_switching_the_evening_routine_off_and_on(
     assert home.turn_on == home.turn_off == []
 
 
+async def test_sleep(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    def light_scenes() -> tuple[dict[str, str], list[str]]:
+        attributes = hass.states.get("sensor.hue_lite_light_scenes").attributes
+        return attributes["scenes"], attributes["auto"]
+
+    await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
+    hass.states.async_set("light.living_room", "on")
+
+    # The lights that are on go to Rest, then fade out over the bedtime fade.
+    await action(hass, "sleep", {"area_id": ["living_room", "bedroom"]})
+    await settle(hass)
+    assert [c.data for c in home.turn_on] == [
+        {"entity_id": ["light.living_room"], "brightness_pct": 35, "xy_color": [0.561, 0.4042], "transition": 2}
+    ]
+    assert [c.data for c in home.turn_off] == [{"entity_id": ["light.living_room"], "transition": 15 * 60}]
+
+    # While it fades it shows as Sleep; once it's off it's on Auto again, so
+    # wake up still takes it.
+    assert light_scenes() == ({"light.living_room": "sleep"}, [])
+    hass.states.async_set("light.living_room", "off")
+    await settle(hass)
+    assert light_scenes() == ({}, ["light.living_room"])
+
+
 async def test_wake_up(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry) -> None:
     await tick(hass, freezer, "06:00")
     hue_lite = await set_up(hass, entry)

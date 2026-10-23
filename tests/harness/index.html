@@ -65,7 +65,7 @@
       light("light.living_room", "Living Room", "on", relax),
       light("light.kitchen", "Kitchen", "on", relax),
       light("light.bedroom", "Bedroom", "off"),
-      light("light.office", "Office", "on", coolBright),
+      light("light.office", "Office", "on", { brightness: 51, color_mode: "xy", xy_color: [0.2712, 0.1723], rgb_color: [179, 127, 255] }),
       light("light.lamp", "Reading lamp", "on", coolBright),
       light("light.garden", "Garden", "on"),
       light("light.cupboard", "Cupboard", "off"),
@@ -83,7 +83,7 @@
         entity_id: "sensor.hue_lite_light_scenes", state: "4",
         attributes: {
           // The routine has the living room; the kitchen was put on Auto.
-          scenes: { "light.office": "natural", "light.lamp": "natural", "light.living_room": "routine" },
+          scenes: { "light.office": "movie", "light.lamp": "natural", "light.living_room": "routine" },
           auto: ["light.kitchen", "light.living_room"],
         },
       },
@@ -122,11 +122,14 @@
         leaving_home_enabled: "switch.hue_lite_lights_off_when_everyone_leaves",
       },
       presets: {
-        energize: { rgb_color: [246, 255, 254] },
-        cool_bright: { rgb_color: [255, 236, 186] },
-        relax: { rgb_color: [255, 189, 86] },
-        rest: { rgb_color: [255, 161, 40] },
-        nightlight: { rgb_color: [255, 71, 22] },
+        energize: { rgb_colors: [[246, 255, 254]] },
+        cool_bright: { rgb_colors: [[255, 236, 186]] },
+        read: { rgb_colors: [[255, 211, 130]] },
+        relax: { rgb_colors: [[255, 189, 86]] },
+        rest: { rgb_colors: [[255, 161, 40]] },
+        nightlight: { rgb_colors: [[255, 71, 22]] },
+        golden_hour: { rgb_colors: [[255, 205, 90], [255, 167, 90], [255, 130, 68], [255, 200, 48], [255, 171, 121]] },
+        movie: { rgb_colors: [[108, 21, 255], [179, 127, 255], [151, 80, 255], [222, 168, 255], [88, 135, 255]] },
       },
     };
 

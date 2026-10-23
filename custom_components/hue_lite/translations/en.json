@@ -125,18 +125,21 @@
       "options": {
         "energize": "Energize",
         "cool_bright": "Cool bright",
+        "read": "Read",
         "relax": "Relax",
         "rest": "Rest",
-        "nightlight": "Nightlight"
+        "nightlight": "Nightlight",
+        "golden_hour": "Golden hour",
+        "movie": "Movie"
       }
     }
   },
   "services": {
     "apply_preset": {
       "name": "Apply preset",
-      "description": "Sets lights to a Hue-style preset, taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
+      "description": "Sets lights to a Hue-style preset or colour scene (Golden hour, Movie: their colours are spread across the colour bulbs and drift slowly), taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
       "fields": {
-        "preset": { "name": "Preset", "description": "The preset to apply." }
+        "preset": { "name": "Preset", "description": "The preset or colour scene to apply." }
       }
     },
     "natural_light": {
@@ -148,7 +151,11 @@
     },
     "next_scene": {
       "name": "Next scene",
-      "description": "Moves lights to the next scene, like pressing a Hue dimmer's On button again: Natural light, Energize, Cool bright, Relax, Rest, Nightlight, and round. Lights that are off come on in Natural light."
+      "description": "Moves lights to the next scene, like pressing a Hue dimmer's On button again: Natural light, Energize, Cool bright, Read, Relax, Rest, Nightlight, and round. Lights that are off come on in Natural light."
+    },
+    "sleep": {
+      "name": "Sleep",
+      "description": "Going to bed: the lights that are on go to Rest, then fade out over the bedtime fade. Lights on Auto stay on it. With no target, every light."
     },
     "set_auto": {
       "name": "Set Auto",

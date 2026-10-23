@@ -39,19 +39,51 @@ class Light:
 # gets e.g. Energize's blue tinge), from Hue's scene library:
 # https://gist.github.com/Hypfer/a0a8b5b9429831a7306ec4300077eaaa
 # Nightlight is deliberately redder than Hue's (0.561, 0.4042). White bulbs get
-# a colour temperature instead (Energize and Relax as in Hue's white-ambiance
-# scenes, Rest and Nightlight at 2000 K, as warm as most bulbs go): converting
-# the xy colours would make Nightlight's deep red a cool 4100 K.
+# a colour temperature instead (Energize, Read and Relax as in Hue's
+# white-ambiance scenes, Rest and Nightlight at 2000 K, as warm as most bulbs
+# go): converting the xy colours would make Nightlight's deep red a cool 4100 K.
 PRESETS: dict[str, Light] = {
     "energize": Light(100, (0.3143, 0.3301), 6410),
     "cool_bright": Light(100, (0.3812, 0.3794), 4000),
+    "read": Light(100, (0.445, 0.4067), 2890),
     "relax": Light(56, (0.5019, 0.4152), 2237),
     "rest": Light(35, (0.561, 0.4042), 2000),
     "nightlight": Light(1, (0.67, 0.32), 2000),
 }
 
+
+@dataclass(frozen=True)
+class Palette:
+    """A colour scene, like Hue's: its colours are spread across the colour
+    bulbs and drift from one to the next. White bulbs get `white`."""
+
+    brightness_pct: float
+    colours: tuple[tuple[float, float], ...]
+    white: Light
+
+    def colour(self, index: int) -> Light:
+        """The light for a colour bulb at `index` (round the palette)."""
+        return Light(self.brightness_pct, self.colours[index % len(self.colours)], self.white.kelvin)
+
+
+# Hue-Lite's colour scenes, from colours in Hue's scene library: Golden hour's
+# from Savanna sunset, Golden pond and Amber bloom; Movie's from Nebula,
+# Tropical twilight and Moonlight.
+PALETTES: dict[str, Palette] = {
+    "golden_hour": Palette(
+        70,
+        ((0.4801, 0.4309), (0.5246, 0.3864), (0.5862, 0.3575), (0.5063, 0.4474), (0.4934, 0.3675)),
+        Light(70, (0.4801, 0.4309), 2500),
+    ),
+    "movie": Palette(
+        20,
+        ((0.1911, 0.0673), (0.2712, 0.1723), (0.2412, 0.1171), (0.3161, 0.2306), (0.1725, 0.1532)),
+        Light(15, (0.561, 0.4042), 2000),
+    ),
+}
+
 # What a Hue dimmer's On button steps through, and round again.
-SCENE_CYCLE = ("natural", "energize", "cool_bright", "relax", "rest", "nightlight")
+SCENE_CYCLE = ("natural", "energize", "cool_bright", "read", "relax", "rest", "nightlight")
 
 
 def noticeable(a: Light, b: Light) -> bool:
