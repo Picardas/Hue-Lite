@@ -6,7 +6,7 @@
 // new lights, rooms and labels appear without editing anything. The
 // integration tells it which labels drive the routines and its own entity ids
 // (websocket `hue_lite/config`). Also defines its cards:
-//   custom:hue-lite-light-bar   a light or a room: tap to toggle, slide to dim,
+//   custom:hue-lite-light-bar   a light (slide to dim) or a set of them: tap to toggle,
 //                               Auto at the end, hold a single light for its colour dialog
 //   custom:hue-lite-scene-tile  a scene button (Natural light, a preset or a colour
 //                               scene) that lights up while its lights are in it
@@ -461,9 +461,11 @@
 
   // ---- Light bar -----------------------------------------------------------
 
-  // One bar for a single light or a set (a room): tap to toggle, slide to dim,
-  // hold a single light to open Home Assistant's light dialog (colour wheel,
-  // colour temperature). The icon (`icon`, or a bulb) and the slider take the
+  // One bar for a single light or a set (Whole home, a label group): tap to
+  // toggle; a single light's slider dims it and holding it opens Home
+  // Assistant's light dialog (colour wheel, colour temperature). A set has no
+  // slider: one brightness for lights in different scenes would flatten
+  // them. The icon (`icon`, or a bulb) and the slider take the
   // lights' own colour, so they follow what Auto and the scenes do to them. With
   // `scenes_entity`, an Auto button at the end puts the lights on Auto
   // (following the routines) or takes them off it; on a set it shows when only
@@ -542,17 +544,18 @@
           input::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -4px; border-radius: 50%;
             background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
           input::-moz-range-thumb { width: 20px; height: 20px; border: none; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35); }
+          .set .text { flex: 1; }
           .auto { cursor: pointer; --mdc-icon-size: 22px; }
           .auto.some { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1); color: var(--primary-color); }
           .auto.all { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.25); color: var(--primary-color); }
         </style>
-        <ha-card class="${this._config.heading ? "heading" : ""}" role="button" tabindex="0">
+        <ha-card class="${this._config.heading ? "heading" : ""} ${this._single ? "" : "set"}" role="button" tabindex="0">
           <div class="circle light"${expandable ? ` role="button" tabindex="0"` : ""}><ha-icon></ha-icon></div>
           <div class="text">
             <div class="name"><span></span>${expandable ? `<ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>` : ""}</div>
             <div class="state"></div>
           </div>
-          <input type="range" min="1" max="100" step="1">
+          ${this._single ? `<input type="range" min="1" max="100" step="1">` : ""}
           ${this._config.scenes_entity ? `<div class="circle auto" role="button" tabindex="0"><ha-icon icon="mdi:brightness-auto"></ha-icon></div>` : ""}
         </ha-card>`;
 
@@ -595,15 +598,13 @@
         onActivate(card, toggle);
       }
 
-      // The slider handles its own input.
-      slider.addEventListener("pointerdown", (ev) => ev.stopPropagation());
-      slider.addEventListener("click", (ev) => ev.stopPropagation());
-      slider.addEventListener("input", () => slider.style.setProperty("--pct", `${slider.value}%`));
-      slider.addEventListener("change", () => {
-        // A set dims the lights that are on; with none on (or a single light) it turns them on.
-        const on = this._states().filter((s) => s.state === "on").map((s) => s.entity_id);
-        this._call("turn_on", { brightness_pct: Number(slider.value) }, on.length && !this._single ? on : this._config.entities);
-      });
+      // A single light's slider dims it (turning it on), and handles its own input.
+      if (slider) {
+        slider.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+        slider.addEventListener("click", (ev) => ev.stopPropagation());
+        slider.addEventListener("input", () => slider.style.setProperty("--pct", `${slider.value}%`));
+        slider.addEventListener("change", () => this._call("turn_on", { brightness_pct: Number(slider.value) }));
+      }
     }
 
     // Switch the lights on or off, showing it straight away: until they
@@ -656,14 +657,16 @@
       state.textContent = unavailable ? "Unavailable"
         : pending ? (pending.on ? "Turning on…" : "Turning off…")
         : this._single ? (on.length ? `${pct}%` : "Off")
-        : on.length ? `${on.length} of ${states.length} on · ${pct}%` : `All ${states.length} off`;
+        : on.length ? `${on.length} of ${states.length} on` : `All ${states.length} off`;
 
-      slider.disabled = unavailable;
-      slider.setAttribute("aria-label", `Brightness of ${name.textContent}`);
-      if (this._root.activeElement !== slider) {
-        const shown = pending?.on === false ? 0 : on.length ? pct : 0;
-        slider.value = shown || 1;
-        slider.style.setProperty("--pct", `${shown}%`);
+      if (slider) {
+        slider.disabled = unavailable;
+        slider.setAttribute("aria-label", `Brightness of ${name.textContent}`);
+        if (this._root.activeElement !== slider) {
+          const shown = pending?.on === false ? 0 : on.length ? pct : 0;
+          slider.value = shown || 1;
+          slider.style.setProperty("--pct", `${shown}%`);
+        }
       }
 
       if (this._el.auto) {

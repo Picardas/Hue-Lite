@@ -114,8 +114,10 @@ order:
 5. **Your dimmers**, if you use them.
 
 **Each block** is a bar over its scenes:
-- Tap the icon to switch the light on or off.
-- Slide to dim.
+- Tap the icon to switch the light on or off (all of them, for Whole home or
+  a label group).
+- Slide to dim a single light. Whole home and label groups have no slider:
+  one brightness for lights in different scenes would flatten them.
 - **Auto** is at the end of the bar.
 - Tap the name to show or hide the scenes.
 
