@@ -49,13 +49,16 @@ strategy:
 It builds itself from your areas and labels on every load: the whole home and
 each room, and the routines with their settings. Each room is a bar for all
 its lights: tap its icon to switch them on or off, slide to dim, **Auto** at
-the end, and tap its name to show or hide each light's bar and the scenes.
-Icons and sliders take the colour the bulbs report; each scene shows the
-colour it gives (Natural light's as it is now), filled and ticked while the
-lights are in it. Like Hue, each room has its own scenes: **Edit scenes**
-under them lets you drag the tiles into another order and hide some with
-their eye, and **Reorder** drags the rooms the same way (with a finger,
-hold a moment first; the arrow keys work too). Both are saved per user.
+the end, and tap its name to show or hide the room's scenes and, under them,
+its lights. Each light there has a bar of its own, and tapping its name opens
+its own scenes, so lights in one room can be in different scenes. Icons and
+sliders take the colour the bulbs report; each scene shows the colour it
+gives (Natural light's as it is now), filled and ticked while the lights are
+in it. Like Hue, each room has its own scenes: **Edit scenes** under them
+lets you drag the tiles into another order and hide some with their eye (its
+lights' scenes follow), and **Reorder** drags the rooms the same way (with a
+finger, hold a moment first; the arrow keys work too). Both are saved per
+user.
 
 ## How it works
 

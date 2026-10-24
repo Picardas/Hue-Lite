@@ -104,16 +104,17 @@
   }
 
   // A room (or label group, or the whole home) for the rooms card: a bar for
-  // all its lights, with its icon, heading the block; inside, a bar per light
-  // when it has several (unless `eachLight` is false) and the scenes.
+  // all its lights, with its icon, heading the block; inside, the room's
+  // scenes, then (when it has several lights, unless `eachLight` is false)
+  // each light's bar, opening onto that light's own scenes.
   function room(setup, id, name, icon, lights, target, eachLight = true) {
+    const light = (l) => ({ id: l, bar: lightBar(setup, [l], { expandable: true }), scenes: sceneTiles(setup, [l], { entity_id: [l] }) });
     return {
       id,
-      head: lightBar(setup, lights, { name, icon, expandable: true }),
-      cards: [
-        ...(eachLight && lights.length > 1 ? lights.map((l) => lightBar(setup, [l])) : []),
-        ...sceneTiles(setup, lights, target),
-      ],
+      name,
+      head: lightBar(setup, lights, { name, icon, expandable: true, heading: true }),
+      scenes: sceneTiles(setup, lights, target),
+      lights: eachLight && lights.length > 1 ? lights.map(light) : [],
     };
   }
 
@@ -440,9 +441,11 @@
   // `scenes_entity`, an Auto button at the end puts the lights on Auto
   // (following the routines) or takes them off it; on a set it shows when only
   // some are on Auto, and a tap sets them all.
-  // With `expandable` the bar heads a block: the icon toggles, and tapping the
-  // rest of it (the name has a chevron) sends `hue-lite-expand`, for the block
-  // to open or close; setting `expanded` turns the chevron.
+  // With `expandable` the bar opens onto what's under it (a room's scenes and
+  // lights, or a light's scenes): the icon toggles, and tapping the rest of
+  // it (the name has a chevron) sends `hue-lite-expand`, for the card holding
+  // it to open or close; setting `expanded` turns the chevron. `heading`
+  // gives a room's bar its larger name.
   class HueLiteLightBar extends HueLiteCard {
     getCardSize() {
       return 2;
@@ -497,7 +500,7 @@
           .text { flex: 0 1 38%; min-width: 0; }
           .name { display: flex; align-items: center; gap: 2px; font-size: 14px; font-weight: 500; line-height: 20px;
                   color: var(--primary-text-color); }
-          .expandable .name { font-size: 16px; }
+          .heading .name { font-size: 16px; }
           .name span, .state { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
           .state { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }
           .chev { --mdc-icon-size: 20px; flex: none; color: var(--secondary-text-color); transition: transform 180ms; }
@@ -516,7 +519,7 @@
           .auto.some { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1); color: var(--primary-color); }
           .auto.all { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.25); color: var(--primary-color); }
         </style>
-        <ha-card class="${expandable ? "expandable" : ""}" role="button" tabindex="0">
+        <ha-card class="${this._config.heading ? "heading" : ""}" role="button" tabindex="0">
           <div class="circle light"${expandable ? ` role="button" tabindex="0"` : ""}><ha-icon></ha-icon></div>
           <div class="text">
             <div class="name"><span></span>${expandable ? `<ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>` : ""}</div>
@@ -533,7 +536,9 @@
       };
       const { card, light, slider, auto } = this._el;
       const which = this._single ? "on or off" : "all on or off";
-      card.title = expandable ? "Tap to show or hide the lights and scenes" : `Tap to switch ${which}${this._single ? ", hold for colour" : ""}`;
+      const hold = this._single ? ", hold for colour" : "";
+      card.title = expandable ? `Tap to show or hide ${this._config.heading ? "the room's scenes and lights" : "its scenes"}${hold}`
+        : `Tap to switch ${which}${hold}`;
       if (expandable) light.title = `Switch ${which}`;
 
       // Auto: on for all the bar's lights unless they're all on it already.
@@ -777,7 +782,8 @@
 
   // Saved per signed-in user in Home Assistant's frontend storage (so it
   // follows you across devices), falling back to this browser: the blocks'
-  // order, which are collapsed, and each block's scenes ({order, hidden}, by
+  // order, which are collapsed, which lights inside them have their scenes
+  // open (by block id|light), and each block's scenes ({order, hidden}, by
   // block id). Lists of ids only: anything else (a damaged layout) is dropped.
   async function loadLayout(hass, key) {
     let saved;
@@ -792,7 +798,7 @@
     if (saved?.scenes && typeof saved.scenes === "object") {
       for (const [block, s] of Object.entries(saved.scenes)) scenes[block] = { order: ids(s?.order), hidden: ids(s?.hidden) };
     }
-    return { order: ids(saved?.order), collapsed: ids(saved?.collapsed), scenes };
+    return { order: ids(saved?.order), collapsed: ids(saved?.collapsed), open: ids(saved?.open), scenes };
   }
 
   function saveLayout(hass, key, layout) {
@@ -817,7 +823,7 @@
       this._validate(config);
       this._config = config;
       this._seen = null;
-      this._layout = this._layout || { order: [], collapsed: [], scenes: {} };
+      this._layout = this._layout || { order: [], collapsed: [], open: [], scenes: {} };
       this._root = this._root || this.attachShadow({ mode: "open" });
       this._blocks = new Map();
       this._children = [];
@@ -988,12 +994,14 @@
   // Every room (and label group) as a block headed by a light bar for all its
   // lights (`head`): its icon switches them on or off, the slider dims them,
   // Auto puts them on Auto, and tapping the rest of it shows or hides the
-  // room's own light bars and scenes (`cards`). Reorder shows just the rooms'
-  // bars, to drag into another order; new rooms join at the end. With
-  // `toolbar: false` there's no Rooms heading, Collapse all or Reorder (the
-  // Whole home block uses that, with a `layout_key` of its own). Like Hue,
-  // each room has its own scenes: Edit scenes lets you drag its tiles into
-  // another order and hide some with their eye, saved with the layout.
+  // room's scenes (`scenes`) and, under them, its lights (`lights`: each
+  // {id, bar, scenes}), each a bar opening onto that light's own scenes.
+  // Reorder shows just the rooms' bars, to drag into another order; new rooms
+  // join at the end. With `toolbar: false` there's no Rooms heading,
+  // Collapse all or Reorder (the Whole home block uses that, with a
+  // `layout_key` of its own). Like Hue, each room has its own scenes: Edit
+  // scenes lets you drag its tiles into another order and hide some with
+  // their eye, saved with the layout; its lights' scenes follow suit.
   class HueLiteRooms extends CollapsibleBlocks {
     static layoutKey = "hue_lite_rooms";
 
@@ -1030,11 +1038,16 @@
           button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
           .head > hue-lite-light-bar { display: block; }
           .reordering .body { display: none; }
-          .body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
-          .cell { position: relative; }
-          .cell > hue-lite-scene-tile, .cell > hue-lite-light-bar { display: block; height: 100%; }
-          .body > .cell.tile { height: 88px; }
-          .block:not(.editing) .cell.off { display: none; }
+          .body, .light-scenes { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
+          .cell { position: relative; grid-column: span 4; height: 88px; }
+          .cell > hue-lite-scene-tile { display: block; height: 100%; }
+          .light > hue-lite-light-bar { display: block; }
+          .block:not(.editing) .cell.off, .light-scenes > .cell.off { display: none; }
+          /* The room's lights sit under it, set in with a rule down their side. */
+          .lights { grid-column: span 12; display: flex; flex-direction: column; gap: 8px; margin: 4px 0 0 6px; padding-left: 10px;
+                    border-left: 2px solid var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12)); }
+          .lights-title { font-size: 13px; font-weight: 500; line-height: 20px; color: var(--secondary-text-color); padding: 0 4px; }
+          .light.collapsed .light-scenes { display: none; }
           .editing .cell.off > hue-lite-scene-tile { opacity: 0.35; }
           .eye { display: none; position: absolute; top: 4px; left: 4px; width: 30px; height: 30px; padding: 0; justify-content: center;
                  --mdc-icon-size: 18px; color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -1062,8 +1075,10 @@
         this._save();
         this._arrange();
       });
-      // Each room's scene tiles: {id, cell, card}, in the default order.
+      // Each room's scene tiles ({id, cell, card}, in the default order), and
+      // its lights ({room, key, el, bar, tiles}).
       this._tiles = new Map();
+      this._lights = [];
       for (const r of this._config.rooms) {
         const head = document.createElement("div");
         head.className = "head";
@@ -1072,27 +1087,16 @@
         head.appendChild(bar);
         const el = this._block(r.id, head);
         const body = el.querySelector(".body");
-        const tiles = [];
-        for (const cfg of r.cards) {
-          const cell = document.createElement("div");
-          const card = this._card(cfg);
-          cell.className = "cell";
-          // Across the body's 12 columns: a tile is a third, a light bar the lot.
-          cell.style.gridColumn = `span ${cfg.grid_options?.columns || 12}`;
-          cell.appendChild(card);
-          body.appendChild(cell);
-          if (card.scene) {
-            cell.classList.add("tile");
-            cell.dataset.id = card.scene.id;
-            cell.insertAdjacentHTML("beforeend", `<button class="eye"><ha-icon></ha-icon></button>`);
-            const eye = cell.querySelector(".eye");
-            onActivate(eye, () => {
-              this._toggleHidden(r.id, card.scene.id);
-              eye.focus();
-            });
-            tiles.push({ id: card.scene.id, cell, card });
-          }
-        }
+        const tiles = (r.scenes || []).map((cfg) => {
+          const tile = this._tile(cfg, body);
+          tile.cell.insertAdjacentHTML("beforeend", `<button class="eye"><ha-icon></ha-icon></button>`);
+          const eye = tile.cell.querySelector(".eye");
+          onActivate(eye, () => {
+            this._toggleHidden(r.id, tile.id);
+            eye.focus();
+          });
+          return tile;
+        });
         if (tiles.length) {
           this._tiles.set(r.id, tiles);
           body.insertAdjacentHTML("beforeend", `
@@ -1106,9 +1110,29 @@
             this._arrange();
           });
           onActivate(body.querySelector(".reset"), () => this._setScenes(r.id, null));
-          sortable(body, () => [...body.querySelectorAll(":scope > .cell.tile")], () => this._editing === r.id, (ids) => {
+          sortable(body, () => [...body.querySelectorAll(":scope > .cell")], () => this._editing === r.id, (ids) => {
             this._setScenes(r.id, { order: ids, hidden: this._scenesOf(r.id).hidden });
           });
+        }
+        // Its lights, under it: each a bar opening onto that light's own scenes.
+        if (r.lights?.length) {
+          const lights = document.createElement("div");
+          lights.className = "lights";
+          lights.innerHTML = `<div class="lights-title"></div>`;
+          lights.firstChild.textContent = `Lights in ${r.name}`;
+          for (const l of r.lights) {
+            const key = `${r.id}|${l.id}`;
+            const light = document.createElement("div");
+            light.className = "light";
+            const lightBar = this._card(l.bar);
+            lightBar.addEventListener("hue-lite-expand", () => this._toggleLight(key));
+            const grid = document.createElement("div");
+            grid.className = "light-scenes";
+            light.append(lightBar, grid);
+            lights.appendChild(light);
+            this._lights.push({ room: r.id, key, el: light, bar: lightBar, tiles: l.scenes.map((cfg) => this._tile(cfg, grid)) });
+          }
+          body.appendChild(lights);
         }
         list.appendChild(el);
       }
@@ -1137,8 +1161,27 @@
       return card;
     }
 
+    // A scene tile in a cell (a third of the grid's width), added to `grid`.
+    _tile(config, grid) {
+      const cell = document.createElement("div");
+      const card = this._card(config);
+      cell.className = "cell tile";
+      cell.dataset.id = card.scene.id;
+      cell.appendChild(card);
+      grid.appendChild(cell);
+      return { id: card.scene.id, cell, card };
+    }
+
     _showOpen(el, open) {
       el.querySelector(".head > hue-lite-light-bar").expanded = open;
+    }
+
+    // Show or hide a light's scenes (by its key, block id|light).
+    _toggleLight(key) {
+      const open = this._layout.open;
+      this._layout.open = open.includes(key) ? open.filter((x) => x !== key) : [...open, key];
+      this._save();
+      this._arrange();
     }
 
     // A room's scenes: all of them in its order (as saved, then any it hasn't
@@ -1202,6 +1245,16 @@
           eye.setAttribute("aria-label", `Show ${card.scene.name}`);
           eye.setAttribute("aria-pressed", String(!off));
           eye.querySelector("ha-icon").setAttribute("icon", off ? "mdi:eye-off-outline" : "mdi:eye-outline");
+        }
+        // Its lights' scenes are the room's, in its order, without its hidden ones.
+        for (const light of this._lights.filter((l) => l.room === id)) {
+          const open = this._layout.open.includes(light.key);
+          light.el.classList.toggle("collapsed", !open);
+          light.bar.expanded = open;
+          const cells = new Map(light.tiles.map((t) => [t.id, t.cell]));
+          const grid = light.el.querySelector(".light-scenes");
+          if (ids([...grid.children]) !== scenes.join()) grid.append(...scenes.map((scene) => cells.get(scene)));
+          for (const { id: scene, cell } of light.tiles) cell.classList.toggle("off", hidden.includes(scene));
         }
         el.classList.toggle("editing", editing);
         const edit = el.querySelector(".edit");

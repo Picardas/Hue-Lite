@@ -62,6 +62,7 @@
 
     const states = Object.fromEntries([
       light("light.living_room", "Living Room", "on", relax),
+      light("light.floor_lamp", "Floor lamp", "on", coolBright),
       light("light.kitchen", "Kitchen", "on", relax),
       light("light.bedroom", "Bedroom", "off"),
       light("light.office", "Office", "on", { brightness: 51, color_mode: "xy", xy_color: [0.2712, 0.1723], rgb_color: [179, 127, 255] }),
@@ -84,8 +85,9 @@
       {
         entity_id: "sensor.hue_lite_light_scenes", state: "4",
         attributes: {
-          // The routine has the living room; the kitchen was put on Auto.
-          scenes: { "light.office": "nebula", "light.lamp": "natural", "light.living_room": "routine" },
+          // The routine has the living room; the kitchen was put on Auto; the
+          // living room's floor lamp is in a scene of its own.
+          scenes: { "light.office": "nebula", "light.lamp": "natural", "light.living_room": "routine", "light.floor_lamp": "natural" },
           auto: ["light.kitchen", "light.living_room"],
         },
       },
@@ -93,6 +95,7 @@
 
     const entities = {
       "light.living_room": { entity_id: "light.living_room", area_id: "living_room", labels: ["evening", "coming_home"] },
+      "light.floor_lamp": { entity_id: "light.floor_lamp", area_id: "living_room", labels: [] },
       "light.kitchen": { entity_id: "light.kitchen", device_id: "kitchen_bulb", labels: [] },
       "light.bedroom": { entity_id: "light.bedroom", area_id: "bedroom", labels: ["evening", "wake_up", "nightlight"] },
       "light.office": { entity_id: "light.office", area_id: "office", labels: ["evening"] },
