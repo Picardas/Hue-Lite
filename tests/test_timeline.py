@@ -1,5 +1,5 @@
-"""The timelines (Natural light and the evening routine), the presets and
-the dimmer's cycle."""
+"""The timelines (Natural light and the evening routine), the presets, the
+colour scenes and the dimmer's cycle."""
 
 from __future__ import annotations
 
@@ -7,7 +7,11 @@ from datetime import datetime
 
 import pytest
 
+from homeassistant.util.color import check_point_in_lamps_reach
+
+from custom_components.hue_lite.dashboard import HUE_GAMUT
 from custom_components.hue_lite.timeline import (
+    PALETTES,
     PRESETS,
     EveningSettings,
     Light,
@@ -97,6 +101,16 @@ def test_white_bulbs_get_their_own_colour_temperature() -> None:
     assert PRESETS["nightlight"].white_data() == {"brightness_pct": 1, "color_temp_kelvin": 2000}
     # Blends blend the colour temperature too: halfway through the morning.
     assert natural_light(at("09:45"), SUN).light.kelvin == round((6410 + 4000) / 2)
+
+
+def test_colour_scenes_are_colours_hue_bulbs_show() -> None:
+    """Every built-in colour scene's colours are inside Hue's gamut C (so
+    bulbs show them as meant), at 1-100%, and it drifts every 1-60 minutes,
+    as your own scenes must."""
+    for scene, palette in PALETTES.items():
+        assert 1 <= palette.drift_minutes <= 60, scene
+        for x, y, brightness in palette.colours:
+            assert check_point_in_lamps_reach((x, y), HUE_GAMUT) and 1 <= brightness <= 100, (scene, x, y)
 
 
 def test_noticeable() -> None:

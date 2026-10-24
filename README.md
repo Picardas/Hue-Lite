@@ -16,9 +16,9 @@ Hue Bridge.** Hue-Lite gives you:
 
 Lights join in by **area** and **label**, with no YAML for each light.
 
-| ![Editing a room's scenes: drag to reorder, the eye hides one](docs/images/edit-scenes.png) | ![The routines: wake up, the evening routine, and coming and going](docs/images/routines.png) | ![A dimmer's lights and the scenes its On button steps through](docs/images/dimmers.png) |
+| ![Editing a room's scenes: drag to reorder, the eye hides one, the pencil changes one, + makes one](docs/images/edit-scenes.png) | ![The routines: wake up, the evening routine, and coming and going](docs/images/routines.png) | ![A dimmer's lights and the scenes its On button steps through](docs/images/dimmers.png) |
 | :---: | :---: | :---: |
-| Each light's scenes: drag into order, the eye hides one | Wake up, evening, coming & going | Each Hue dimmer's lights and scenes |
+| Each room's scenes: reorder, hide, change or add your own | Wake up, evening, coming & going | Each Hue dimmer's lights and scenes |
 
 <sub>The screenshots show the Lights dashboard with sample lights.</sub>
 
@@ -37,8 +37,8 @@ Lights join in by **area** and **label**, with no YAML for each light.
 - **Natural light.** One scene that follows the sun: bright and cool in the
   morning, warm in the evening, Rest at night.
 - **Colour scenes.** Golden hour, Nebula, Aurora, Ember, Forest and Moonlit.
-  Each spreads its colours across a room's bulbs and drifts slowly between
-  them.
+  Each spreads its colours across a room's bulbs and drifts between them at
+  its own pace.
 - **Your own scenes.** One colour, or up to eight that drift at their own
   speed, each at its own brightness. Start from scratch or from any built-in
   scene.
@@ -175,11 +175,19 @@ on the Hue-Lite device page instead.
 - **Scenes.** Colour bulbs get Hue's colours, white bulbs a colour
   temperature, and dimmable bulbs just the brightness.
 - **Colour scenes.**
-  - Golden hour, Nebula and Aurora use colours from Hue's own scenes.
-  - Ember is deep reds, like firelight. Forest is deep greens. Moonlit is dim
-    whites with a touch of colour.
+
+  | Scene | Colours | A step every |
+  | ----- | ------- | ------------ |
+  | Golden hour | A sunset: gold, amber and deep orange, with coral | 3 minutes |
+  | Nebula | Deep blue, periwinkle and violet, with magenta and pink | 2 minutes |
+  | Aurora | Green, teal and cyan, with a violet fringe | 2 minutes |
+  | Ember | Firelight: deep reds glowing low, orange flaring brighter | minute |
+  | Forest | Emerald, leaf green and lime, with golden sunlight | 3 minutes |
+  | Moonlit | Dim whites, with pale blue, blush and lavender | 4 minutes |
+
+  - Golden hour, Nebula and Aurora started from colours in Hue's own scenes.
   - A room's colour bulbs show different colours from the scene, each at its
-    own brightness, and drift to the next every three minutes. White bulbs
+    own brightness, and drift to the next at the scene's pace. White bulbs
     get a matching white.
   - Your own dynamic scenes work the same way, at their own speed.
 - **Natural light** follows the sun:

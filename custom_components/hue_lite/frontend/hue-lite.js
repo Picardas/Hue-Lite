@@ -288,7 +288,7 @@
     return [
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
-      "**Colour scenes**: Golden hour, Nebula, Aurora, Ember, Forest and Moonlit spread their colours across a room's colour bulbs, each at its own brightness, and drift slowly between them, a step every three minutes.",
+      "**Colour scenes**: Golden hour, Nebula, Aurora, Ember, Forest and Moonlit spread their colours across a room's colour bulbs, each at its own brightness, and drift between them at their own pace: a step every minute for Ember, every two for Nebula and Aurora, every three for Golden hour and Forest, and every four for Moonlit.",
       "",
       "**Your own scenes**: Edit scenes under any room's scenes, then the + tile at the end, makes one: one colour (static) or up to eight, each at its own brightness, drifting at their own speed. Try on the lights shows the colours on the room's lights as you pick them. The pencil on a tile changes one of yours, or starts a copy of a built-in scene. A new scene shows in the room it was made in and on its dimmers; elsewhere Edit scenes shows it.",
       "",
@@ -1716,7 +1716,7 @@
       const set = new SceneSet(this, this._config.scenes, {
         save: (scenes) => setDimmer(this._hass, d.id, { scenes }),
         editor: (config) => openSceneEditor(this._hass, config, { layouts: [], dimmers: [d.id] }),
-        hint: "Drag the scenes into the order On steps through; the eye leaves one out.",
+        hint: "Drag the scenes into the order On steps through; the eye leaves one out, the pencil changes or copies one.",
         resetTitle: "Back to Natural light and the presets",
       });
       body.appendChild(set.grid);

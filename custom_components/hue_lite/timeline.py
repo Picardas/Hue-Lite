@@ -98,40 +98,53 @@ def palette_from_stored(scene: dict[str, Any]) -> Palette:
     return Palette(colours, Light(brightness, colours[0][:2], kelvin), scene["drift_minutes"])
 
 
-# Hue-Lite's colour scenes, from colours in Hue's scene library: Golden hour's
-# from Savanna sunset, Golden pond and Amber bloom; Nebula's from Nebula,
-# Tropical twilight and Moonlight; Aurora's greens from Arctic aurora, Blue
-# Planet and Forest adventure. Each colour is (x, y, brightness %).
+# Hue-Lite's colour scenes. Each colour is (x, y, brightness %), inside Hue's
+# gamut C. Each scene mixes a few hues at different brightnesses, so a room's
+# bulbs differ, and drifts at its own pace: the lively ones faster, the calm
+# ones slower. Golden hour, Nebula and Aurora started from colours in Hue's
+# scene library (Savanna sunset, Golden pond and Amber bloom; Nebula,
+# Tropical twilight and Moonlight; Arctic aurora, Blue planet and Forest
+# adventure), made more vivid.
 PALETTES: dict[str, Palette] = {
+    # A sunset: gold, amber and deep orange, with coral and a bright peach glow.
     "golden_hour": Palette(
-        ((0.4801, 0.4309, 75), (0.5246, 0.3864, 65), (0.5862, 0.3575, 55), (0.5063, 0.4474, 80), (0.4934, 0.3675, 65)),
+        ((0.5100, 0.4400, 85), (0.5550, 0.4000, 70), (0.6050, 0.3650, 60), (0.5600, 0.3350, 50), (0.4900, 0.3900, 90)),
         Light(70, (0.4801, 0.4309), 2500),
+        drift_minutes=3,
     ),
+    # Deep space: blue, periwinkle and violet, with magenta and hot pink.
     "nebula": Palette(
-        ((0.1911, 0.0673, 16), (0.2712, 0.1723, 24), (0.2412, 0.1171, 20), (0.3161, 0.2306, 26), (0.1725, 0.1532, 14)),
-        Light(15, (0.561, 0.4042), 2000),
+        ((0.1650, 0.0700, 25), (0.1850, 0.1500, 35), (0.2450, 0.1050, 30), (0.3500, 0.1650, 40), (0.4500, 0.2150, 45)),
+        Light(25, (0.561, 0.4042), 2000),
+        drift_minutes=2,
     ),
+    # Northern lights: green, teal and cyan, with a violet fringe and a
+    # yellow-green flare, shimmering.
     "aurora": Palette(
-        ((0.1672, 0.593, 55), (0.2072, 0.4525, 45), (0.1868, 0.3328, 40), (0.3095, 0.5913, 60), (0.1915, 0.3638, 45)),
+        ((0.1800, 0.6500, 65), (0.1720, 0.4500, 55), (0.1720, 0.3200, 50), (0.2600, 0.1300, 40), (0.3000, 0.5800, 70)),
         Light(50, (0.3812, 0.3794), 4000),
+        drift_minutes=2,
     ),
-    # Firelight: deep reds and crimson, with a little orange; redder and
-    # darker than Golden hour. The reds glow low, the oranges flare brighter.
+    # Firelight: deep reds glowing low, orange and amber flaring brighter,
+    # flickering on every minute.
     "ember": Palette(
-        ((0.6726, 0.3218, 35), (0.6450, 0.3390, 45), (0.6600, 0.3100, 30), (0.6150, 0.3650, 55), (0.5900, 0.3800, 50)),
+        ((0.6800, 0.3150, 25), (0.6500, 0.3050, 30), (0.6300, 0.3500, 45), (0.5900, 0.3800, 75), (0.5500, 0.4050, 60)),
         Light(35, (0.6150, 0.3650), 2000),
+        drift_minutes=1,
     ),
-    # Deep greens, emerald to moss, with a hint of yellow-green; darker than
-    # Aurora's teals.
+    # Woodland: emerald and leaf greens, moss and lime, with golden sunlight
+    # coming through.
     "forest": Palette(
-        ((0.2100, 0.6600, 35), (0.2500, 0.6200, 45), (0.1900, 0.5500, 30), (0.3000, 0.5900, 50), (0.3500, 0.5500, 40)),
+        ((0.2000, 0.6200, 35), (0.2600, 0.6100, 50), (0.3200, 0.5500, 40), (0.3800, 0.5300, 60), (0.4600, 0.4600, 70)),
         Light(30, (0.4599, 0.4106), 2700),
+        drift_minutes=3,
     ),
-    # Mostly dim whites, warm and soft, with blush and lavender drifting
-    # through, dimmer than the whites.
+    # Night: dim warm and cool whites, a pale moon blue, blush and lavender,
+    # slow and calm.
     "moonlit": Palette(
-        ((0.4599, 0.4106, 30), (0.3812, 0.3794, 28), (0.4000, 0.3000, 18), (0.4300, 0.3950, 30), (0.3200, 0.2600, 15)),
+        ((0.4599, 0.4106, 30), (0.3500, 0.3600, 35), (0.2700, 0.2800, 22), (0.4200, 0.3150, 25), (0.3000, 0.2300, 18)),
         Light(25, (0.4599, 0.4106), 2700),
+        drift_minutes=4,
     ),
 }
 
