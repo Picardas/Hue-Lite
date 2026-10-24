@@ -6,11 +6,13 @@
         "description": "Hue-style scenes, a Natural light scene that follows the sun, and wake-up, evening and coming-home routines for your lights.\n\nLights take part through labels: Evening, Wake up, Nightlight, Coming home, First one home and Exclude from lighting. Hue-Lite uses the ones you already have and creates the rest.",
         "data": {
           "presence": "Home zone",
-          "dimmers": "Hue dimmer switches"
+          "dimmers": "Hue dimmer switches",
+          "dashboard": "Lights dashboard"
         },
         "data_description": {
           "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
-          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area, or the ones chosen for them on the dashboard's Dimmers card."
+          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area, or the ones chosen for them on the dashboard's Dimmers card.",
+          "dashboard": "Add Hue-Lite's Lights dashboard to the sidebar the next time an admin opens Home Assistant (once: if you delete it, it stays deleted)."
         }
       }
     },
@@ -18,7 +20,7 @@
       "single_instance_allowed": "Hue-Lite is already set up."
     },
     "create_entry": {
-      "default": "Give your lights an area and the labels of the routines they should join. For the Lights dashboard, add a dashboard (Settings → Dashboards → Add dashboard → New dashboard from scratch), open it, choose Edit dashboard → ⋮ → Raw configuration editor, and replace everything with:\n\nstrategy:\n  type: custom:hue-lite\n\nReload the browser first so it has Hue-Lite's dashboard."
+      "default": "Give your lights an area and the labels of the routines they should join. Reload the browser: Hue-Lite then adds its Lights dashboard to the sidebar (unless you turned that off)."
     }
   },
   "options": {
@@ -34,7 +36,8 @@
           "label_first_home": "First one home",
           "label_exclude": "Excluded",
           "presence": "Home zone",
-          "dimmers": "Hue dimmer switches"
+          "dimmers": "Hue dimmer switches",
+          "dashboard": "Lights dashboard"
         },
         "data_description": {
           "label_evening": "Lights the evening routine takes: on before sunset, through the scenes, off at bedtime.",
@@ -44,7 +47,8 @@
           "label_first_home": "Like Coming home, but only when the first person gets home (the house was empty), not for everyone after: a bedroom, say.",
           "label_exclude": "Lights left out of everything (the dashboard, scenes, routines and dimmers) when they, their device or their area has this label. Hidden lights are left out too.",
           "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
-          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area, or the ones chosen for them on the dashboard's Dimmers card."
+          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area, or the ones chosen for them on the dashboard's Dimmers card.",
+          "dashboard": "Add Hue-Lite's Lights dashboard to the sidebar the next time an admin opens Home Assistant. Once added, deleting it keeps it deleted; turn this off and on again to add it again."
         }
       }
     }

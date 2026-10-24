@@ -1,4 +1,5 @@
-// Hue-Lite's Lights dashboard, loaded on every page while Hue-Lite is set up.
+// Hue-Lite's Lights dashboard, loaded on every page while Hue-Lite is set up
+// (which is also how the dashboard gets added: see the end).
 //
 // A dashboard strategy (`strategy: {type: custom:hue-lite}`) that builds the
 // Lights dashboard from the area and label registries every time it loads, so
@@ -1740,4 +1741,54 @@
     name: "Hue-Lite light bar",
     description: "Tap to toggle, slide to dim, Auto, hold for the light dialog; one light or several.",
   });
+
+  // ---- Adding the dashboard ------------------------------------------------
+
+  const STRATEGY = "custom:hue-lite";
+
+  // The page's hass, once Home Assistant has it (or null after two minutes).
+  async function pageHass() {
+    for (let i = 0; i < 120; i++) {
+      const hass = document.querySelector("home-assistant")?.hass;
+      if (hass?.connection && hass.user) return hass;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    return null;
+  }
+
+  // Hue-Lite's Lights dashboard is added the first time an admin opens Home
+  // Assistant after setting Hue-Lite up (unless its option's off), as
+  // Settings → Dashboards → Add would, at /lights; a dashboard of Hue-Lite's
+  // already there is found instead. Hue-Lite remembers, so it's only added
+  // once, and only by one browser.
+  async function addDashboard() {
+    const hass = await pageHass();
+    if (!hass?.user.is_admin) return;
+    const setup = await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null);
+    if (!setup?.add_dashboard) return;
+    const { claimed } = await hass.callWS({ type: `${DOMAIN}/claim_dashboard` }).catch(() => ({}));
+    if (!claimed) return;
+    try {
+      const dashboards = await hass.callWS({ type: "lovelace/dashboards/list" });
+      for (const d of dashboards) {
+        const config = await hass.callWS({ type: "lovelace/config", url_path: d.url_path }).catch(() => null);
+        if (config?.strategy?.type === STRATEGY) return;
+      }
+      const taken = dashboards.some((d) => d.url_path === "lights") || hass.panels?.lights;
+      const urlPath = taken ? "hue-lite-lights" : "lights";
+      await hass.callWS({
+        type: "lovelace/dashboards/create", url_path: urlPath, allow_single_word: true, mode: "storage",
+        title: "Lights", icon: "mdi:lightbulb-group", show_in_sidebar: true, require_admin: false,
+      });
+      await hass.callWS({ type: "lovelace/config/save", url_path: urlPath, config: { strategy: { type: STRATEGY } } });
+    } catch (err) {
+      // Give the claim back, so the next admin page load tries again.
+      hass.callWS({ type: `${DOMAIN}/claim_dashboard`, release: true }).catch(() => {});
+    }
+  }
+
+  if (!window.hueLiteAddingDashboard) {
+    window.hueLiteAddingDashboard = true;
+    addDashboard();
+  }
 })();

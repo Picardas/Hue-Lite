@@ -18,8 +18,9 @@ Needs Home Assistant 2026.10 or later.
   `custom_components/` folder and restart.
 
 Then **Settings → Devices & services → Add integration → Hue-Lite**. It asks
-for your home zone and whether to use Hue dimmers, and finds or creates its
-labels. **Configure** changes these later.
+for your home zone, whether to use Hue dimmers and whether to add its Lights
+dashboard, and finds or creates its labels. **Configure** changes these
+later.
 
 ## Labels
 
@@ -37,9 +38,12 @@ out too. Any other label becomes a group on the dashboard.
 
 ## Dashboard
 
-Reload the browser after setting up Hue-Lite. Then add a dashboard (Settings
-→ Dashboards → Add dashboard → New dashboard from scratch), open it, choose ✎ →
-⋮ → Raw configuration editor, and replace everything with:
+Reload the browser after setting up Hue-Lite: it adds a **Lights** dashboard
+to the sidebar the first time an admin opens Home Assistant (or finds one of
+its own you've made). It's an ordinary dashboard, to rename, move or make
+your default; delete it and it stays deleted (turn **Lights dashboard** off
+and on in Configure to have it added again). To make one yourself instead,
+use a dashboard whose raw configuration is:
 
 ```yaml
 strategy:

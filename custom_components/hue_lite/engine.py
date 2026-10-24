@@ -41,6 +41,7 @@ from homeassistant.util import dt as dt_util
 
 from . import dimmers
 from .const import (
+    CONF_DASHBOARD,
     CONF_DIMMERS,
     CONF_PRESENCE,
     DEFAULT_PRESENCE,
@@ -148,6 +149,7 @@ def _stored(data: Any) -> dict[str, Any]:
         },
         "auto": [light for light in auto if isinstance(light, str)],
         "last_wake_up": _instant(data.get("last_wake_up")),
+        "dashboard_added": data.get("dashboard_added") is True,
         "layouts": {key: setup for key, value in layouts.items() if (setup := _setup(value))},
         "dimmers": {
             device: found
@@ -211,6 +213,11 @@ class HueLite:
         self.sender = Sender(hass)
         self.routines = Routines(self)
         self.use_dimmers: bool = entry.options.get(CONF_DIMMERS, True)
+        # Whether to add the Lights dashboard, and whether it's been added
+        # (once: one that's deleted stays deleted, until the option's turned
+        # off and on again).
+        self.use_dashboard: bool = entry.options.get(CONF_DASHBOARD, True)
+        self.dashboard_added = False
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._sun: tuple[date, SunTimes] | None = None
         self._listeners: list[CALLBACK_TYPE] = []
@@ -231,6 +238,7 @@ class HueLite:
         self.settings.update(data["settings"])
         self.last_wake_up = data["last_wake_up"]
         self.layouts, self.dimmer_settings = data["layouts"], data["dimmers"]
+        self.dashboard_added = data["dashboard_added"] and self.use_dashboard
         self.natural, self.evening = self._targets(dt_util.now())
         self.followed = {NATURAL: self.natural, ROUTINE: self.evening}
         self._shown = (self.natural, self.evening)
@@ -283,6 +291,7 @@ class HueLite:
             "last_wake_up": self.last_wake_up.isoformat() if self.last_wake_up else None,
             "layouts": self.layouts,
             "dimmers": self.dimmer_settings,
+            "dashboard_added": self.dashboard_added,
         }
 
     @callback
@@ -432,6 +441,20 @@ class HueLite:
         else:
             self.dimmer_settings.pop(device_id, None)
         self._shared_changed()
+
+    @callback
+    def claim_dashboard(self, release: bool = False) -> bool:
+        """Whether this dashboard should add the Lights dashboard: true for
+        the first to ask (so two open at once don't both add it), if the
+        option's on and it hasn't been added. `release` gives it back, when
+        adding it failed."""
+        if release:
+            claimed, self.dashboard_added = False, False
+        else:
+            claimed = self.use_dashboard and not self.dashboard_added
+            self.dashboard_added = self.dashboard_added or claimed
+        self.save()
+        return claimed
 
     @callback
     def _shared_changed(self) -> None:

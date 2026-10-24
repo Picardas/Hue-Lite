@@ -1,5 +1,6 @@
-"""Setup asks two things (home zone, dimmers) and finds or creates the role
-labels; the options flow can point each role at another label."""
+"""Setup asks three things (home zone, dimmers, the Lights dashboard) and
+finds or creates the role labels; the options flow can point each role at
+another label."""
 
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.selector import BooleanSelector, EntitySelector, EntitySelectorConfig, LabelSelector
 
-from .const import CONF_DIMMERS, CONF_PRESENCE, DEFAULT_PRESENCE, DOMAIN, NAME, ROLES, label_option
+from .const import CONF_DASHBOARD, CONF_DIMMERS, CONF_PRESENCE, DEFAULT_PRESENCE, DOMAIN, NAME, ROLES, label_option
 
 
 def _schema(labels: bool) -> vol.Schema:
@@ -21,6 +22,7 @@ def _schema(labels: bool) -> vol.Schema:
         fields.update({vol.Required(label_option(role)): LabelSelector() for role in ROLES})
     fields[vol.Required(CONF_PRESENCE, default=DEFAULT_PRESENCE)] = EntitySelector(EntitySelectorConfig(domain="zone"))
     fields[vol.Required(CONF_DIMMERS, default=True)] = BooleanSelector()
+    fields[vol.Required(CONF_DASHBOARD, default=True)] = BooleanSelector()
     return vol.Schema(fields)
 
 

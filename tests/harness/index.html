@@ -142,7 +142,14 @@
         nebula: { rgb_colors: [[108, 21, 255], [179, 127, 255], [151, 80, 255], [222, 168, 255], [88, 135, 255]] },
       },
       dimmers: [{ id: "dimmer_living", name: "Living room dimmer", area_id: "living_room" }],
+      add_dashboard: true,
     };
+
+    // Home Assistant's dashboards, for adding Hue-Lite's (?existing: one's there already).
+    window.dashboards = location.search.includes("existing")
+      ? [{ url_path: "my-lights", title: "My lights", mode: "storage", config: { strategy: { type: "custom:hue-lite" } } }]
+      : [{ url_path: "dashboard-home", title: "Home", mode: "storage", config: { views: [] } }];
+    window.dashboardClaimed = false;
 
     // Hue-Lite's shared settings, as its websocket keeps them: set_scenes and
     // set_dimmer change them and tell every subscriber. ?unshared starts with
@@ -201,6 +208,21 @@
           setTimeout(publish, 0);
           return null;
         }
+        if (msg.type === "hue_lite/claim_dashboard") {
+          if (msg.release) { window.dashboardClaimed = false; setup.add_dashboard = true; return { claimed: false }; }
+          const claimed = setup.add_dashboard && !window.dashboardClaimed;
+          window.dashboardClaimed = true;
+          setup.add_dashboard = false;
+          return { claimed };
+        }
+        if (msg.type === "lovelace/dashboards/list") return window.dashboards.map(({ config, ...d }) => d);
+        if (msg.type === "lovelace/config") {
+          const d = window.dashboards.find((x) => x.url_path === msg.url_path);
+          if (!d?.config) throw { code: "config_not_found" };
+          return d.config;
+        }
+        if (msg.type === "lovelace/dashboards/create") { const { type, ...d } = msg; window.dashboards.push(d); return d; }
+        if (msg.type === "lovelace/config/save") { window.dashboards.find((x) => x.url_path === msg.url_path).config = msg.config; return null; }
         if (msg.type === "frontend/get_user_data") return { value: window.userData[msg.key] ?? null };
         if (msg.type === "frontend/set_user_data") { window.userData[msg.key] = msg.value; return null; }
         return null;
@@ -235,6 +257,10 @@
       document.getElementById("rooms").appendChild(card(rooms.cards[0]));
       document.getElementById("routines").appendChild(card(routines.cards[0]));
       if (dimmers) document.getElementById("dimmers").appendChild(card(dimmers.cards[0]));
+      // Home Assistant's page element, which the script finds hass on to add the dashboard.
+      const page = document.createElement("home-assistant");
+      page.hass = window.hass;
+      document.body.appendChild(page);
     })();
   </script>
 </body>

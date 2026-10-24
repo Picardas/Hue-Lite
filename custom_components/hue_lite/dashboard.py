@@ -50,7 +50,7 @@ async def async_register(hass: HomeAssistant) -> None:
     content = await hass.async_add_executor_job(SCRIPT.read_bytes)
     hass.data[DATA_URL] = f"{URL}?v={hashlib.sha256(content).hexdigest()[:8]}"
     await hass.http.async_register_static_paths([StaticPathConfig(URL, str(SCRIPT), True)])
-    for command in (websocket_config, websocket_subscribe, websocket_set_scenes, websocket_set_dimmer):
+    for command in (websocket_config, websocket_claim_dashboard, websocket_subscribe, websocket_set_scenes, websocket_set_dimmer):
         websocket_api.async_register_command(hass, command)
 
 
@@ -106,7 +106,23 @@ def _config(hue_lite: HueLite) -> dict[str, Any]:
         ]
         if hue_lite.use_dimmers
         else [],
+        # Whether an admin's browser should add the Lights dashboard (see
+        # websocket_claim_dashboard).
+        "add_dashboard": hue_lite.use_dashboard and not hue_lite.dashboard_added,
     }
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/claim_dashboard", vol.Optional("release", default=False): bool})
+@websocket_api.require_admin
+@callback
+def websocket_claim_dashboard(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The Lights dashboard is added by an admin's browser, with Home
+    Assistant's own dashboard commands. The first to claim it adds it (or
+    finds one already there); `release` gives the claim back if that failed."""
+    if (hue_lite := async_get_loaded(hass)) is None:
+        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
+        return
+    connection.send_result(msg["id"], {"claimed": hue_lite.claim_dashboard(msg["release"])})
 
 
 # The most rooms and lights whose scenes are kept, so the shared settings

@@ -79,6 +79,41 @@ async def test_damaged_shared_settings_are_left_out(
     assert hue_lite.dimmer_settings == {"dimmer": {"lights": ["light.bedroom"]}}
 
 
+async def test_the_lights_dashboard_is_added_once(hass: HomeAssistant, home: Home, entry: MockConfigEntry, hue_lite: HueLite) -> None:
+    def config() -> dict[str, Any]:
+        return ws(hass, dashboard.websocket_config, {"type": f"{DOMAIN}/config"}).send_result.call_args.args[1]
+
+    def claim(release: bool = False, admin: bool = True) -> bool:
+        connection = ws(hass, dashboard.websocket_claim_dashboard, {"type": f"{DOMAIN}/claim_dashboard", "release": release}, admin=admin)
+        return connection.send_result.call_args.args[1]["claimed"]
+
+    # The first admin's browser to ask adds it; any other open at the time doesn't.
+    assert config()["add_dashboard"]
+    with pytest.raises(Unauthorized):
+        claim(admin=False)
+    assert claim()
+    assert not claim()
+    assert not config()["add_dashboard"]
+
+    # If adding it failed, the claim's given back for the next try.
+    assert not claim(release=True)
+    assert claim()
+
+    # Added, it isn't added again after a restart (so one you delete stays deleted)...
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert not config()["add_dashboard"]
+
+    # ...until the option's turned off (when it isn't added at all) and on again.
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "dashboard": False})
+    await hass.async_block_till_done()
+    assert not config()["add_dashboard"]
+    assert not claim()
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "dashboard": True})
+    await hass.async_block_till_done()
+    assert config()["add_dashboard"]
+
+
 async def test_a_dimmers_lights_and_scenes(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
     dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
     config = ws(hass, dashboard.websocket_config, {"type": f"{DOMAIN}/config"}).send_result.call_args.args[1]

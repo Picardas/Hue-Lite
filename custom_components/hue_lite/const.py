@@ -12,6 +12,7 @@ STORAGE_VERSION: Final = 1
 
 CONF_PRESENCE: Final = "presence"
 CONF_DIMMERS: Final = "dimmers"
+CONF_DASHBOARD: Final = "dashboard"
 DEFAULT_PRESENCE: Final = "zone.home"
 
 # Lights take part through labels. Each role is one label: role -> (label id
