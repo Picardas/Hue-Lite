@@ -56,15 +56,27 @@ async def test_evening_routine(hass: HomeAssistant, freezer: FrozenDateTimeFacto
     assert natural(hass) == ["light.living_room"]
 
 
-async def test_evening_routine_needs_someone_home(
+async def test_evening_routine_waits_for_someone_home(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
 ) -> None:
     await tick(hass, freezer, "16:29")
-    await set_up(hass, entry)
+    hue_lite = await set_up(hass, entry)
     hass.states.async_set("zone.home", "0")
     await tick(hass, freezer, "16:30")
     assert routine(hass) == []
     assert home.turn_on == []
+
+    # The first one home starts it, with one command: the Coming home living
+    # room comes on in the routine, not in Natural light as well.
+    await tick(hass, freezer, "17:30")
+    with patch("custom_components.hue_lite.routines.is_up", return_value=False):
+        hass.states.async_set("zone.home", "1")
+        await settle(hass)
+    assert routine(hass) == ["light.bedroom", "light.living_room"]
+    assert [c.data for c in home.turn_on] == [
+        {"entity_id": ["light.bedroom", "light.living_room"], **hue_lite.evening.light.colour_data(), "transition": 5}
+    ]
+    assert home.turn_on[0].context.parent_id is not None  # linked to the arrival
 
 
 async def test_switching_the_evening_routine_off_and_on(
@@ -297,24 +309,37 @@ async def test_coming_and_going(hass: HomeAssistant, freezer: FrozenDateTimeFact
     assert [c.data["entity_id"] for c in home.turn_on] == [["light.living_room"]]
 
 
-async def test_coming_home_during_the_evening(
+async def test_getting_home_during_the_evening(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
 ) -> None:
-    """A Coming home light the routine has (switched off when everyone left,
-    say) comes back on in the routine, so it still fades out at bedtime."""
+    """The first one home gets the routine's lights that are off back on
+    (it's started already, so lights moved out of it stay out, even after a
+    restart). Someone arriving later brings back only the Coming home
+    lights, in the routine, so they still fade out at bedtime."""
     await tick(hass, freezer, "16:29")
-    hue_lite = await set_up(hass, entry)
+    await set_up(hass, entry)
     await tick(hass, freezer, "16:30")
-    on(hass, hue_lite, "light.bedroom")  # the living room's off
+    await action(hass, "apply_preset", {"preset": "relax", "entity_id": "light.bedroom"})
+    # Everyone goes out with the lights off, and Home Assistant restarts.
+    hass.states.async_set("zone.home", "0")
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await settle(hass)
+    hue_lite = entry.runtime_data
     home.turn_on.clear()
+
+    evening = {**hue_lite.evening.light.colour_data(), "entity_id": ["light.living_room"]}
     with patch("custom_components.hue_lite.routines.is_up", return_value=False):
-        hass.states.async_set("zone.home", "0")
         hass.states.async_set("zone.home", "1")
         await settle(hass)
-    assert (routine(hass), natural(hass)) == (["light.bedroom", "light.living_room"], [])
-    assert [c.data for c in home.turn_on] == [
-        {"entity_id": ["light.living_room"], **hue_lite.evening.light.colour_data(), "transition": 2}
-    ]
+        assert [c.data for c in home.turn_on] == [{**evening, "transition": 5}]
+        assert (routine(hass), hue_lite.scenes["light.bedroom"]) == (["light.living_room"], "relax")
+
+        # Both off again; someone else gets home.
+        home.turn_on.clear()
+        hass.states.async_set("zone.home", "2")
+        await settle(hass)
+    assert [c.data for c in home.turn_on] == [{**evening, "transition": 2}]
+    assert routine(hass) == ["light.living_room"]
 
 
 async def test_hue_dimmer(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:

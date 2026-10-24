@@ -115,17 +115,21 @@ class Routines:
             await lite.sender.call("turn_off", on, transition=2)
 
     @callback
-    def _start_evening(self) -> None:
+    def _start_evening(self, parent: Context | None = None) -> list[str]:
         """The routine takes its lights (Evening-labelled and on Auto) and
         turns them on at its current light, if it's on tonight and someone's
-        home."""
+        home; the lights it took."""
         lite = self.lite
         if not self.evening_on or not _people(lite.hass.states.get(lite.presence)):
-            return
+            return []
         lite.followed[ROUTINE] = lite.evening
-        if lights := lite.routine_lights("evening"):
+        lite.last_evening = lite.evening.day
+        lite.save()
+        lights = lite.routine_lights("evening")
+        if lights:
             lite.set_scene(lights, ROUTINE)
-            lite.spawn(lite.apply(ROUTINE, lights, 5))
+            lite.spawn(lite.apply(ROUTINE, lights, 5, parent))
+        return lights
 
     async def _bedtime(self) -> None:
         """Fade out the routine's lights, which it's then done with for
@@ -217,25 +221,48 @@ class Routines:
         # Only a real count going up: not the zone coming back from unknown.
         before, after = _people(old), _people(new)
         if before is not None and after is not None and after > before:
-            self._someone_arrived(new.context)
+            self._someone_arrived(new.context, first=before == 0)
 
     @callback
-    def _someone_arrived(self, parent: Context) -> None:
-        """Turn on the Coming home lights that are off (optionally only after
-        dark): in Natural light, or in the evening routine if it has them
-        (switched off when everyone left, say), so they still fade out at
-        bedtime. That's the routine's doing, not a scene someone picked, so
-        lights on Auto stay on it."""
+    def _someone_arrived(self, parent: Context, first: bool) -> None:
+        """Someone's come home. The first one home in the evening gets the
+        evening routine (see _welcome_home); then the Coming home lights
+        that are off come on (optionally only after dark): in Natural light,
+        or in the routine if it has them, so they still fade out at bedtime.
+        That's the routines' doing, not a scene someone picked, so lights on
+        Auto stay on it."""
         lite = self.lite
+        welcomed = self._welcome_home(parent) if first else []
         s = lite.settings
         if not s["coming_home_enabled"] or (s["coming_home_only_dark"] and is_up(lite.hass)):
             return
-        lights = [light for light in lite.labelled("coming_home") if lite.hass.states.is_state(light, STATE_OFF)]
+        lights = [
+            light
+            for light in lite.labelled("coming_home")
+            if light not in welcomed and lite.hass.states.is_state(light, STATE_OFF)
+        ]
         if evening := [light for light in lights if lite.scenes.get(light) == ROUTINE]:
             lite.spawn(lite.apply(ROUTINE, evening, 2, parent))
         if natural := [light for light in lights if light not in evening]:
             lite.set_scene(natural, NATURAL)
             lite.spawn(lite.apply(NATURAL, natural, 2, parent))
+
+    @callback
+    def _welcome_home(self, parent: Context) -> list[str]:
+        """The first one home during the evening gets the routine: it starts
+        if it hasn't tonight (nobody was home when it was due), and if it
+        has, its lights that are off (switched off when everyone left, say)
+        come back on. The lights it turned on."""
+        lite = self.lite
+        if lite.evening.phase not in EVENING_PHASES:
+            return []
+        if lite.last_evening != lite.evening.day:
+            return self._start_evening(parent)
+        lights = lite.in_scene(ROUTINE)
+        on = lite.on(lights)
+        if off := [light for light in lights if light not in on]:
+            lite.spawn(lite.apply(ROUTINE, off, 5, parent))
+        return off
 
     @callback
     def _everyone_left(self, _now: datetime) -> None:

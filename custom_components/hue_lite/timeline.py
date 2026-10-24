@@ -7,7 +7,7 @@ be tested on their own. Times of day are minutes after midnight.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 
@@ -197,11 +197,13 @@ class EveningSettings:
 @dataclass(frozen=True)
 class Evening(Target):
     """The evening routine's phase and light, with tonight's start and bedtime
-    (HH:MM), and whether tonight is a Fri or Sat night."""
+    (HH:MM), whether tonight is a Fri or Sat night, and the evening's day
+    (the one before, until noon)."""
 
     start: str
     bedtime: str
     weekend: bool
+    day: date
 
     def moved_from(self, other: Target) -> bool:
         if not isinstance(other, Evening):
@@ -259,7 +261,7 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
     down = min(max(down, 0), 1)
     light = blend(p["cool_bright"], p["relax"], down * 2) if down <= 0.5 else blend(p["relax"], p["rest"], down * 2 - 1)
     light = Light(min(ramp, light.brightness_pct), light.xy_color, light.kelvin)
-    return Evening(phase, light.rounded(), hhmm(start), hhmm(bedtime), weekend)
+    return Evening(phase, light.rounded(), hhmm(start), hhmm(bedtime), weekend, evening_day.date())
 
 
 # ---- Scene cycling -----------------------------------------------------------

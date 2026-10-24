@@ -67,16 +67,18 @@ per user, with the rooms' order).
   midday, Relax at sunset, Rest at night. A light stays in it, on or off,
   until you pick another scene, change the light yourself or from an
   automation, or use one of your own Home Assistant scenes on it.
-- **Evening routine:** before sunset, if someone's home, the Evening lights
-  come on dim, brighten, wind down through Relax and Rest, and fade out at
-  bedtime. Sun–Thu and Fri & Sat nights each have their own switch and
-  bedtime, like wake up's days.
+- **Evening routine:** before sunset, the Evening lights come on dim,
+  brighten, wind down through Relax and Rest, and fade out at bedtime. It
+  needs someone home: if nobody is when it's due, it starts when the first
+  person gets home, and if it's running, the first one home gets its lights
+  that are off back on. Sun–Thu and Fri & Sat nights each have their own
+  switch and bedtime, like wake up's days.
 - **Wake up:** the Wake up lights that are off fade from a warm glow to
   Energize by your wake-up time, and can turn off again afterwards.
 - **Coming & Going:** the Coming home lights that are off come on when
   someone arrives (optionally only after dark): in Natural light, or back in
-  the evening routine if it has them. Every light can go off when everyone
-  has left.
+  the evening routine if it has them. Lights with neither label (nor Auto)
+  are left as they are. Every light can go off when everyone has left.
 - **Auto:** the button at the end of each light's and room's bar. A light is
   on Auto while wake up or the evening routine has it, or once you put it on
   Auto: then it follows both routines whether or not it has their labels,
