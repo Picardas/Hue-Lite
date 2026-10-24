@@ -15,13 +15,17 @@ Hue Bridge.** Hue-Lite gives you:
 
 Lights join in by **area** and **label**, with no YAML for each light.
 
-![The Lights dashboard: Whole home, each room's lights with their scenes, and the routines](docs/images/dashboard.png)
+| ![Editing a room's scenes: drag to reorder, the eye hides one](docs/images/edit-scenes.png) | ![The routines: wake up, the evening routine, and coming and going](docs/images/routines.png) | ![A dimmer's lights and the scenes its On button steps through](docs/images/dimmers.png) |
+| :---: | :---: | :---: |
+| Each light's scenes: drag into order, the eye hides one | Wake up, evening, coming & going | Each Hue dimmer's lights and scenes |
+
+<sub>The screenshots show the Lights dashboard with sample lights.</sub>
 
 > [!NOTE]
 > **Hue-Lite is vibe-coded.** It was built by prompting an AI coding
 > assistant (Claude Code), not written by hand. It runs a real home every
 > day and has a test suite that runs on every change. Still, it's a hobby
-> project in beta: expect rough edges, and please
+> project: expect rough edges, and please
 > [report them](https://github.com/Picardas/Hue-Lite/issues).
 
 ## Features
@@ -45,12 +49,6 @@ Lights join in by **area** and **label**, with no YAML for each light.
 - **A dashboard that builds itself** from your areas and labels. It's shared
   by every phone and browser, and a card puts any light or room on your other
   dashboards.
-
-| ![A room's scenes on a phone, in the dark theme](docs/images/phone.png) | ![Editing a room's scenes: drag to reorder, the eye hides one](docs/images/edit-scenes.png) | ![A dimmer's lights and the scenes its On button steps through](docs/images/dimmers.png) |
-| :---: | :---: | :---: |
-| Each light has its own scenes | Drag scenes into order; the eye hides one | Set up each Hue dimmer |
-
-<sub>The screenshots show the dashboard with sample lights.</sub>
 
 ## Installation
 
@@ -236,6 +234,7 @@ pytest
 `tests/harness/index.html` renders the dashboard with a mock Home Assistant.
 To use it, serve the repository root, e.g. with
 `python3 -m http.server --bind 127.0.0.1`, and open `/tests/harness/`.
+[AGENTS.md](AGENTS.md) explains how the code is laid out and how to change it.
 
 ## Licence
 
