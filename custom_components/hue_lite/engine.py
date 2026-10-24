@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Coroutine, Mapping
 from datetime import date, datetime, time
+import secrets
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -61,7 +62,7 @@ from .const import (
     WAKE_UP,
     label_option,
 )
-from .lights import Sender
+from .lights import Sender, rgb_color
 from .routines import Routines
 from .targets import LIGHT, excluded, resolve
 from .timeline import (
@@ -94,6 +95,9 @@ DIMMER_DEFAULT = {"order": [*SCENE_CYCLE, *PALETTES], "hidden": list(PALETTES)}
 # Your own scenes: their ids start with this, and there are at most this many.
 CUSTOM_PREFIX = "custom_"
 MAX_CUSTOM = 50
+
+# The built-in tiles' usual order, as the dashboard shows them (sceneTiles).
+DEFAULT_ORDER = [*PRESETS, NATURAL, *PALETTES]
 
 
 def _setup(value: Any, tiles: frozenset[str] | set[str] = TILE_SCENES) -> dict[str, list[str]] | None:
@@ -212,6 +216,14 @@ def _stored(data: Any) -> dict[str, Any]:
             for device, value in dimmer_settings.items()
             if isinstance(value, dict) and (found := _dimmer(value, tiles))
         },
+    }
+
+
+def _showing(setup: dict[str, list[str]], scene_id: str) -> dict[str, list[str]]:
+    """A set of scenes ({order, hidden}) with `scene_id` shown, at the end."""
+    return {
+        "order": [*(s for s in setup["order"] if s != scene_id), scene_id],
+        "hidden": [s for s in setup["hidden"] if s != scene_id],
     }
 
 
@@ -484,8 +496,53 @@ class HueLite:
 
     def shared(self) -> dict[str, Any]:
         """What every dashboard shares: the rooms' and lights' scenes, the
-        dimmers' settings, and a dimmer's scenes until they're set."""
-        return {"layouts": self.layouts, "dimmers": self.dimmer_settings, "dimmer_default": DIMMER_DEFAULT}
+        dimmers' settings, a dimmer's scenes until they're set, and your own
+        scenes (with the colours a colour bulb reports for them)."""
+        return {
+            "layouts": self.layouts,
+            "dimmers": self.dimmer_settings,
+            "dimmer_default": DIMMER_DEFAULT,
+            "custom": {
+                scene_id: {**scene, "rgb_colors": [rgb_color((x, y)) for x, y, _ in scene["colours"]]}
+                for scene_id, scene in self.custom.items()
+            },
+        }
+
+    @callback
+    def save_custom_scene(self, scene_id: str | None, scene: dict[str, Any], show: Mapping[str, list[str]] | None = None) -> str:
+        """Add one of your own scenes (no id; its new id is returned) or
+        change one (its lights in it that are on get it straight away). A new
+        one is shown in the rooms' and lights' scenes and dimmers in `show`
+        (where it was made), and hidden elsewhere until shown there."""
+        new = scene_id is None
+        if new:
+            scene_id = f"{CUSTOM_PREFIX}{secrets.token_hex(3)}"
+            while scene_id in self.custom:
+                scene_id = f"{CUSTOM_PREFIX}{secrets.token_hex(3)}"
+        self.custom[scene_id] = scene
+        self._custom_changed()
+        if new:
+            for key in (show or {}).get("layouts", []):
+                self.layouts[key] = _showing(self.layouts.get(key, {"order": DEFAULT_ORDER, "hidden": []}), scene_id)
+            for device_id in (show or {}).get("dimmers", []):
+                settings = self.dimmer_settings.setdefault(device_id, {})
+                settings["scenes"] = _showing(settings.get("scenes", DIMMER_DEFAULT), scene_id)
+        elif lights := self.on(self.in_scene(scene_id)):
+            self.spawn(self.send_palette(scene_id, lights, 2))
+        self._shared_changed()
+        return scene_id
+
+    @callback
+    def delete_custom_scene(self, scene_id: str) -> None:
+        """Delete one of your own scenes: its lights leave it (staying as they
+        are), and the rooms, lights and dimmers forget it."""
+        del self.custom[scene_id]
+        self._custom_changed()
+        self.set_scene(self.in_scene(scene_id), "")
+        for setup in [*self.layouts.values(), *(s["scenes"] for s in self.dimmer_settings.values() if "scenes" in s)]:
+            for key in ("order", "hidden"):
+                setup[key] = [s for s in setup[key] if s != scene_id]
+        self._shared_changed()
 
     @callback
     def set_layout(self, key: str, scenes: dict[str, list[str]] | None) -> None:

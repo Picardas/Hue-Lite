@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from freezegun.api import FrozenDateTimeFactory
@@ -159,6 +160,14 @@ async def tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, when: str) -
 
 async def settle(hass: HomeAssistant) -> None:
     await hass.async_block_till_done(wait_background_tasks=True)
+
+
+def ws(hass: HomeAssistant, handler: Any, msg: dict[str, Any], connection: Mock | None = None, admin: bool = True) -> Mock:
+    """Call a websocket command as a dashboard would; the connection records
+    what's sent back."""
+    connection = connection or Mock(user=Mock(is_admin=admin), subscriptions={})
+    handler(hass, connection, {"id": 1, **msg})
+    return connection
 
 
 def after_dark(dark: bool = True) -> AbstractContextManager:

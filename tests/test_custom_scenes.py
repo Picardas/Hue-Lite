@@ -4,6 +4,7 @@ colour, like a preset) or dynamic (several, drifting at their own speed)."""
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import Mock
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
@@ -12,9 +13,12 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 
-from custom_components.hue_lite.const import STORAGE_KEY
+from custom_components.hue_lite import dashboard
+from custom_components.hue_lite.const import DOMAIN, STORAGE_KEY
+from custom_components.hue_lite.engine import DEFAULT_ORDER, DIMMER_DEFAULT, HueLite
+from custom_components.hue_lite.timeline import kelvin_for
 
-from .conftest import Home, action, add_light, on, set_up, tick
+from .conftest import Home, action, add_device, add_light, on, set_up, settle, tick, ws
 
 DISCO = {"name": "Disco", "icon": "mdi:party-popper", "colours": [[0.68, 0.31, 60], [0.17, 0.05, 40]], "white": [50, 2700], "drift_minutes": 1}
 TEAL = {"name": "Teal", "icon": "mdi:water", "colours": [[0.17, 0.35, 30]], "white": [30, 5000]}
@@ -63,6 +67,60 @@ async def test_your_own_scenes(
     assert entry.runtime_data.scenes[lamp] == "custom_disco"
     with pytest.raises(ServiceValidationError):
         await action(hass, "apply_preset", {"preset": "custom_gone"})
+
+
+async def test_making_changing_and_deleting_scenes(
+    hass: HomeAssistant, home: Home, hue_lite: HueLite, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
+    hue_lite.set_layout("living_room", {"order": ["relax", "natural"], "hidden": []})
+
+    def save(admin: bool = True, **scene: Any) -> Mock:
+        return ws(hass, dashboard.websocket_save_scene, {"type": f"{DOMAIN}/save_scene", "icon": "mdi:waves", "drift_minutes": 5, **scene}, admin=admin)
+
+    def delete(scene_id: str) -> Mock:
+        return ws(hass, dashboard.websocket_delete_scene, {"type": f"{DOMAIN}/delete_scene", "scene": scene_id})
+
+    # Anyone can make one: colours as RGB, each with a brightness; white
+    # bulbs get the first colour's nearest white, at their average brightness.
+    sea = save(
+        admin=False,
+        name="Sea",
+        colours=[{"rgb": [0, 128, 255], "brightness": 50}, {"rgb": [0, 255, 128], "brightness": 30}],
+        show={"layouts": ["living_room", "kitchen"], "dimmers": [dimmer.id, "not_a_dimmer"]},
+    ).send_result.call_args.args[1]["id"]
+    scene = hue_lite.custom[sea]
+    assert (scene["name"], scene["drift_minutes"], [c[2] for c in scene["colours"]]) == ("Sea", 5, [50, 30])
+    assert scene["white"] == [40, kelvin_for(tuple(scene["colours"][0][:2]))]
+    assert len(hue_lite.shared()["custom"][sea]["rgb_colors"]) == 2
+
+    # It's shown where it was made (a room with no scenes of its own starts
+    # from the usual order), so hidden everywhere else.
+    assert hue_lite.layouts == {
+        "living_room": {"order": ["relax", "natural", sea], "hidden": []},
+        "kitchen": {"order": [*DEFAULT_ORDER, sea], "hidden": []},
+    }
+    assert hue_lite.dimmer_settings == {dimmer.id: {"scenes": {"order": [*DIMMER_DEFAULT["order"], sea], "hidden": DIMMER_DEFAULT["hidden"]}}}
+
+    # Changed, the lights in it that are on get it straight away.
+    await action(hass, "apply_preset", {"preset": sea, "entity_id": "light.living_room"})
+    on(hass, hue_lite, "light.living_room")
+    home.turn_on.clear()
+    save(scene=sea, name="Deep sea", colours=[{"rgb": [0, 0, 255], "brightness": 20}])
+    await settle(hass)
+    assert (hue_lite.custom[sea]["name"], [c.data["brightness_pct"] for c in home.turn_on]) == ("Deep sea", [20])
+
+    # The built-in scenes can't be changed or deleted, and there's a limit.
+    assert save(scene="relax", name="Mine", colours=[{"rgb": [1, 2, 3], "brightness": 5}]).send_error.call_args.args[1] == "not_found"
+    assert delete("relax").send_error.call_args.args[1] == "not_found"
+    monkeypatch.setattr(dashboard, "MAX_CUSTOM", 1)
+    assert save(name="More", colours=[{"rgb": [1, 2, 3], "brightness": 5}]).send_error.call_args.args[1] == "too_many"
+
+    # Deleted, its lights leave it and the rooms and dimmers forget it.
+    delete(sea).send_result.assert_called_once()
+    assert (hue_lite.custom, hue_lite.scenes) == ({}, {})
+    assert hue_lite.layouts["living_room"] == {"order": ["relax", "natural"], "hidden": []}
+    assert sea not in hue_lite.dimmer_settings[dimmer.id]["scenes"]["order"]
 
 
 async def test_damaged_scenes_are_left_out(hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]) -> None:

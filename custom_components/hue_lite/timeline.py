@@ -81,6 +81,15 @@ class Palette:
         return len(self.colours) > 1
 
 
+def kelvin_for(xy: tuple[float, float]) -> int:
+    """The colour temperature nearest an xy colour (McCamy's formula), within
+    what white bulbs do (2000-6500 K): what a scene's white bulbs get."""
+    x, y = xy
+    n = (x - 0.3320) / (0.1858 - y) if y != 0.1858 else 0
+    kelvin = 449 * n**3 + 3525 * n**2 + 6823.3 * n + 5520.33
+    return round(min(max(kelvin, 2000), 6500))
+
+
 def palette_from_stored(scene: dict[str, Any]) -> Palette:
     """One of your own scenes, as stored (already checked): its colours as
     [x, y, brightness], `white` as [brightness, kelvin], and its drift."""

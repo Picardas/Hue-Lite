@@ -125,10 +125,11 @@ Also fixed today: `services.yaml` (the preset options), `services.py` (the
 ### `dashboard.py`
 - **New websocket commands**, both using `_with_hue_lite` and open to any
   signed-in user (not `require_admin`):
-  - `hue_lite/save_scene` takes `{id?, name, icon, colours, white,
-    drift_minutes, show?}`. With no id, it's a new scene and the reply is
-    the new id.
-  - `hue_lite/delete_scene` takes `{id}`.
+  - `hue_lite/save_scene` takes `{scene?, name, icon, colours: [{rgb,
+    brightness}], white?, drift_minutes, show?}`. With no `scene` id, it's
+    a new scene and the reply is `{id}`. (`id` itself is the websocket
+    message's own.)
+  - `hue_lite/delete_scene` takes `{scene}`.
   - Bound the sizes as in Data, and accept at most 100 `show` keys.
 - **Validation:** `SCENE_IDS` checks ids against `library()` when a
   command is called, not against a fixed set.

@@ -19,15 +19,7 @@ from custom_components.hue_lite import dashboard
 from custom_components.hue_lite.const import DOMAIN, STORAGE_KEY
 from custom_components.hue_lite.engine import HueLite
 
-from .conftest import Home, add_device, natural, ours, set_up, settle
-
-
-def ws(hass: HomeAssistant, handler: Any, msg: dict[str, Any], connection: Mock | None = None, admin: bool = True) -> Mock:
-    """Call a websocket command as a dashboard would; the connection records
-    what's sent back."""
-    connection = connection or Mock(user=Mock(is_admin=admin), subscriptions={})
-    handler(hass, connection, {"id": 1, **msg})
-    return connection
+from .conftest import Home, add_device, natural, ours, set_up, settle, ws
 
 
 def events(connection: Mock) -> list[dict[str, Any]]:
@@ -59,11 +51,12 @@ async def test_scenes_are_shared_and_kept(hass: HomeAssistant, home: Home, entry
     assert len(events(open_dashboard)) == sent
 
 
-def test_only_real_scenes_are_taken() -> None:
-    schema = dashboard.websocket_set_scenes._ws_schema
-    schema({"type": f"{DOMAIN}/set_scenes", "id": 1, "key": "x", "scenes": {"order": ["relax"], "hidden": []}})
-    with pytest.raises(Exception):
-        schema({"type": f"{DOMAIN}/set_scenes", "id": 1, "key": "x", "scenes": {"order": ["sleep"], "hidden": []}})
+async def test_only_real_scenes_are_taken(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    def set_scenes(order: list[str]) -> Mock:
+        return ws(hass, dashboard.websocket_set_scenes, {"type": f"{DOMAIN}/set_scenes", "key": "x", "scenes": {"order": order, "hidden": []}})
+
+    set_scenes(["relax"]).send_result.assert_called_once()
+    assert set_scenes(["sleep"]).send_error.call_args.args[1] == "unknown_scene"
 
 
 async def test_damaged_shared_settings_are_left_out(

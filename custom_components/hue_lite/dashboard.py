@@ -28,12 +28,14 @@ from homeassistant.helpers import (
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
+from homeassistant.util import color as color_util
+
 from .const import DOMAIN, SIGNAL_SHARED
 from .dimmers import is_dimmer
-from .engine import TILE_SCENES, HueLite, async_get_loaded
+from .engine import MAX_CUSTOM, TILE_SCENES, HueLite, async_get_loaded, custom_scene
 from .lights import rgb_color
 from .targets import LIGHT
-from .timeline import PALETTES, PRESETS
+from .timeline import PALETTES, PRESETS, kelvin_for
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,7 +56,15 @@ async def async_register(hass: HomeAssistant) -> None:
     content = await hass.async_add_executor_job(SCRIPT.read_bytes)
     hass.data[DATA_URL] = f"{URL}?v={hashlib.sha256(content).hexdigest()[:8]}"
     await hass.http.async_register_static_paths([StaticPathConfig(URL, str(SCRIPT), True)])
-    for command in (websocket_config, websocket_claim_dashboard, websocket_subscribe, websocket_set_scenes, websocket_set_dimmer):
+    for command in (
+        websocket_config,
+        websocket_claim_dashboard,
+        websocket_subscribe,
+        websocket_set_scenes,
+        websocket_set_dimmer,
+        websocket_save_scene,
+        websocket_delete_scene,
+    ):
         websocket_api.async_register_command(hass, command)
 
 
@@ -155,8 +165,15 @@ def websocket_claim_dashboard(
 # The most rooms and lights whose scenes are kept, so the shared settings
 # can't grow without end.
 MAX_LAYOUTS = 500
-SCENE_IDS = vol.All(cv.ensure_list, [vol.In(TILE_SCENES)], vol.Length(max=len(TILE_SCENES)))
+# Scene ids: the built-in ones or your own, which are checked when the command's handled (_known).
+SCENE_IDS = vol.All(cv.ensure_list, [vol.All(str, vol.Length(1, 64))], vol.Length(max=len(TILE_SCENES) + MAX_CUSTOM))
 SCENES = vol.Any(None, {vol.Required("order"): SCENE_IDS, vol.Required("hidden"): SCENE_IDS})
+
+
+def _known(hue_lite: HueLite, scenes: dict[str, list[str]] | None) -> bool:
+    """Whether a set of scenes ({order, hidden}) names only scenes there are."""
+    tiles = hue_lite.tile_scenes()
+    return scenes is None or all(s in tiles for s in (*scenes["order"], *scenes["hidden"]))
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/subscribe"})
@@ -182,6 +199,9 @@ def websocket_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveCon
 def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
     """Set a room's or light's scenes for every dashboard, or with None put
     them back to the default. Anyone can: it's only which scenes show."""
+    if not _known(hue_lite, msg["scenes"]):
+        connection.send_error(msg["id"], "unknown_scene", "There's no such scene")
+        return
     if msg["scenes"] is not None and msg["key"] not in hue_lite.layouts and len(hue_lite.layouts) >= MAX_LAYOUTS:
         connection.send_error(msg["id"], "too_many", "Too many rooms and lights with their own scenes")
         return
@@ -207,10 +227,93 @@ def websocket_set_dimmer(hass: HomeAssistant, connection: websocket_api.ActiveCo
     if device is None or not is_dimmer(device):
         connection.send_error(msg["id"], "not_found", "That isn't a Hue dimmer")
         return
+    if not _known(hue_lite, msg.get("scenes")):
+        connection.send_error(msg["id"], "unknown_scene", "There's no such scene")
+        return
     if lights := msg.get("lights"):
         lights = [light for light in lights if light.startswith(f"{LIGHT}.")]
     changes = {key: msg[key] for key in ("lights", "scenes") if key in msg}
     if "lights" in changes:
         changes["lights"] = lights or None
     hue_lite.set_dimmer(device.id, **changes)
+    connection.send_result(msg["id"])
+
+
+# The colours a Hue colour bulb can show (gamut C): picked colours outside it are brought inside.
+HUE_GAMUT = color_util.GamutType(
+    color_util.XYPoint(0.6915, 0.3083), color_util.XYPoint(0.17, 0.7), color_util.XYPoint(0.1532, 0.0475)
+)
+PERCENT = vol.All(int, vol.Range(1, 100))
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/save_scene",
+        vol.Optional("scene"): str,
+        vol.Required("name"): vol.All(str, vol.Length(1, 30)),
+        vol.Required("icon"): vol.All(str, vol.Length(max=64)),
+        vol.Required("colours"): vol.All(
+            [{vol.Required("rgb"): vol.All([vol.All(int, vol.Range(0, 255))], vol.Length(3, 3)), vol.Required("brightness"): PERCENT}],
+            vol.Length(1, 8),
+        ),
+        vol.Optional("white"): {vol.Required("brightness"): PERCENT, vol.Required("kelvin"): vol.All(int, vol.Range(2000, 6500))},
+        vol.Optional("drift_minutes", default=3): vol.All(int, vol.Range(1, 60)),
+        vol.Optional("show"): {
+            vol.Optional("layouts", default=list): vol.All([vol.All(str, vol.Length(1, 255))], vol.Length(max=100)),
+            vol.Optional("dimmers", default=list): vol.All([str], vol.Length(max=20)),
+        },
+    }
+)
+@_with_hue_lite
+def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
+    """Add one of your own scenes (no `scene`) or change one (`scene`: its
+    id). Its colours come
+    as RGB with a brightness each (one colour: static), and white bulbs get
+    `white` (by default: the first colour's nearest white, at the colours'
+    average brightness). A new one is shown where `show` says (the room,
+    lights and dimmers it was made for). Anyone can: it's only colours."""
+    scene_id = msg.get("scene")
+    if scene_id is not None and scene_id not in hue_lite.custom:
+        connection.send_error(msg["id"], "not_found", "That isn't one of your scenes")
+        return
+    if scene_id is None and len(hue_lite.custom) >= MAX_CUSTOM:
+        connection.send_error(msg["id"], "too_many", "Too many scenes of your own")
+        return
+    colours = [
+        [*(round(v, 4) for v in color_util.color_RGB_to_xy(*c["rgb"], HUE_GAMUT)), c["brightness"]] for c in msg["colours"]
+    ]
+    white = msg.get("white") or {
+        "brightness": round(sum(c["brightness"] for c in msg["colours"]) / len(colours)),
+        "kelvin": kelvin_for(tuple(colours[0][:2])),
+    }
+    scene = custom_scene(
+        {
+            "name": msg["name"],
+            "icon": msg["icon"],
+            "colours": colours,
+            "white": [white["brightness"], white["kelvin"]],
+            "drift_minutes": msg["drift_minutes"],
+        }
+    )
+    if scene is None:
+        connection.send_error(msg["id"], "invalid", "That isn't a scene")
+        return
+    show = msg.get("show") or {}
+    devices = dr.async_get(hass)
+    show = {
+        # New rooms and lights only while there's room for them.
+        "layouts": [k for k in show.get("layouts", []) if k in hue_lite.layouts or len(hue_lite.layouts) < MAX_LAYOUTS],
+        "dimmers": [d for d in show.get("dimmers", []) if (device := devices.async_get(d)) and is_dimmer(device)],
+    }
+    connection.send_result(msg["id"], {"id": hue_lite.save_custom_scene(scene_id, scene, show)})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/delete_scene", vol.Required("scene"): str})
+@_with_hue_lite
+def websocket_delete_scene(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
+    """Delete one of your own scenes (the built-in ones can't be). Anyone can."""
+    if msg["scene"] not in hue_lite.custom:
+        connection.send_error(msg["id"], "not_found", "That isn't one of your scenes")
+        return
+    hue_lite.delete_custom_scene(msg["scene"])
     connection.send_result(msg["id"])
