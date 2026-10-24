@@ -13,6 +13,7 @@ one plain JavaScript file with no build step.
 | Path | What's there |
 | ---- | ------------ |
 | `custom_components/hue_lite/engine.py` | The core: settings, which scene each light is in, Auto, the clock, stored data (`_stored` checks everything loaded) |
+| `shared.py` | What every dashboard shares (each room's scenes, the dimmers, your own scenes), mixed into `HueLite`, and checking it as it's loaded |
 | `routines.py` | The evening routine, wake up, coming and going, Away, and catching up after a restart |
 | `timeline.py` | Presets, colour scenes and the two timelines, as plain functions with no Home Assistant imports |
 | `lights.py` | `Sender`: every light command goes through it, so Hue-Lite knows its own changes and commands don't queue up behind a slow bulb |
@@ -34,8 +35,8 @@ pip install -r requirements_test.txt   # pins Home Assistant's test tooling, so 
 pytest
 ```
 
-- **CI:** every push runs the tests, hassfest and HACS's checks (see
-  `.github/workflows/validate.yml`). The tests take about 10 seconds on
+- **CI:** every push runs the tests, hassfest and HACS's checks, and checks
+  the dashboard script parses (see `.github/workflows/validate.yml`). The tests take about 10 seconds on
   Linux. Under WSL, keep the virtual environment on the Linux filesystem;
   on a Windows drive the tests take minutes.
 - **Dashboard script:** there are no JavaScript tests. Serve the repository
@@ -43,6 +44,12 @@ pytest
   `/tests/harness/`. It takes `?dark`, `?user` (not an admin), `?unshared`,
   `?existing` and `?editor` (the scene editor, open), and exposes
   `window.dash` and `window.calls`.
+- **Screenshots:** `tests/screenshots/index.html` renders the README's
+  screenshots (`?view=edit|routines|dimmers&phone`). Take them with a
+  headless browser at 520 px wide, e.g.
+  `msedge --headless=new --window-size=520,1300 --screenshot=docs/images/edit-scenes.png "<page>?view=edit&phone"`
+  (routines: 520×1400). The harness and this page copy each scene's
+  colours; a test checks they're Hue-Lite's.
 - **Real bulbs:** say plainly what hasn't been tried on real bulbs or a real
   Home Assistant.
 
@@ -83,8 +90,11 @@ pytest
   2. Add it to `COLOUR_SCENES` and `howItWorks` in `hue-lite.js`.
   3. Add it to the options in `services.yaml`, and to the selector and the
      `apply_preset` description in `en.json`.
-  4. Update the README's colour scenes table, the harness's `presets`, and
-     the dimmer default in `tests/test_shared.py`.
+  4. Update the README's colour scenes table, the `presets` in the harness
+     and the screenshot page, and the dimmer default in
+     `tests/test_shared.py`.
+- **Renaming a scene:** add its old id to `RENAMED` in `shared.py`, so
+  saved data and automations still find it.
 - **Stored data:** add it to `_stored` and `_data` in `engine.py`, with a
   test that damaged data is left out.
 

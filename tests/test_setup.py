@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from datetime import date
+import json
+from pathlib import Path
+import re
 from typing import Any
 from unittest.mock import Mock
 
 from freezegun.api import FrozenDateTimeFactory
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
@@ -14,7 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, issue_registry as ir, label_registry as lr
 
 from custom_components.hue_lite.const import DOMAIN, STORAGE_KEY
-from custom_components.hue_lite.dashboard import websocket_config
+from custom_components.hue_lite.dashboard import SCENE_COLOURS, websocket_config
 from custom_components.hue_lite.engine import HueLite
 
 from .conftest import FRIDAY, Home, add_device, add_light, set_up
@@ -152,6 +156,15 @@ async def test_routine_lights_let_go_when_bedtime_passed_while_down(
     stored(hass_storage, scenes={"light.bedroom": "routine", "light.living_room": "natural"})
     hue_lite = await set_up(hass, entry)
     assert hue_lite.scenes == {"light.living_room": "natural"}
+
+
+@pytest.mark.parametrize("page", ["harness/index.html", "screenshots/index.html"])
+def test_the_mock_dashboards_show_the_real_colours(page: str) -> None:
+    """The harness and the screenshot page copy each scene's colours, as
+    Hue-Lite sends them to the dashboard: they're kept the same."""
+    text = (Path(__file__).parent / page).read_text(encoding="utf-8")
+    copied = {scene: json.loads(rgbs) for scene, rgbs in re.findall(r"(\w+): \{ rgb_colors: (\[\[.*?\]\])", text)}
+    assert copied == {scene: colours["rgb_colors"] for scene, colours in SCENE_COLOURS.items()}
 
 
 async def test_dashboard_script_and_config(hass: HomeAssistant, home: Home, entry: MockConfigEntry, hue_lite: HueLite) -> None:

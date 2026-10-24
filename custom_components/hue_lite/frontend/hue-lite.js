@@ -102,21 +102,21 @@
     return { type: "custom:hue-lite-light-bar", entities, scenes_entity: setup.entities.light_scenes, ...extra };
   }
 
-  // The scenes, three per row, in their default order (each room can be set
-  // to its own; see the rooms card): the presets, then Natural light
-  // (coloured as it is now) and the colour scenes (coloured by their
-  // lights). `target` is the action target: {area_id}, {label_id},
-  // {entity_id} or {} for every light.
+  // The built-in scenes, four per row, in their usual order as Hue-Lite gives
+  // it (each room can be set to its own; see the rooms card): the presets,
+  // then Natural light (coloured as it is now) and the colour scenes
+  // (coloured by their lights). `target` is the action target: {area_id},
+  // {label_id}, {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
     const tile = (extra) => ({
       type: "custom:hue-lite-scene-tile", entities: lights, target, scenes_entity: setup.entities.light_scenes, ...extra,
     });
-    const preset = (p) => tile({ preset: p.id, light: setup.presets?.[p.id] });
-    return [
-      ...PRESETS.map(preset),
-      tile({ natural: true, natural_entity: setup.entities.natural_light }),
-      ...COLOUR_SCENES.map(preset),
-    ];
+    const order = setup.scenes || [...PRESETS, NATURAL, ...COLOUR_SCENES].map((s) => s.id);
+    return order
+      .filter((id) => id === NATURAL.id || BUILT_IN.some((s) => s.id === id))
+      .map((id) => (id === NATURAL.id
+        ? tile({ natural: true, natural_entity: setup.entities.natural_light })
+        : tile({ preset: id, light: setup.presets?.[id] })));
   }
 
   // A block for the rooms card: a bar for its lights, with its icon (and
@@ -130,6 +130,14 @@
       head: lightBar(setup, lights, { name, icon, expandable: true, heading: true }),
       scenes: sceneTiles(setup, lights, target),
     };
+  }
+
+  // Whole home's block: every light. Its Auto button only shows on when every
+  // light in the house is on Auto, not when some are.
+  function wholeHome(setup, lights) {
+    const block = room(setup, "home", "Whole home", "mdi:home", lights, {});
+    block.head.auto_all_only = true;
+    return block;
   }
 
   // Where a scene made in an area is shown: every block of the area (the
@@ -167,7 +175,7 @@
       type: "grid",
       cards: [{
         type: "custom:hue-lite-rooms",
-        rooms: [room(setup, "home", "Whole home", "mdi:home", everything, {})],
+        rooms: [wholeHome(setup, everything)],
         toolbar: false,
         layout_key: "hue_lite_home",
       }],
@@ -501,7 +509,8 @@
   // lights' own colour, so they follow what Auto and the scenes do to them. With
   // `scenes_entity`, an Auto button at the end puts the lights on Auto
   // (following the routines) or takes them off it; on a set it shows when only
-  // some are on Auto, and a tap sets them all.
+  // some are on Auto (unless `auto_all_only`, as Whole home is), and a tap
+  // sets them all.
   // With `expandable` the bar opens onto what's under it (a room's scenes and
   // lights, or a light's scenes): the icon toggles, and tapping the rest of
   // it (the name has a chevron) sends `hue-lite-expand`, for the card holding
@@ -706,9 +715,10 @@
 
       if (this._el.auto) {
         const { on: onAuto, of, all } = this._auto();
+        const some = onAuto > 0 && !all && !this._config.auto_all_only;
         this._el.auto.classList.toggle("all", all);
-        this._el.auto.classList.toggle("some", onAuto > 0 && !all);
-        this._el.auto.setAttribute("aria-pressed", all ? "true" : onAuto ? "mixed" : "false");
+        this._el.auto.classList.toggle("some", some);
+        this._el.auto.setAttribute("aria-pressed", all ? "true" : some ? "mixed" : "false");
         this._el.auto.title = (all ? "On Auto" : onAuto ? `${onAuto} of ${of} on Auto` : "Not on Auto")
           + ": following wake up and the evening routine. Tap to " + (all ? "stop." : "start.");
       }
@@ -751,7 +761,7 @@
     }
 
     getGridOptions() {
-      return { columns: 4, rows: 2, min_columns: 3 };
+      return { columns: 3, rows: 2, min_columns: 3 };
     }
 
     // The scene's id, name and icon.
@@ -783,13 +793,13 @@
           ${FOCUS_CSS}
           :host { --card-bg: var(--ha-card-background, var(--card-background-color, #fff)); }
           ha-card { height: 100%; box-sizing: border-box; position: relative; display: flex; flex-direction: column;
-                    align-items: center; justify-content: center; gap: 4px; padding: 8px 6px; text-align: center;
+                    align-items: center; justify-content: center; gap: 4px; padding: 8px 4px; text-align: center;
                     cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; overflow: hidden;
                     background: var(--tint, none), var(--card-bg); }
           .circle { background: var(--swatch); color: var(--ink); }
           .text { max-width: 100%; }
           .name, .now { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          .name { font-size: 13px; font-weight: 500; line-height: 18px; letter-spacing: 0.1px; color: var(--primary-text-color); }
+          .name { font-size: 12px; font-weight: 500; line-height: 16px; color: var(--primary-text-color); }
           .now { font-size: 11px; line-height: 14px; color: var(--secondary-text-color); }
           .now:empty { display: none; }
           .check { display: none; position: absolute; top: 6px; right: 6px; --mdc-icon-size: 18px; }
@@ -951,6 +961,7 @@
     async _load() {
       this._loaded = true;
       this._layout = await loadLayout(this._hass, this._layoutKey);
+      this._layoutLoaded = true;
       this._arrange();
     }
 
@@ -1129,13 +1140,28 @@
   }
 
   // Change a shared setting here straight away, then in Hue-Lite (which
-  // tells every dashboard, this one included).
+  // tells every dashboard, this one included). If Hue-Lite turns it down
+  // (only admins set dimmers, say), it's put back and a message says why.
   function changeShared(hass, { type, ...message }, apply) {
+    const before = shared.data && structuredClone(shared.data);
+    const changed = () => { for (const c of shared.cards) c._sharedChanged(); };
     if (shared.data) {
       apply(shared.data);
-      for (const c of shared.cards) c._sharedChanged();
+      changed();
     }
-    hass.callWS({ type: `${DOMAIN}/${type}`, ...message }).catch(() => {});
+    hass.callWS({ type: `${DOMAIN}/${type}`, ...message }).catch((err) => {
+      if (before) {
+        shared.data = before;
+        changed();
+      }
+      toast(`Couldn't save that: ${err?.message || err?.code || err}`);
+    });
+  }
+
+  // A message at the bottom of the screen, as Home Assistant shows its own.
+  function toast(message) {
+    document.querySelector("home-assistant")?.dispatchEvent(
+      new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true }));
   }
 
   function setScenes(hass, key, scenes) {
@@ -1177,17 +1203,17 @@
     button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
     button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
     .scenes { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
-    .cell { position: relative; grid-column: span 4; height: 88px; }
+    .cell { position: relative; grid-column: span 3; height: 88px; }
     .cell > hue-lite-scene-tile { display: block; height: 100%; }
     .scenes:not(.editing) > .cell.off { display: none; }
     .scenes.editing > .cell.off > hue-lite-scene-tile { opacity: 0.35; }
-    :is(.eye, .pen) { display: none; position: absolute; top: 4px; left: 4px; width: 30px; height: 30px; padding: 0; justify-content: center;
-           --mdc-icon-size: 18px; color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    :is(.eye, .pen) { display: none; position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; padding: 0; justify-content: center;
+           --mdc-icon-size: 16px; color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
            background: var(--ha-card-background, var(--card-background-color, #fff)); }
     :is(.eye, .pen):hover { background: var(--ha-card-background, var(--card-background-color, #fff)); }
-    .pen { left: auto; right: 4px; }
+    .pen { left: auto; right: 3px; }
     .scenes.editing > .cell > :is(.eye, .pen) { display: inline-flex; }
-    .add { display: none; grid-column: span 4; height: 88px; box-sizing: border-box; flex-direction: column; justify-content: center;
+    .add { display: none; grid-column: span 3; height: 88px; box-sizing: border-box; flex-direction: column; justify-content: center;
            border: 2px dashed var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12));
            border-radius: var(--ha-card-border-radius, 12px); --mdc-icon-size: 24px; }
     .scenes.editing > .add { display: inline-flex; }
@@ -1195,9 +1221,11 @@
     .edit-row .hint { flex: 1; padding-left: 4px; }
     .scenes:not(.editing) > .edit-row :is(.hint, .reset), .edit-row[hidden] { display: none; }`;
 
-  // A set of scene tiles (each a third of the grid's width), with a row
-  // under them: while it's being edited the tiles drag into another order,
-  // their eye shows or hides them, and Reset goes back to the default.
+  // A set of scene tiles (four to a row), with a row under them: while it's
+  // being edited the tiles drag into another order, their eye shows or hides
+  // them, and Reset puts the built-in ones back as `usual()` has them
+  // ({order, hidden}; by default all, in the order they came), leaving your
+  // own as they were.
   // `holder` makes the tile cards (`_card`, so it hands them hass) and
   // forgets ones that go (`_forget`). `configs` are the built-in scenes'
   // tiles; your own scenes join them (`sync`) with the same lights and target.
@@ -1207,7 +1235,7 @@
   // tile's pencil (its config: one of your own to change, or a built-in one
   // to copy), or from the + tile at the end (null: a new one).
   class SceneSet {
-    constructor(holder, configs, { save, edit, editor, hint, resetTitle }) {
+    constructor(holder, configs, { save, edit, editor, hint, resetTitle, usual }) {
       this.holder = holder;
       this.save = save;
       this.editor = editor;
@@ -1230,10 +1258,15 @@
       this.grid.querySelector(".hint").textContent = hint
         || "Drag the scenes into the order you want; the eye shows or hides one, the pencil changes or copies one.";
       const reset = this.grid.querySelector(".reset");
-      reset.title = resetTitle || "Back to the usual order, with the built-in scenes shown and your own hidden";
-      onActivate(reset, () => save(null));
+      reset.title = resetTitle || "Back to the usual order, with every built-in scene shown; your own stay as they are";
+      onActivate(reset, () => {
+        const mine = this.scenes.order.filter((id) => isCustom(id) && !this.scenes.hidden.includes(id));
+        const back = usual ? usual() : { order: builtIn, hidden: [] };
+        save(mine.length ? { order: [...back.order, ...mine], hidden: back.hidden } : null);
+      });
       if (edit) onActivate(this.grid.querySelector(".edit"), edit);
       for (const config of configs) this._add(config);
+      const builtIn = this.ids;
       this.scenes = sceneOrder(this.ids);
       this.sorter = sortable(this.grid, () => [...this.grid.querySelectorAll(":scope > .cell")], () => this.editing, (ids) => {
         save({ order: ids, hidden: this.scenes.hidden });
@@ -1275,9 +1308,9 @@
     // Your own scenes as they are now (by id, from the shared settings): a
     // new one gets a tile, a changed one's is redrawn, a deleted one's goes.
     sync(custom = {}) {
-      const now = JSON.stringify(custom);
-      if (now === this.custom) return;
-      this.custom = now;
+      // Hue-Lite sends them afresh with every change to the shared settings.
+      if (custom === this.custom) return;
+      this.custom = custom;
       for (const tile of this.tiles.filter((t) => isCustom(t.id) && !custom[t.id])) {
         tile.cell.remove();
         this.holder._forget(tile.card);
@@ -1403,8 +1436,11 @@
         this._save();
         this._arrange();
       });
-      // Each block's scene tiles, with their own Edit scenes, by its id.
+      // Each block's scene tiles, with their own Edit scenes, by its id. A
+      // home with many lights has hundreds, so each block's are only made
+      // the first time it's open (`_unbuilt` until then).
       this._sets = new Map();
+      this._unbuilt = new Map();
       for (const r of this._config.rooms) {
         const head = document.createElement("div");
         head.className = "head";
@@ -1413,7 +1449,7 @@
         head.appendChild(bar);
         const el = this._block(r.id, head);
         list.appendChild(el);
-        if (r.scenes?.length) this._sceneSet(r.id, r.scenes, el.querySelector(".body"), r.show);
+        if (r.scenes?.length) this._unbuilt.set(r.id, () => this._sceneSet(r.id, r.scenes, el.querySelector(".body"), r.show));
       }
 
       if (this._config.toolbar === false) return;
@@ -1490,6 +1526,16 @@
         else el.removeAttribute("tabindex");
       }
       this._sorter.sync();
+      // Once it's known which blocks this person has folded away, the open
+      // ones get their tiles.
+      if (this._layoutLoaded) {
+        for (const [id, build] of this._unbuilt) {
+          if (!this._isCollapsed(id)) {
+            this._unbuilt.delete(id);
+            build();
+          }
+        }
+      }
       for (const set of this._sets.values()) {
         set.sync(shared.data?.custom);
         set.arrange(sceneOrder(set.ids, shared.data?.layouts[set.key]), this._editing === set.key);
@@ -1719,7 +1765,8 @@
         save: (scenes) => setDimmer(this._hass, d.id, { scenes }),
         editor: (config) => openSceneEditor(this._hass, config, { layouts: [], dimmers: [d.id] }),
         hint: "Drag the scenes into the order On steps through; the eye leaves one out, the pencil changes or copies one.",
-        resetTitle: "Back to Natural light and the presets",
+        resetTitle: "Back to Natural light and the presets; your own scenes stay as they are",
+        usual: () => shared.data?.dimmer_default || { order: [], hidden: [] },
       });
       body.appendChild(set.grid);
       this._sets.set(d.id, set);
@@ -1780,6 +1827,10 @@
   // ---- Scene editor --------------------------------------------------------
 
   const hex = (rgb) => `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+  // The drift slider's steps, in minutes.
+  const DRIFT_STEPS = [1, 2, 3, 4, 5, 10, 15, 30, 60];
+  const nearestStep = (minutes) =>
+    DRIFT_STEPS.reduce((best, m, i) => (Math.abs(m - minutes) < Math.abs(DRIFT_STEPS[best] - minutes) ? i : best), 0);
   const rgbOf = (value) => [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16));
 
   // Opens the scene editor for a tile's config: one of your own scenes to
@@ -1794,11 +1845,11 @@
     if (mine) {
       scene = { ...mine, colours: mine.rgb_colors.map((rgb, i) => ({ rgb, brightness: mine.colours[i][2] })) };
     } else if (builtIn) {
-      const { rgb_colors: rgbs = [], brightness = [] } = config.light || {};
+      const { rgb_colors: rgbs = [], brightness = [], drift_minutes: drift = 3 } = config.light || {};
       scene = {
         name: `Copy of ${builtIn.name}`.slice(0, 30),
         icon: builtIn.icon,
-        drift_minutes: 3,
+        drift_minutes: drift,
         colours: rgbs.map((rgb, i) => ({ rgb, brightness: brightness[i] || 70 })),
       };
     }
@@ -1865,9 +1916,11 @@
           <div class="label">Colours</div>
           <div class="colours"></div>
           <button class="more"><ha-icon icon="mdi:plus"></ha-icon><span>Add a colour</span></button>
+          <div class="label">Brightness</div>
+          <div class="row"><input class="all" type="range" min="1" max="100" step="1" aria-label="Brightness of every colour"><span class="value all-value"></span></div>
           <div class="drift">
             <div class="label">Drift between them</div>
-            <div class="row"><input type="range" min="1" max="60" step="1" aria-label="Minutes per step"><span class="value"></span></div>
+            <div class="row"><input type="range" min="0" max="${DRIFT_STEPS.length - 1}" step="1" aria-label="Minutes per step"><span class="value"></span></div>
           </div>
           <label class="try"><input type="checkbox">Try on the lights<span>· they leave their scene</span></label>
           <div class="error" role="alert"></div>
@@ -1891,12 +1944,25 @@
         this._value = { ...this._value, ...ev.detail.value };
         form.data = this._value;
       });
+      // The drift moves in steps (a scene's own pace stays until it's moved).
       const drift = $(".drift input");
-      drift.value = this._drift;
+      drift.value = nearestStep(this._drift);
       drift.addEventListener("input", () => {
-        this._drift = Number(drift.value);
+        this._drift = DRIFT_STEPS[Number(drift.value)];
         this._showValues();
       });
+      // Brightness scales every colour together, from how they were when
+      // the drag began, keeping the brightest at the slider's level.
+      const all = $(".all");
+      all.addEventListener("input", () => {
+        this._scaling = this._scaling || this._colours.map((c) => c.brightness);
+        const top = Math.max(...this._scaling);
+        this._colours.forEach((c, i) => {
+          c.brightness = Math.min(Math.max(Math.round((this._scaling[i] * Number(all.value)) / top), 1), 100);
+        });
+        this._rows();
+      });
+      all.addEventListener("change", () => { this._scaling = null; });
       onActivate($(".more"), () => {
         const last = this._colours[this._colours.length - 1];
         this._colours.push({ rgb: [...last.rgb], brightness: last.brightness });
@@ -1915,14 +1981,30 @@
         this._trying = ev.target.checked;
         this._try();
       });
-      onActivate($(".cancel"), () => this._dialog.close());
+      // Cancel, or Esc, asks first if anything's been changed.
+      onActivate($(".cancel"), () => {
+        if (this._mayDiscard()) this._dialog.close();
+      });
+      this._dialog.addEventListener("cancel", (ev) => {
+        if (!this._mayDiscard()) ev.preventDefault();
+      });
       onActivate($(".save"), () => this._save());
       this._dialog.addEventListener("close", () => {
         clearTimeout(this._trial);
         this.remove();
       });
       this._rows();
+      this._opened = this._snapshot();
       this._dialog.showModal();
+    }
+
+    _snapshot() {
+      return JSON.stringify([this._value.name, this._value.icon, this._colours, this._drift]);
+    }
+
+    // Whether the editor can close: nothing's changed, or they say so.
+    _mayDiscard() {
+      return this._snapshot() === this._opened || window.confirm("Discard your changes to this scene?");
     }
 
     // A row for each colour: its colour, its brightness and (with more than one) a cross.
@@ -1960,11 +2042,16 @@
       this._showValues();
     }
 
-    // The swatch, the brightnesses and the drift (only for more than one colour) as they are now.
+    // The swatch, the brightnesses (the scene's is its brightest colour's)
+    // and the drift (only for more than one colour) as they are now.
     _showValues() {
       const root = this.shadowRoot;
       for (const [name, value] of Object.entries(sceneLook(this._colours.map((c) => c.rgb)))) this._dialog.style.setProperty(name, value);
       root.querySelectorAll(".colours .value").forEach((el, i) => { el.textContent = `${this._colours[i].brightness}%`; });
+      const top = Math.max(...this._colours.map((c) => c.brightness));
+      const all = root.querySelector(".all");
+      if (!this._scaling) all.value = top;
+      root.querySelector(".all-value").textContent = `${this._scaling ? all.value : top}%`;
       root.querySelector(".drift").hidden = this._colours.length === 1;
       root.querySelector(".drift .value").textContent = `${this._drift} min`;
       this._try();

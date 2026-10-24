@@ -34,7 +34,8 @@ from homeassistant.util import color as color_util
 
 from .const import DOMAIN, SIGNAL_SHARED
 from .dimmers import is_dimmer
-from .engine import MAX_CUSTOM, TILE_SCENES, HueLite, async_get_loaded, custom_scene
+from .engine import HueLite, async_get_loaded
+from .shared import DEFAULT_ORDER, MAX_CUSTOM, TILE_SCENES, custom_scene, scene_set
 from .lights import rgb_color
 from .targets import LIGHT
 from .timeline import PALETTES, PRESETS, kelvin_for, palette_from_stored
@@ -46,14 +47,18 @@ URL = f"/{DOMAIN}/hue-lite.js"
 DATA_URL = f"{DOMAIN}_dashboard_url"
 
 # Each preset's and colour scene's colours as a colour bulb reports them, for
-# their tiles, and their brightness, for a copy made in the scene editor.
+# their tiles, and their brightness (and a colour scene's pace), for a copy made in the scene editor.
 SCENE_COLOURS = {
     **{
         preset: {"rgb_colors": [rgb_color(light.xy_color)], "brightness": [round(light.brightness_pct)]}
         for preset, light in PRESETS.items()
     },
     **{
-        scene: {"rgb_colors": [rgb_color((x, y)) for x, y, _ in palette.colours], "brightness": [round(b) for _, _, b in palette.colours]}
+        scene: {
+            "rgb_colors": [rgb_color((x, y)) for x, y, _ in palette.colours],
+            "brightness": [round(b) for _, _, b in palette.colours],
+            "drift_minutes": palette.drift_minutes,
+        }
         for scene, palette in PALETTES.items()
     },
 }
@@ -138,6 +143,8 @@ def _config(hue_lite: HueLite) -> dict[str, Any]:
         ],
         "entities": hue_lite.entity_ids,
         "presets": SCENE_COLOURS,
+        # The built-in scenes' usual order.
+        "scenes": DEFAULT_ORDER,
         "dimmers": [
             {"id": device.id, "name": device.name_by_user or device.name or "Hue dimmer", "area_id": device.area_id}
             for device in devices.devices
@@ -215,7 +222,7 @@ def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveCo
     if msg["scenes"] is not None and msg["key"] not in hue_lite.layouts and len(hue_lite.layouts) >= MAX_LAYOUTS:
         connection.send_error(msg["id"], "too_many", "Too many rooms and lights with their own scenes")
         return
-    hue_lite.set_layout(msg["key"], msg["scenes"])
+    hue_lite.set_layout(msg["key"], scene_set(msg["scenes"], hue_lite.tile_scenes()))
     connection.send_result(msg["id"])
 
 
@@ -243,6 +250,8 @@ def websocket_set_dimmer(hass: HomeAssistant, connection: websocket_api.ActiveCo
     if lights := msg.get("lights"):
         lights = [light for light in lights if light.startswith(f"{LIGHT}.")]
     changes = {key: msg[key] for key in ("lights", "scenes") if key in msg}
+    if changes.get("scenes"):
+        changes["scenes"] = scene_set(changes["scenes"], hue_lite.tile_scenes())
     if "lights" in changes:
         changes["lights"] = lights or None
     hue_lite.set_dimmer(device.id, **changes)
@@ -282,7 +291,7 @@ def _colours(msg: dict[str, Any]) -> dict[str, list]:
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/save_scene",
-        vol.Optional("scene"): str,
+        vol.Optional("scene"): vol.All(str, vol.Length(1, 64)),
         vol.Required("name"): vol.All(str, vol.Length(1, 30)),
         vol.Required("icon"): vol.All(str, vol.Length(max=64)),
         **COLOURS,
@@ -305,6 +314,13 @@ def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveCo
     scene_id = msg.get("scene")
     if scene_id is not None and scene_id not in hue_lite.custom:
         connection.send_error(msg["id"], "not_found", "That isn't one of your scenes")
+        return
+    user = connection.user
+    if scene_id is not None and not user.is_admin and any(
+        not user.permissions.check_entity(light, POLICY_CONTROL) for light in hue_lite.in_scene(scene_id)
+    ):
+        # Changing it would change lights they may not control.
+        connection.send_error(msg["id"], "unauthorized", "That scene is on lights you can't control")
         return
     if scene_id is None and len(hue_lite.custom) >= MAX_CUSTOM:
         connection.send_error(msg["id"], "too_many", "Too many scenes of your own")
@@ -345,7 +361,7 @@ def websocket_preview_scene(hass: HomeAssistant, connection: websocket_api.Activ
     connection.send_result(msg["id"])
 
 
-@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/delete_scene", vol.Required("scene"): str})
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/delete_scene", vol.Required("scene"): vol.All(str, vol.Length(1, 64))})
 @_with_hue_lite
 def websocket_delete_scene(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
     """Delete one of your own scenes (the built-in ones can't be). Anyone can."""

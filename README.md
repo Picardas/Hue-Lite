@@ -126,7 +126,7 @@ order:
 - Slide to dim a single light; it stays in its scene at that level. Whole
   home and label groups have no slider: one brightness for lights in
   different scenes would flatten them.
-- **Auto** is at the end of the bar.
+- **Auto** is at the end of the bar. Whole home's shows on only when every light is on Auto.
 - Tap the name to show or hide the scenes.
 
 Icons and sliders take the colour the bulbs report. Each scene tile shows the
@@ -138,6 +138,8 @@ scene.
 - Hide scenes with their eye.
 - Make your own scene with the **+** tile at the end, or change one with its
   pencil. The pencil on a built-in scene starts a copy of it.
+- **Reset** puts the built-in scenes back in their usual order, all shown;
+  your own stay as they are.
 
 Hue-Lite keeps these, so every phone and browser shows the same.
 
@@ -145,6 +147,7 @@ Hue-Lite keeps these, so every phone and browser shows the same.
 - Give one a name, an icon and one to eight colours, each with its
   brightness. One colour makes a static scene. More make a dynamic one,
   which drifts between them every 1 to 60 minutes (3 by default).
+- **Brightness** dims or brightens every colour together.
 - White bulbs get the first colour's nearest white.
 - **Try on the lights** shows the colours on that block's lights as you pick
   them. They leave their scene while you do; Save puts them in the new one.

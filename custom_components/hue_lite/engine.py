@@ -21,14 +21,13 @@ off Auto; turning it on or off doesn't.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Coroutine, Mapping
 from datetime import date, datetime, time
-import secrets
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import (
-    ATTR_AREA_ID,
     ATTR_ENTITY_ID,
     ATTR_LABEL_ID,
     STATE_OFF,
@@ -45,7 +44,6 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
-from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import TrackStates, async_track_state_change_event, async_track_state_change_filtered, async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
@@ -64,15 +62,15 @@ from .const import (
     NATURAL,
     ROLES,
     ROUTINE,
-    SIGNAL_SHARED,
     STORAGE_KEY,
     STORAGE_VERSION,
     TIMES,
     WAKE_UP,
     label_option,
 )
-from .lights import Sender, rgb_color
+from .lights import Sender
 from .routines import Routines
+from .shared import CUSTOM_PREFIX, MAX_CUSTOM, TILE_SCENES, SharedSettings, custom_scene, renamed, scene_set, stored_dimmer
 from .targets import LIGHT, excluded, resolve
 from .timeline import (
     PALETTES,
@@ -93,76 +91,8 @@ from .timeline import (
 
 type HueLiteConfigEntry = ConfigEntry[HueLite]
 
-# Every scene a light can be in, and the ones with a tile on the dashboard.
-TILE_SCENES = frozenset({NATURAL, *PRESETS, *PALETTES})
+# Every scene a light can be in.
 SCENES = TILE_SCENES | {ROUTINE, WAKE_UP}
-
-# A dimmer's scenes until they're set ({order, hidden}, as the dashboard
-# edits them): Natural light and the presets, as Hue's On button cycles.
-DIMMER_DEFAULT = {"order": [*SCENE_CYCLE, *PALETTES], "hidden": list(PALETTES)}
-
-# Your own scenes: their ids start with this, and there are at most this many.
-CUSTOM_PREFIX = "custom_"
-MAX_CUSTOM = 50
-
-# The built-in tiles' usual order, as the dashboard shows them (sceneTiles).
-DEFAULT_ORDER = [*PRESETS, NATURAL, *PALETTES]
-
-# Scenes that have been renamed, by their old ids: saved data and actions
-# using an old id get the new one.
-RENAMED = {"movie": "nebula", "moonlit": "moonlight"}
-
-
-def _renamed(scene: Any) -> Any:
-    return RENAMED.get(scene, scene) if isinstance(scene, str) else scene
-
-
-def _setup(value: Any, tiles: frozenset[str] | set[str] = TILE_SCENES) -> dict[str, list[str]] | None:
-    """A stored set of scenes ({order, hidden}), or None if it isn't one;
-    renamed scenes get their new ids, and scenes not among `tiles` are left
-    out."""
-    if not isinstance(value, dict):
-        return None
-
-    def ids(key: str) -> list[str]:
-        found = value.get(key)
-        return [s for s in map(_renamed, found) if s in tiles] if isinstance(found, list) else []
-
-    return {"order": ids("order"), "hidden": ids("hidden")}
-
-
-def custom_scene(value: Any) -> dict[str, Any] | None:
-    """One of your own scenes, checked, or None if it isn't one: a name, an
-    icon, 1-8 colours as [x, y, brightness %] (one: static), `white` as
-    [brightness %, kelvin] for bulbs without colour, and minutes per drift."""
-    if not isinstance(value, dict):
-        return None
-    name, icon, colours, white = value.get("name"), value.get("icon"), value.get("colours"), value.get("white")
-    drift = value.get("drift_minutes", 3)
-
-    def number(x: Any, low: float, high: float) -> bool:
-        return type(x) in (int, float) and low <= x <= high
-
-    def colour(c: Any) -> bool:
-        return isinstance(c, list) and len(c) == 3 and number(c[0], 0, 1) and number(c[1], 0, 1) and number(c[2], 1, 100)
-
-    if not (
-        isinstance(name, str)
-        and 1 <= len(name.strip()) <= 30
-        and isinstance(icon, str)
-        and len(icon) <= 64
-        and isinstance(colours, list)
-        and 1 <= len(colours) <= 8
-        and all(colour(c) for c in colours)
-        and isinstance(white, list)
-        and len(white) == 2
-        and number(white[0], 1, 100)
-        and number(white[1], 2000, 6500)
-        and type(drift) is int
-        and 1 <= drift <= 60
-    ):
-        return None
-    return {"name": name.strip(), "icon": icon, "colours": colours, "white": white, "drift_minutes": drift}
 
 
 @callback
@@ -216,7 +146,7 @@ def _stored(data: Any) -> dict[str, Any]:
         "scenes": {
             light: scene
             for light, was in scenes.items()
-            if isinstance(was, str) and ((scene := _renamed(was)) in SCENES or scene in custom)
+            if isinstance(was, str) and ((scene := renamed(was)) in SCENES or scene in custom)
         },
         "custom_scenes": custom,
         "auto": [light for light in auto if isinstance(light, str)],
@@ -228,32 +158,14 @@ def _stored(data: Any) -> dict[str, Any]:
         },
         "last_wake_up": _instant(data.get("last_wake_up")),
         "dashboard_added": data.get("dashboard_added") is True,
-        "layouts": {key: setup for key, value in layouts.items() if (setup := _setup(value, tiles))},
+        "layouts": {key: setup for key, value in layouts.items() if (setup := scene_set(value, tiles))},
         "dimmers": {
             device: found
             for device, value in dimmer_settings.items()
-            if isinstance(value, dict) and (found := _dimmer(value, tiles))
+            if isinstance(value, dict) and (found := stored_dimmer(value, tiles))
         },
     }
 
-
-def _showing(setup: dict[str, list[str]], scene_id: str) -> dict[str, list[str]]:
-    """A set of scenes ({order, hidden}) with `scene_id` shown, at the end."""
-    return {
-        "order": [*(s for s in setup["order"] if s != scene_id), scene_id],
-        "hidden": [s for s in setup["hidden"] if s != scene_id],
-    }
-
-
-def _dimmer(value: dict[str, Any], tiles: frozenset[str] | set[str]) -> dict[str, Any]:
-    """A stored dimmer's settings: the lights it controls and its scenes,
-    whichever are set."""
-    found: dict[str, Any] = {}
-    if isinstance(lights := value.get("lights"), list) and (lights := [x for x in lights if isinstance(x, str)]):
-        found["lights"] = lights
-    if setup := _setup(value.get("scenes"), tiles):
-        found["scenes"] = setup
-    return found
 
 
 def _instant(value: Any) -> datetime | None:
@@ -265,7 +177,7 @@ def _instant(value: Any) -> datetime | None:
     return when if when and when.tzinfo else None
 
 
-class HueLite:
+class HueLite(SharedSettings):
     """Runs one Hue-Lite config entry."""
 
     natural: Target
@@ -325,6 +237,8 @@ class HueLite:
         # Lights that were off when their scene changed: they get it as it
         # is now when they're next switched on.
         self._stale: set[str] = set()
+        # Lights that have just come back on, to be sent their scenes' lights.
+        self._picking_up: set[str] = set()
 
     # ---- Lifecycle -----------------------------------------------------------
 
@@ -511,116 +425,6 @@ class HueLite:
             self.auto.difference_update(lights)
         return len(self.auto) != before
 
-    # ---- Shared dashboard settings -------------------------------------------
-
-    def shared(self) -> dict[str, Any]:
-        """What every dashboard shares: the rooms' and lights' scenes, the
-        dimmers' settings, a dimmer's scenes until they're set, and your own
-        scenes (with the colours a colour bulb reports for them)."""
-        return {
-            "layouts": self.layouts,
-            "dimmers": self.dimmer_settings,
-            "dimmer_default": DIMMER_DEFAULT,
-            "custom": {
-                scene_id: {**scene, "rgb_colors": [rgb_color((x, y)) for x, y, _ in scene["colours"]]}
-                for scene_id, scene in self.custom.items()
-            },
-        }
-
-    @callback
-    def save_custom_scene(self, scene_id: str | None, scene: dict[str, Any], show: Mapping[str, list[str]] | None = None) -> str:
-        """Add one of your own scenes (no id; its new id is returned) or
-        change one (its lights that are on get it straight away, the others
-        when they're next switched on). A new one is shown in the rooms' and
-        lights' scenes and dimmers in `show` (where it was made), and hidden
-        elsewhere until shown there."""
-        new = scene_id is None
-        if new:
-            scene_id = f"{CUSTOM_PREFIX}{secrets.token_hex(3)}"
-            while scene_id in self.custom:
-                scene_id = f"{CUSTOM_PREFIX}{secrets.token_hex(3)}"
-        self.custom[scene_id] = scene
-        self._custom_changed()
-        if new:
-            for key in (show or {}).get("layouts", []):
-                self.layouts[key] = _showing(self.layouts.get(key, {"order": DEFAULT_ORDER, "hidden": []}), scene_id)
-            for device_id in (show or {}).get("dimmers", []):
-                settings = self.dimmer_settings.setdefault(device_id, {})
-                settings["scenes"] = _showing(settings.get("scenes", DIMMER_DEFAULT), scene_id)
-        else:
-            lights = self.in_scene(scene_id)
-            on = self.on(lights)
-            self._stale.update(light for light in lights if light not in on)
-            if on:
-                self.spawn(self.send_palette(scene_id, on, 2))
-        self._shared_changed()
-        return scene_id
-
-    @callback
-    def delete_custom_scene(self, scene_id: str) -> None:
-        """Delete one of your own scenes: its lights leave it (staying as they
-        are), and the rooms, lights and dimmers forget it."""
-        del self.custom[scene_id]
-        self._custom_changed()
-        self.set_scene(self.in_scene(scene_id), "")
-        for setup in [*self.layouts.values(), *(s["scenes"] for s in self.dimmer_settings.values() if "scenes" in s)]:
-            for key in ("order", "hidden"):
-                setup[key] = [s for s in setup[key] if s != scene_id]
-        self._shared_changed()
-
-    @callback
-    def set_layout(self, key: str, scenes: dict[str, list[str]] | None) -> None:
-        """Set a room's or light's scenes ({order, hidden}), or with None go
-        back to its default."""
-        if scenes is None:
-            self.layouts.pop(key, None)
-        else:
-            self.layouts[key] = scenes
-        self._shared_changed()
-
-    @callback
-    def set_dimmer(self, device_id: str, **changes: Any) -> None:
-        """Change a dimmer's `lights` (the ones it controls instead of its
-        area) or `scenes` ({order, hidden}); None, or no lights, goes back to
-        the default."""
-        settings = {**self.dimmer_settings.get(device_id, {}), **changes}
-        settings = {key: value for key, value in settings.items() if value}
-        if settings:
-            self.dimmer_settings[device_id] = settings
-        else:
-            self.dimmer_settings.pop(device_id, None)
-        self._shared_changed()
-
-    @callback
-    def claim_dashboard(self, release: bool = False) -> bool:
-        """Whether this dashboard should add the Lights dashboard: true for
-        the first to ask (so two open at once don't both add it), if the
-        option's on and it hasn't been added. `release` gives it back, when
-        adding it failed."""
-        if release:
-            claimed, self.dashboard_added = False, False
-        else:
-            claimed = self.use_dashboard and not self.dashboard_added
-            self.dashboard_added = self.dashboard_added or claimed
-        self.save()
-        return claimed
-
-    @callback
-    def _shared_changed(self) -> None:
-        self.save()
-        async_dispatcher_send(self.hass, SIGNAL_SHARED)
-
-    def dimmer_lights(self, device: dr.DeviceEntry) -> list[str]:
-        """The lights a dimmer controls: the ones chosen for it, or its area's."""
-        if chosen := self.dimmer_settings.get(device.id, {}).get("lights"):
-            return self.lights({ATTR_ENTITY_ID: chosen})
-        return self.lights({ATTR_AREA_ID: [device.area_id]}) if device.area_id else []
-
-    def dimmer_cycle(self, device_id: str) -> list[str]:
-        """The scenes a dimmer's On button steps through, in order."""
-        scenes = self.dimmer_settings.get(device_id, {}).get("scenes", DIMMER_DEFAULT)
-        return [scene for scene in scenes["order"] if scene not in scenes["hidden"]]
-
     # ---- Scenes --------------------------------------------------------------
 
     def is_scene(self, scene: str) -> bool:
@@ -631,14 +435,10 @@ class HueLite:
         """A scene's id from its id or, for one of your own, its name (either
         ignoring case and spaces at either end; an id comes first), or
         `scene` as it is when there's no such scene."""
-        name = _renamed(scene.strip().casefold())
+        name = renamed(scene.strip().casefold())
         if self.is_scene(name):
             return name
         return next((scene_id for scene_id, s in self.custom.items() if s["name"].casefold() == name), scene)
-
-    def tile_scenes(self) -> set[str]:
-        """Every scene with a tile: the built-in ones and your own."""
-        return TILE_SCENES | self.custom.keys()
 
     @callback
     def _custom_changed(self) -> None:
@@ -736,13 +536,8 @@ class HueLite:
         """Send Natural light's or the routine's current light to the lights,
         turning them on. Nightlight-labelled lights get Nightlight during
         Natural light's night and the routine's nightlight phase."""
-        nightlights = self._nightlights(scene)
-        await self._send(
-            [light for light in lights if light in nightlights], PRESETS["nightlight"], transition, parent
-        )
-        await self._send(
-            [light for light in lights if light not in nightlights], self.target(scene).light, transition, parent
-        )
+        for wanted, group in self._wanted(lights, scene).items():
+            await self._send(group, wanted, transition, parent)
 
     def _nightlights(self, scene: str) -> set[str]:
         """The lights Natural light or the routine gives Nightlight now: the
@@ -791,16 +586,33 @@ class HueLite:
     def _scene_light(self, light: str) -> Light | None:
         """The light a light's scene wants for it now, before dimming; None
         when it's in none (or in wake up, which is fading it already)."""
-        scene = self.scenes.get(light, "")
-        if scene in PRESETS:
-            return PRESETS[scene]
-        if palette := self.palettes.get(scene):
-            if not self.sender.has_colour(light):
-                return palette.white
-            return palette.colour(self._palette_order(scene).index(light) + self._drift_step(palette))
-        if scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES):
-            return PRESETS["nightlight"] if light in self._nightlights(scene) else self.target(scene).light
-        return None
+        return next(iter(self._wanted([light])), None)
+
+    def _wanted(self, lights: list[str], scene: str | None = None) -> dict[Light, list[str]]:
+        """The lights their scenes (or Natural light's or the routine's, as
+        `scene`) want for them now, before dimming, each with its lights.
+        Lights in none, or in wake up (which is fading them already), are
+        left out."""
+        groups: dict[Light, list[str]] = {}
+        nightlights: dict[str, set[str]] = {}
+        for light in lights:
+            current = scene or self.scenes.get(light, "")
+            if current in PRESETS:
+                wanted = PRESETS[current]
+            elif palette := self.palettes.get(current):
+                wanted = (
+                    palette.colour(self._palette_order(current).index(light) + self._drift_step(palette))
+                    if self.sender.has_colour(light)
+                    else palette.white
+                )
+            elif current == NATURAL or (current == ROUTINE and self.evening.phase in EVENING_PHASES):
+                if current not in nightlights:
+                    nightlights[current] = self._nightlights(current)
+                wanted = PRESETS["nightlight"] if light in nightlights[current] else self.target(current).light
+            else:
+                continue
+            groups.setdefault(wanted, []).append(light)
+        return groups
 
     def _undim(self, lights: list[str]) -> None:
         """Lights picked for a scene again get its full brightness."""
@@ -915,8 +727,21 @@ class HueLite:
         elif old.state != STATE_ON:
             stale = light in self._stale or old.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
             self._stale.discard(light)
-            if (stale or scene in (NATURAL, ROUTINE)) and (wanted := self._scene_light(light)) is not None:
-                self.spawn(self._send([light], wanted, 2))
+            if stale or scene in (NATURAL, ROUTINE):
+                # Lights coming back together (after a restart, a power cut)
+                # are picked up together.
+                first = not self._picking_up
+                self._picking_up.add(light)
+                if first:
+                    self.spawn(self._pick_up())
+
+    async def _pick_up(self) -> None:
+        """Send lights that have come back on their scenes' lights, a command
+        for each light wanted rather than each bulb."""
+        await asyncio.sleep(0)  # others coming back at the same moment join in
+        lights, self._picking_up = sorted(self._picking_up), set()
+        for wanted, group in self._wanted(lights).items():
+            await self._send(group, wanted, 2)
 
     def _own_brightness(self, new: State) -> bool:
         """Whether a light was switched on at a brightness other than the one
@@ -968,24 +793,6 @@ class HueLite:
                 self._rename_in_dimmers(old, light)
                 self._rename_in_layouts(old, light)
             self._release_excluded()
-
-    def _rename_in_dimmers(self, old: str, new: str | None) -> None:
-        """A light chosen for a dimmer has a new entity id, or with None is
-        deleted (a dimmer left with none controls its area again)."""
-        for device_id, settings in list(self.dimmer_settings.items()):
-            if old in (lights := settings.get("lights", [])):
-                renamed = [new if light == old else light for light in lights]
-                self.set_dimmer(device_id, lights=[light for light in renamed if light])
-
-    def _rename_in_layouts(self, old: str, new: str | None) -> None:
-        """A light shown on its own (in a room with several, whose scenes are
-        kept as `area|light`) has a new entity id, or with None is deleted."""
-        if keys := [key for key in self.layouts if key.endswith(f"|{old}")]:
-            for key in keys:
-                setup = self.layouts.pop(key)
-                if new:
-                    self.layouts[f"{key.rpartition('|')[0]}|{new}"] = setup
-            self._shared_changed()
 
     @callback
     def _device_registry_updated(self, event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:

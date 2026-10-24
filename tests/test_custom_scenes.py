@@ -15,7 +15,8 @@ from homeassistant.exceptions import ServiceValidationError
 
 from custom_components.hue_lite import dashboard
 from custom_components.hue_lite.const import DOMAIN, STORAGE_KEY
-from custom_components.hue_lite.engine import DEFAULT_ORDER, DIMMER_DEFAULT, HueLite
+from custom_components.hue_lite.engine import HueLite
+from custom_components.hue_lite.shared import DEFAULT_ORDER, DIMMER_DEFAULT
 from custom_components.hue_lite.timeline import kelvin_for
 
 from .conftest import Home, action, add_device, add_light, on, set_up, settle, tick, ws
@@ -121,6 +122,13 @@ async def test_making_changing_and_deleting_scenes(
     hass.states.async_set("light.bedroom", "on")
     await settle(hass)
     assert [c.data["brightness_pct"] for c in home.turn_on] == [20, 20]
+
+    # Someone who may not control its lights can't change it (that would
+    # change those lights), and an icon has to be an icon.
+    may_not = Mock(user=Mock(is_admin=False, permissions=Mock(check_entity=Mock(return_value=False))), subscriptions={})
+    change = {"type": f"{DOMAIN}/save_scene", "scene": sea, "name": "Mine", "icon": "", "colours": [{"rgb": [1, 2, 3], "brightness": 5}]}
+    assert ws(hass, dashboard.websocket_save_scene, change, connection=may_not).send_error.call_args.args[1] == "unauthorized"
+    assert save(name="Odd", icon="<b>", colours=[{"rgb": [1, 2, 3], "brightness": 5}]).send_error.call_args.args[1] == "invalid"
 
     # The built-in scenes can't be changed or deleted, and there's a limit.
     assert save(scene="relax", name="Mine", colours=[{"rgb": [1, 2, 3], "brightness": 5}]).send_error.call_args.args[1] == "not_found"

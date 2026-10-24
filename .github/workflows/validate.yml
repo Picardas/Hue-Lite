@@ -40,5 +40,8 @@ jobs:
           # Most of the job is installing Home Assistant: keep its downloads.
           cache: pip
           cache-dependency-path: requirements_test.txt
+      # The dashboard script has no tests of its own: at least it must parse
+      # (Node comes with the runner).
+      - run: node --check custom_components/hue_lite/frontend/hue-lite.js
       - run: pip install -r requirements_test.txt
       - run: pytest

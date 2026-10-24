@@ -1,0 +1,296 @@
+<!doctype html>
+<!--
+  Screenshots for the README: the dashboard script with a mock hass (as in
+  tests/harness), real Material Design icons (from jsDelivr) and Home
+  Assistant's card look. ?view=desktop|phone|edit|dimmers|routines, &phone for a
+  phone's width, &dark for the dark theme. AGENTS.md says how to take them.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hue-Lite screenshots</title>
+  <style>
+    html, body { margin: 0; }
+    body { font-family: Roboto, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+           background: var(--primary-background-color);
+           --primary-background-color: #fafafa; --card-background-color: #fff; --divider-color: #e0e0e0;
+           --primary-text-color: #212121; --secondary-text-color: #727272; --rgb-primary-text-color: 33, 33, 33;
+           --primary-color: #03a9f4; --rgb-primary-color: 3, 169, 244; --state-inactive-color: #757575; }
+    body.dark { --primary-background-color: #111111; --card-background-color: #1c1c1c; --divider-color: rgba(225, 225, 225, 0.12);
+                --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b; --rgb-primary-text-color: 225, 225, 225;
+                --state-inactive-color: #8a8a8a; }
+    header { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 16px; font-size: 20px; font-weight: 400;
+             color: var(--primary-text-color); }
+    header .menu { --mdc-icon-size: 24px; color: var(--secondary-text-color); }
+    main { padding: 8px 16px 24px; }
+    .sections { display: grid; grid-template-columns: repeat(var(--columns), minmax(0, 1fr)); gap: 24px 16px; align-items: start;
+                max-width: calc(var(--columns) * 500px); margin: 0 auto; }
+    .section { display: grid; gap: 8px; }
+    .span-2 { grid-column: span min(2, var(--columns)); }
+    .span-3 { grid-column: 1 / -1; }
+    /* Home Assistant's built-in cards, as stand-ins. */
+    .heading { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; font-size: 14px; font-weight: 500;
+               color: var(--secondary-text-color); --mdc-icon-size: 18px; }
+    .rows { padding: 8px 16px; display: grid; gap: 4px; }
+    .row { display: flex; align-items: center; gap: 16px; min-height: 40px; color: var(--primary-text-color); font-size: 14px; }
+    .row .name { flex: 1; }
+    .toggle { width: 34px; height: 14px; border-radius: 7px; background: rgba(var(--rgb-primary-text-color), 0.3); position: relative; }
+    .toggle::after { content: ""; position: absolute; top: -3px; left: -2px; width: 20px; height: 20px; border-radius: 50%;
+                     background: #fafafa; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); }
+    .toggle.on { background: rgba(var(--rgb-primary-color), 0.5); }
+    .toggle.on::after { left: 16px; background: var(--primary-color); }
+  </style>
+  <script>
+    window.errors = [];
+    addEventListener("error", (e) => window.errors.push(`${e.message} @${e.lineno}`));
+    addEventListener("unhandledrejection", (e) => window.errors.push(String(e.reason)));
+    const styled = (css) => class extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: "open" }).innerHTML = `<style>:host { ${css} }</style><slot></slot>`;
+      }
+    };
+    customElements.define("ha-card", styled(`display: block; background: var(--card-background-color); border-radius: 12px;
+      border: 1px solid var(--divider-color); box-sizing: border-box;`));
+    // ha-icon is defined once the icons have loaded (see below); the elements already there upgrade then.
+    window.iconsLoaded = new Promise((resolve) => { window.iconsReady = resolve; });
+    window.missingIcons = new Set();
+  </script>
+  <script type="module">
+    import * as mdi from "https://cdn.jsdelivr.net/npm/@mdi/js@7.4.47/+esm";
+    const pathOf = (icon) => mdi[`mdi${(icon || "").replace("mdi:", "").split("-").map((w) => w[0]?.toUpperCase() + w.slice(1)).join("")}`];
+    customElements.define("ha-icon", class extends HTMLElement {
+      static get observedAttributes() { return ["icon"]; }
+      constructor() {
+        super();
+        this.attachShadow({ mode: "open" }).innerHTML = `<style>
+          :host { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+                  width: var(--mdc-icon-size, 24px); height: var(--mdc-icon-size, 24px); }
+          svg { width: 100%; height: 100%; fill: currentColor; }</style><svg viewBox="0 0 24 24"><path></path></svg>`;
+      }
+      attributeChangedCallback() {
+        const icon = this.getAttribute("icon");
+        const d = pathOf(icon);
+        if (icon && !d) window.missingIcons.add(icon);
+        this.shadowRoot.querySelector("path").setAttribute("d", d || "");
+      }
+    });
+    window.iconsReady();
+  </script>
+  <script src="../../custom_components/hue_lite/frontend/hue-lite.js"></script>
+</head>
+<body>
+  <header><ha-icon class="menu" icon="mdi:menu"></ha-icon><span>Lights</span></header>
+  <main><div class="sections"></div></main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const view = params.get("view") || "desktop";
+    if (params.has("dark")) document.body.classList.add("dark");
+    // Headless windows are at least ~500px wide: lay a phone out at 390px and zoom it to fit.
+    if (params.has("phone")) document.documentElement.style.zoom = String(innerWidth / 390);
+    document.querySelector(".sections").style.setProperty("--columns", view === "desktop" ? 3 : 1);
+
+    const light = (id, name, state, attributes = {}) => ({ entity_id: id, state, attributes: { friendly_name: name, ...attributes } });
+    const lit = (brightness, rgb) => ({ brightness, color_mode: "xy", rgb_color: rgb, supported_color_modes: ["xy", "color_temp"] });
+    const natural = [255, 176, 68];  // Natural light in its evening, Relax to Rest
+
+    const states = Object.fromEntries([
+      light("light.living_room", "Ceiling", "on", lit(143, [255, 189, 86])),
+      light("light.floor_lamp", "Floor lamp", "on", lit(120, natural)),
+      light("light.kitchen", "Kitchen", "on", lit(178, [255, 167, 90])),
+      light("light.bedroom", "Bedroom", "off"),
+      light("light.office", "Office", "on", lit(51, [151, 80, 255])),
+      light("light.hall", "Hall", "off"),
+      light("light.lamp", "Reading lamp", "on", lit(255, [255, 211, 130])),
+      { entity_id: "switch.hue_lite_wake_up_on_weekdays", state: "on", attributes: {} },
+      { entity_id: "time.hue_lite_wake_up_mon_fri", state: "06:45:00", attributes: {} },
+      { entity_id: "switch.hue_lite_wake_up_on_weekends", state: "off", attributes: {} },
+      { entity_id: "time.hue_lite_wake_up_sat_sun", state: "09:00:00", attributes: {} },
+      { entity_id: "switch.hue_lite_evening_routine_sun_thu_nights", state: "on", attributes: {} },
+      { entity_id: "time.hue_lite_bedtime_sun_thu_nights", state: "23:00:00", attributes: {} },
+      { entity_id: "switch.hue_lite_evening_routine_fri_sat_nights", state: "on", attributes: {} },
+      { entity_id: "time.hue_lite_bedtime_fri_sat_nights", state: "00:30:00", attributes: {} },
+      { entity_id: "sensor.hue_lite_evening_routine", state: "evening", attributes: { summary: "On 16:30 · off 23:00" } },
+      { entity_id: "sensor.hue_lite_natural_light", state: "evening", attributes: { rgb_color: natural } },
+      { entity_id: "switch.hue_lite_coming_home", state: "on", attributes: {} },
+      { entity_id: "switch.hue_lite_coming_home_only_after_dark", state: "on", attributes: {} },
+      { entity_id: "switch.hue_lite_lights_off_when_everyone_leaves", state: "on", attributes: {} },
+      { entity_id: "switch.hue_lite_mimic_presence", state: "on", attributes: {} },
+      {
+        entity_id: "sensor.hue_lite_light_scenes", state: "5",
+        attributes: {
+          scenes: { "light.office": "nebula", "light.kitchen": "golden_hour", "light.living_room": "routine", "light.floor_lamp": "natural", "light.lamp": "read" },
+          auto: ["light.living_room"],
+        },
+      },
+    ].map((s) => [s.entity_id, s]));
+
+    const entities = {
+      "light.living_room": { entity_id: "light.living_room", area_id: "living_room", labels: ["evening", "coming_home"] },
+      "light.floor_lamp": { entity_id: "light.floor_lamp", area_id: "living_room", labels: ["evening"] },
+      "light.kitchen": { entity_id: "light.kitchen", area_id: "kitchen", labels: ["coming_home"] },
+      "light.bedroom": { entity_id: "light.bedroom", area_id: "bedroom", labels: ["evening", "wake_up", "nightlight"] },
+      "light.office": { entity_id: "light.office", area_id: "office", labels: [] },
+      "light.hall": { entity_id: "light.hall", area_id: "hall", labels: ["first_one_home"] },
+      "light.lamp": { entity_id: "light.lamp", area_id: "living_room", labels: ["lamps"], hidden: true },
+    };
+
+    const setup = {
+      roles: { evening: "evening", wake_up: "wake_up", nightlight: "nightlight", coming_home: "coming_home", first_home: "first_one_home", exclude: "lighting_exclude" },
+      labels: [{ label_id: "evening", name: "Evening", icon: "mdi:weather-sunset" }],
+      entities: {
+        light_scenes: "sensor.hue_lite_light_scenes", natural_light: "sensor.hue_lite_natural_light", evening_routine: "sensor.hue_lite_evening_routine",
+        evening_weeknights: "switch.hue_lite_evening_routine_sun_thu_nights", evening_weekends: "switch.hue_lite_evening_routine_fri_sat_nights",
+        bedtime_weeknight: "time.hue_lite_bedtime_sun_thu_nights", bedtime_weekend: "time.hue_lite_bedtime_fri_sat_nights",
+        wake_up_weekdays: "switch.hue_lite_wake_up_on_weekdays", wake_up_weekday: "time.hue_lite_wake_up_mon_fri",
+        wake_up_weekends: "switch.hue_lite_wake_up_on_weekends", wake_up_weekend: "time.hue_lite_wake_up_sat_sun",
+        coming_home_enabled: "switch.hue_lite_coming_home", coming_home_only_dark: "switch.hue_lite_coming_home_only_after_dark",
+        leaving_home_enabled: "switch.hue_lite_lights_off_when_everyone_leaves",
+        mimic_presence: "switch.hue_lite_mimic_presence",
+      },
+      // As Hue-Lite works them out (dashboard.SCENE_COLOURS).
+      presets: {
+        energize: { rgb_colors: [[246, 255, 254]] },
+        cool_bright: { rgb_colors: [[255, 236, 186]] },
+        read: { rgb_colors: [[255, 211, 130]] },
+        relax: { rgb_colors: [[255, 189, 86]] },
+        rest: { rgb_colors: [[255, 161, 40]] },
+        nightlight: { rgb_colors: [[255, 71, 22]] },
+        golden_hour: { rgb_colors: [[255, 195, 54], [255, 161, 53], [255, 127, 42], [255, 127, 100], [255, 183, 111]] },
+        nebula: { rgb_colors: [[80, 59, 255], [103, 130, 255], [153, 59, 255], [233, 87, 255], [255, 85, 200]] },
+        aurora: { rgb_colors: [[45, 255, 93], [61, 255, 192], [84, 241, 255], [166, 87, 255], [159, 255, 84]] },
+        ember: { rgb_colors: [[255, 60, 11], [255, 66, 63], [255, 109, 31], [255, 139, 39], [255, 165, 53]] },
+        forest: { rgb_colors: [[77, 255, 102], [129, 255, 83], [177, 255, 97], [215, 255, 78], [255, 225, 82]] },
+        moonlight: { rgb_colors: [[255, 206, 118], [255, 249, 219], [193, 213, 255], [255, 180, 186], [209, 170, 255]] },
+      },
+      dimmers: [{ id: "dimmer_living", name: "Living room dimmer", area_id: "living_room" }, { id: "dimmer_bedroom", name: "Bedside dimmer", area_id: "bedroom" }],
+      add_dashboard: false,
+    };
+
+    const all = ["kitchen", "living_room|light.floor_lamp", "living_room|light.living_room", "bedroom", "office", "hall"];
+    const open = { desktop: ["kitchen", "living_room|light.floor_lamp"], phone: ["office"], edit: ["kitchen"], dimmers: [], routines: [] }[view];
+    const userData = {
+      hue_lite_home: { order: [], collapsed: view === "desktop" ? [] : ["home"] },
+      hue_lite_rooms: { order: [...open, ...all.filter((id) => !open.includes(id))], collapsed: all.filter((id) => !open.includes(id)) },
+      hue_lite_routines: { order: [], collapsed: view === "routines" ? [] : ["wake_up", "evening", "coming_going"] },
+      hue_lite_dimmers: { order: [], collapsed: ["dimmer_bedroom"] },
+    };
+    const sharedData = {
+      layouts: { kitchen: { order: ["golden_hour", "relax", "natural", "read", "energize", "cool_bright", "rest", "nightlight", "ember", "nebula", "aurora", "forest", "moonlight"], hidden: ["aurora", "forest", "nightlight"] } },
+      dimmers: { dimmer_living: { lights: ["light.living_room", "light.floor_lamp"], scenes: { order: ["natural", "relax", "golden_hour", "rest", "nightlight"], hidden: [] } } },
+      dimmer_default: { order: ["natural", "energize", "cool_bright", "read", "relax", "rest", "nightlight", "golden_hour", "nebula", "aurora", "ember", "forest", "moonlight"], hidden: ["golden_hour", "nebula", "aurora", "ember", "forest", "moonlight"] },
+    };
+
+    window.hass = {
+      states,
+      entities,
+      devices: {},
+      areas: {
+        bedroom: { area_id: "bedroom", name: "Bedroom", floor_id: "first", icon: "mdi:bed-king-outline" },
+        office: { area_id: "office", name: "Office", floor_id: "first", icon: "mdi:desk" },
+        living_room: { area_id: "living_room", name: "Living room", floor_id: "ground", icon: "mdi:sofa-outline" },
+        kitchen: { area_id: "kitchen", name: "Kitchen", floor_id: "ground", icon: "mdi:stove" },
+        hall: { area_id: "hall", name: "Hall", floor_id: "ground", icon: "mdi:door" },
+      },
+      floors: { ground: { level: 0 }, first: { level: 1 } },
+      user: { is_admin: true },
+      connection: {
+        async subscribeMessage(cb) { setTimeout(() => cb(JSON.parse(JSON.stringify(sharedData))), 0); return () => {}; },
+      },
+      async callWS(msg) {
+        if (msg.type === "hue_lite/config") return setup;
+        if (msg.type === "frontend/get_user_data") return { value: userData[msg.key] ?? null };
+        return null;
+      },
+      callService(domain, service, data, target) { (window.calls ||= []).push({ domain, service, data, target }); },
+    };
+
+    // Home Assistant's own cards (entities, tile, heading), as they look. They
+    // go inside the routines card's shadow root, so each styles itself.
+    const ICONS = {
+      wake_up_on_weekdays: "mdi:calendar-week", wake_up_on_weekends: "mdi:calendar-weekend", wake_up_mon_fri: "mdi:alarm",
+      wake_up_sat_sun: "mdi:alarm", evening_routine_sun_thu_nights: "mdi:weather-sunset", evening_routine_fri_sat_nights: "mdi:weather-sunset",
+      bedtime_sun_thu_nights: "mdi:bed-clock", bedtime_fri_sat_nights: "mdi:bed-clock", coming_home: "mdi:home-import-outline",
+      coming_home_only_after_dark: "mdi:weather-night", lights_off_when_everyone_leaves: "mdi:home-export-outline", mimic_presence: "mdi:shield-home-outline", evening_routine: "mdi:weather-sunset",
+    };
+    const iconOf = (entity) => ICONS[entity.split(".")[1].replace("hue_lite_", "")];
+    const CARD_CSS = `
+      :host { display: block; }
+      ha-card { display: block; background: var(--card-background-color); border-radius: 12px; border: 1px solid var(--divider-color); }
+      .title { font-size: 20px; color: var(--primary-text-color); padding: 16px 16px 0; }
+      .rows { padding: 8px 16px; }
+      .row { display: flex; align-items: center; gap: 16px; height: 40px; margin: 4px 0; font-size: 14px; color: var(--primary-text-color); }
+      .row ha-icon { width: 40px; color: #44739e; }
+      .row.on ha-icon { color: #ffc107; }
+      .name { flex: 1; }
+      .switch { width: 36px; height: 14px; border-radius: 7px; background: rgba(var(--rgb-primary-text-color), 0.38); position: relative; margin-right: 4px; }
+      .switch::after { content: ""; position: absolute; top: -3px; left: -2px; width: 20px; height: 20px; border-radius: 50%;
+                       background: #fafafa; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); }
+      .on .switch { background: rgba(var(--rgb-primary-color), 0.5); }
+      .on .switch::after { left: 18px; background: var(--primary-color); }
+      .time { padding: 6px 10px; border-radius: 6px; background: rgba(var(--rgb-primary-text-color), 0.06); font-variant-numeric: tabular-nums; }
+      .tile { display: flex; align-items: center; gap: 10px; padding: 10px; }
+      .badge { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none;
+               color: #ff9800; background: rgba(255, 152, 0, 0.2); }
+      .tile .name { font-size: 14px; font-weight: 500; }
+      .tile .state { font-size: 12px; color: var(--secondary-text-color); }
+      .heading { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 4px; font-size: 14px; font-weight: 500;
+                 color: var(--secondary-text-color); --mdc-icon-size: 18px; }`;
+    class MockCard extends HTMLElement {
+      constructor(config) {
+        super();
+        const states = window.hass.states;
+        const row = (e) => {
+          const state = states[e.entity].state;
+          const right = e.entity.startsWith("time.") ? `<span class="time">${state.slice(0, 5)}</span>` : `<span class="switch"></span>`;
+          return `<div class="row ${state === "on" ? "on" : ""}"><ha-icon icon="${iconOf(e.entity)}"></ha-icon><span class="name">${e.name}</span>${right}</div>`;
+        };
+        let html;
+        if (config.type === "heading") {
+          html = `<div class="heading"><ha-icon icon="${config.icon}"></ha-icon><span>${config.heading}</span><ha-icon icon="mdi:chevron-right"></ha-icon></div>`;
+        } else if (config.type === "tile") {
+          const s = states[config.entity];
+          html = `<ha-card><div class="tile"><span class="badge"><ha-icon icon="${iconOf(config.entity)}"></ha-icon></span>
+            <span><div class="name">${config.name}</div><div class="state">Evening · ${s.attributes.summary}</div></span></div></ha-card>`;
+        } else {
+          const rows = config.entities.filter((e) => !e.conditions || e.conditions.every((c) => states[c.entity].state === c.state)).map((e) => e.row || e);
+          html = `<ha-card>${config.title ? `<div class="title">${config.title}</div>` : ""}<div class="rows">${rows.map(row).join("")}</div></ha-card>`;
+        }
+        this.attachShadow({ mode: "open" }).innerHTML = `<style>${CARD_CSS}</style>${html}`;
+      }
+    }
+    customElements.define("mock-card", MockCard);
+    window.loadCardHelpers = async () => ({ createCardElement: (config) => new MockCard(config) });
+
+    window.ready = (async () => {
+      await window.iconsLoaded;
+      const dash = await customElements.get("ll-strategy-dashboard-hue-lite").generate({}, window.hass);
+      const sections = document.querySelector(".sections");
+      const wanted = { desktop: [0, 1, 2], phone: [0, 1], edit: [1], dimmers: [3], routines: [2] }[view];
+      dash.views[0].sections.forEach((section, i) => {
+        if (!wanted.includes(i)) return;
+        const el = document.createElement("div");
+        el.className = `section ${section.column_span === 2 ? "span-2" : section.column_span === 3 ? "span-3" : ""}`;
+        for (const config of section.cards) {
+          const card = document.createElement(config.type.replace(/^custom:/, ""));
+          card.setConfig(config);
+          card.hass = window.hass;
+          el.appendChild(card);
+        }
+        sections.appendChild(el);
+      });
+      await new Promise((r) => setTimeout(r, 200));
+      if (view === "edit") {
+        const rooms = document.querySelector("hue-lite-rooms").shadowRoot;
+        rooms.querySelector('[data-id="kitchen"] .edit').click();
+      }
+      document.body.dataset.ready = "true";
+    })().catch((err) => window.errors.push(String(err))).finally(() => {
+      document.body.dataset.errors = JSON.stringify(window.errors);
+      document.body.dataset.missing = [...window.missingIcons].join(" ");
+      document.body.dataset.width = `${innerWidth} ${document.documentElement.scrollWidth}`;
+    });
+  </script>
+</body>
+</html>

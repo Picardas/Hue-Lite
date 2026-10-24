@@ -55,7 +55,8 @@ async def test_only_real_scenes_are_taken(hass: HomeAssistant, home: Home, hue_l
     def set_scenes(order: list[str]) -> Mock:
         return ws(hass, dashboard.websocket_set_scenes, {"type": f"{DOMAIN}/set_scenes", "key": "x", "scenes": {"order": order, "hidden": []}})
 
-    set_scenes(["relax"]).send_result.assert_called_once()
+    set_scenes(["relax", "relax"]).send_result.assert_called_once()
+    assert hue_lite.layouts["x"] == {"order": ["relax"], "hidden": []}
     assert set_scenes(["sleep"]).send_error.call_args.args[1] == "unknown_scene"
 
 
