@@ -1,8 +1,9 @@
 """The Lights dashboard: serves its script (a dashboard strategy and its cards)
 to every page, and over the websocket tells it how Hue-Lite is set up and
 keeps the settings every dashboard shares (each room's and light's scenes,
-each dimmer's lights and scenes), sending them to the dashboards open as
-they change."""
+each dimmer's lights and scenes, and your own scenes), sending them to the
+dashboards open as they change. The scene editor saves, deletes and tries
+out your own scenes through it too."""
 
 from __future__ import annotations
 

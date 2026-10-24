@@ -1,5 +1,5 @@
 """Where the Natural light scene and the evening routine are, their lights,
-and which scene each light is in."""
+which scene each light is in, and your own scenes."""
 
 from __future__ import annotations
 
@@ -86,10 +86,11 @@ class EveningRoutineSensor(_TimelineSensor):
 
 class LightScenesSensor(_EngineSensor):
     """How many lights are in a scene; `scenes` says which scene each is in
-    (natural, routine, wake_up or a preset id) and `auto` lists the lights on
-    Auto (put on it, or held by the evening routine or wake up), for the
-    dashboard's highlights and Auto buttons. `custom_scenes` gives each of
-    your own scenes' name by its id, for `apply_preset` in automations."""
+    (natural, routine, wake_up, or a preset's, colour scene's or your own
+    scene's id) and `auto` lists the lights on Auto (put on it, or held by
+    the evening routine or wake up), for the dashboard's highlights and Auto
+    buttons. `custom_scenes` gives each of your own scenes' name by its id,
+    for `apply_preset` in automations."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _unrecorded_attributes = frozenset({"scenes", "auto", "custom_scenes"})

@@ -18,7 +18,7 @@ one plain JavaScript file with no build step.
 | `lights.py` | `Sender`: every light command goes through it, so Hue-Lite knows its own changes and commands don't queue up behind a slow bulb |
 | `targets.py` | Which lights a target means, and which are excluded |
 | `dimmers.py` | Hue dimmer presses (ZHA events) |
-| `dashboard.py` | Serves the script; the websocket commands the dashboard uses |
+| `dashboard.py` | Serves the script; the websocket commands the dashboard uses (the shared settings, and saving, trying and deleting your own scenes) |
 | `services.py`, `services.yaml` | The actions, which check the caller's permissions |
 | `switch.py`, `time.py`, `number.py`, `sensor.py`, `entity.py` | The entities: settings, and the routines' state |
 | `config_flow.py`, `__init__.py` | Setup, options, migrations |
@@ -41,7 +41,8 @@ pytest
 - **Dashboard script:** there are no JavaScript tests. Serve the repository
   root (`python3 -m http.server --bind 127.0.0.1`) and open
   `/tests/harness/`. It takes `?dark`, `?user` (not an admin), `?unshared`,
-  `?existing` and `?editor` (the scene editor, open), and exposes `window.dash` and `window.calls`.
+  `?existing` and `?editor` (the scene editor, open), and exposes
+  `window.dash` and `window.calls`.
 - **Real bulbs:** say plainly what hasn't been tried on real bulbs or a real
   Home Assistant.
 
@@ -54,7 +55,8 @@ pytest
 - **Every behaviour change has a test.** Tests describe what happens from
   the user's side, one scenario per test, with comments narrating the steps.
   - Use conftest's `home` (a few lights, areas and labels) and its helpers:
-    `tick`, `settle`, `on`, `ours`, `action`, `switch`, `after_dark`.
+    `tick`, `settle`, `on`, `ours`, `action`, `switch`, `ws` (a websocket
+    command), `after_dark`.
   - Light actions are recorded, not run, so a light's state only changes
     when a test sets it.
 - **Comments and docstrings** are plain English and say what happens, not
@@ -76,12 +78,13 @@ pytest
 - **A built-in colour scene** (your own scenes need no code: they live in
   the Store, under `custom_scenes`, with ids starting `custom_`):
   1. Add it to `PALETTES` in `timeline.py`. Each colour is an xy value
-     inside Hue's gamut C and a brightness.
+     inside Hue's gamut C (a test checks) and a brightness; mix a few hues
+     at different brightnesses, and give it a pace (`drift_minutes`).
   2. Add it to `COLOUR_SCENES` and `howItWorks` in `hue-lite.js`.
   3. Add it to the options in `services.yaml`, and to the selector and the
      `apply_preset` description in `en.json`.
-  4. Update the README, the harness's `presets`, and the dimmer default in
-     `tests/test_shared.py`.
+  4. Update the README's colour scenes table, the harness's `presets`, and
+     the dimmer default in `tests/test_shared.py`.
 - **Stored data:** add it to `_stored` and `_data` in `engine.py`, with a
   test that damaged data is left out.
 
@@ -92,5 +95,8 @@ pytest
   content.
 - **Minimum Home Assistant version:** it's in `hacs.json` and the README.
   Change both together, along with the pin in `requirements_test.txt`.
-- **README:** keep it matching what Hue-Lite does.
+- **README:** keep it matching what Hue-Lite does, screenshots included.
 - **Commits:** sign them, and never skip hooks or signing.
+- **Releases:** HACS installs GitHub releases. Push a signed tag
+  (`vX.Y.Z`, or `vX.Y.Z-beta.N` for a pre-release) and publish a release for
+  it with notes on what changed.

@@ -1,6 +1,7 @@
-"""Hue-Lite's actions: a preset or colour scene, the Natural light scene, the
-next scene (a Hue dimmer's On button), Auto, and dimming that keeps a light's
-scene. Each takes a light target; none means every light."""
+"""Hue-Lite's actions: a preset, colour scene or one of your own, the Natural
+light scene, the next scene (a Hue dimmer's On button), Auto, and dimming
+that keeps a light's scene. Each takes a light target; none means every
+light."""
 
 from __future__ import annotations
 

@@ -1,4 +1,5 @@
-"""The routines over time: evening, wake up, coming and going, and dimmers."""
+"""The routines over time: evening, wake up, coming and going, Away, catching
+up after a restart, and dimmers."""
 
 from __future__ import annotations
 

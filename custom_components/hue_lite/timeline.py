@@ -1,4 +1,5 @@
-"""The presets and the two timelines: the Natural light scene and the evening routine.
+"""The presets, the colour scenes and the two timelines: the Natural light
+scene and the evening routine.
 
 Plain functions of the time of day, with no Home Assistant imports, so they can
 be tested on their own. Times of day are minutes after midnight.

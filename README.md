@@ -16,9 +16,9 @@ Hue Bridge.** Hue-Lite gives you:
 
 Lights join in by **area** and **label**, with no YAML for each light.
 
-| ![Editing a room's scenes: drag to reorder, the eye hides one, the pencil changes one, + makes one](docs/images/edit-scenes.png) | ![The routines: wake up, the evening routine, and coming and going](docs/images/routines.png) | ![A dimmer's lights and the scenes its On button steps through](docs/images/dimmers.png) |
+| ![Editing a room's scenes: drag to reorder, the eye hides one, the pencil changes one, + makes one](docs/images/edit-scenes.png) | ![The routines: wake up, the evening routine, coming and going, and Away](docs/images/routines.png) | ![A dimmer's lights and the scenes its On button steps through](docs/images/dimmers.png) |
 | :---: | :---: | :---: |
-| Each room's scenes: reorder, hide, change or add your own | Wake up, evening, coming & going | Each Hue dimmer's lights and scenes |
+| Each room's scenes: reorder, hide, change or add your own | Wake up, evening, coming & going, Away | Each Hue dimmer's lights and scenes |
 
 <sub>The screenshots show the Lights dashboard with sample lights.</sub>
 
@@ -149,8 +149,9 @@ Hue-Lite keeps these, so every phone and browser shows the same.
 - **Try on the lights** shows the colours on that block's lights as you pick
   them. They leave their scene while you do; Save puts them in the new one.
 - A new scene shows where you made it: in that room (each of its lights,
-  when it has several) and on its dimmers. Elsewhere it starts hidden, and
-  Edit scenes shows it.
+  when it has several) and, if you're an admin, on its dimmers. Made from
+  Whole home, a label group or a dimmer, it shows just there. Elsewhere it
+  starts hidden, and Edit scenes shows it.
 - Anyone can make, change and delete them; the built-in scenes can't be
   changed or deleted. There can be up to 50.
 
@@ -197,8 +198,8 @@ on the Hue-Lite device page instead.
   4. Rest at night.
 
   A light stays in it, on or off, until you pick another scene, change the
-  light yourself or from an automation, or use one of your own Home Assistant
-  scenes on it.
+  light yourself or from an automation, or activate one of Home Assistant's
+  own scenes with it.
 - **Evening routine:**
   - Before sunset, if someone's home, the Evening lights come on dim and
     brighten.

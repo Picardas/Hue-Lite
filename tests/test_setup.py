@@ -140,8 +140,9 @@ async def test_bad_or_stale_saved_data_is_dropped(
 async def test_routine_lights_let_go_when_bedtime_passed_while_down(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
 ) -> None:
-    """Home Assistant was down over bedtime: the routine's lights aren't kept
-    (and left following it) until the next evening."""
+    """Home Assistant was down long past bedtime (more than the 15 minutes it
+    catches up on): the routine's lights are let go, left as they are, rather
+    than kept following it until the next evening."""
     freezer.move_to(f"{FRIDAY} 01:00:00+01:00")
     stored(hass_storage, scenes={"light.bedroom": "routine", "light.living_room": "natural"})
     hue_lite = await set_up(hass, entry)

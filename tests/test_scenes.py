@@ -1,5 +1,5 @@
-"""Presets, Natural light, which scene each light is in, and Home Assistant's
-own scenes."""
+"""Presets, colour scenes, Natural light, which scene each light is in,
+dimming, and Home Assistant's own scenes."""
 
 from __future__ import annotations
 

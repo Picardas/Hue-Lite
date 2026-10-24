@@ -8,19 +8,19 @@
 // (websocket `hue_lite/config`). Also defines its cards:
 //   custom:hue-lite-light-bar   a light (slide to dim) or a set of them: tap to toggle,
 //                               Auto at the end, hold a single light for its colour dialog
-//   custom:hue-lite-scene-tile  a scene button (Natural light, a preset or a colour
-//                               scene) that lights up while its lights are in it
+//   custom:hue-lite-scene-tile  a scene button (Natural light, a preset, a colour scene
+//                               or one of your own) that lights up while its lights are in it
 //   custom:hue-lite-rooms       the rooms' lights as collapsible, reorderable blocks,
 //                               each headed by a bar over its scenes
-//   custom:hue-lite-routines    Wake up, Evening and Coming & Going as collapsible blocks
+//   custom:hue-lite-routines    Wake up, Evening, Coming & Going and Away as collapsible blocks
 //   custom:hue-lite-dimmers     each Hue dimmer: the lights it controls and its scenes
 //   custom:hue-lite-light-card  one block of the Lights dashboard (a light, room or
 //                               label group) for any dashboard, in the card picker
 //   hue-lite-scene-editor       the dialog for making or changing one of your own scenes
 //
-// Each room's and light's scenes, your own scenes, and the dimmers' settings, are kept by
-// Hue-Lite and shared by every dashboard (websocket `hue_lite/subscribe`);
-// the rest of the layout is each person's own.
+// Each room's and light's scenes, your own scenes and the dimmers' settings
+// are kept by Hue-Lite and shared by every dashboard (websocket
+// `hue_lite/subscribe`); the rest of the layout is each person's own.
 //
 // Layout: Whole home (fixed at the top, a block that collapses like a room),
 // then the rooms card with a block for each room with one light and each
@@ -35,8 +35,9 @@
   // How long a tap shows before the bulbs report it. A bulb that doesn't
   // answer takes a few seconds to fail; after this the card shows it as it is.
   const PENDING_MS = 5000;
-  // The scenes' names and icons (their colours come from Hue-Lite): the
-  // presets, then Natural light and the colour scenes, which change over time.
+  // The built-in scenes' names and icons (their colours come from Hue-Lite):
+  // the presets, then Natural light and the colour scenes, which change over
+  // time. Your own scenes come with the shared settings.
   const NATURAL = { id: "natural", name: "Natural", icon: "mdi:theme-light-dark" };
   const PRESETS = [
     { id: "energize", name: "Energize", icon: "mdi:lightning-bolt" },
@@ -1109,8 +1110,9 @@
   // ---- Shared settings -----------------------------------------------------
 
   // What every dashboard shares, kept by Hue-Lite: each room's and light's
-  // scenes (`layouts`, by key) and each dimmer's settings (`dimmers`, by
-  // device id), with a dimmer's scenes until they're set (`dimmer_default`).
+  // scenes (`layouts`, by key), each dimmer's settings (`dimmers`, by device
+  // id), with a dimmer's scenes until they're set (`dimmer_default`), and
+  // your own scenes (`custom`, by id, with the colours bulbs report for them).
   // One subscription per page tells every card that's watching (through its
   // `_sharedChanged`) whenever they change, from any dashboard.
   const shared = { data: null, cards: new Set(), subscribed: false };
@@ -1508,7 +1510,7 @@
 
   // ---- Routines card -------------------------------------------------------
 
-  // Wake up, Evening and Coming & Going as blocks holding Home Assistant's own
+  // Wake up, Evening, Coming & Going and Away as blocks holding Home Assistant's own
   // cards (entities, tile, heading). The summary goes on its own line under
   // the title, so it isn't cut off on a phone. Tapping the "Routines"
   // heading folds the whole card away. `footer` cards (the Timings & fades

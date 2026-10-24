@@ -5,7 +5,8 @@ lights.py.
 
 Each light Hue-Lite has put into a scene remembers it in `scenes`: Natural
 light, the evening routine, a preset, a colour scene (whose colours drift),
-or the wake-up fade-in. Picking another scene replaces it; changing the light
+one of your own scenes (`custom`, static or drifting like a colour scene), or
+the wake-up fade-in. Picking another scene replaces it; changing the light
 yourself or from an automation, or activating one of Home Assistant's own
 scenes with it, forgets it. Turning a light off keeps its scene, so a light in
 Natural light or the routine picks it up again when it comes back on. Dimming
@@ -270,7 +271,7 @@ class HueLite:
         self.labels = {role: entry.options.get(label_option(role), spec[0]) for role, spec in ROLES.items()}
         self.presence: str = entry.options.get(CONF_PRESENCE, DEFAULT_PRESENCE)
         self.settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
-        # Light -> the scene it's in: NATURAL, ROUTINE, WAKE_UP, a preset or a colour scene.
+        # Light -> the scene it's in: NATURAL, ROUTINE, WAKE_UP, a preset, a colour scene or one of yours.
         self.scenes: dict[str, str] = {}
         # Lights put on Auto: the routines take them as if they had the
         # routines' labels (see async_set_auto).
@@ -640,7 +641,7 @@ class HueLite:
         self._notify()
 
     def in_scene(self, scene: str) -> list[str]:
-        """The lights in a scene (NATURAL, ROUTINE, WAKE_UP, a preset or a colour scene)."""
+        """The lights in a scene (NATURAL, ROUTINE, WAKE_UP, a preset, a colour scene or one of yours)."""
         return sorted(light for light, current in self.scenes.items() if current == scene)
 
     def target(self, scene: str) -> Target:
@@ -687,7 +688,7 @@ class HueLite:
         return scenes.pop() if len(scenes) == 1 else ""
 
     async def async_preset(self, lights: list[str], preset: str, parent: Context | None = None) -> None:
-        """Someone picked a preset or a colour scene: the lights leave Auto
+        """Someone picked a preset, a colour scene or one of yours: the lights leave Auto
         and go into it."""
         if not lights:
             return
