@@ -10,7 +10,7 @@
         },
         "data_description": {
           "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
-          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area."
+          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area, or the ones chosen for them on the dashboard's Dimmers card."
         }
       }
     },
@@ -44,7 +44,7 @@
           "label_first_home": "Like Coming home, but only when the first person gets home (the house was empty), not for everyone after: a bedroom, say.",
           "label_exclude": "Lights left out of everything (the dashboard, scenes, routines and dimmers) when they, their device or their area has this label. Hidden lights are left out too.",
           "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
-          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area."
+          "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area, or the ones chosen for them on the dashboard's Dimmers card."
         }
       }
     }

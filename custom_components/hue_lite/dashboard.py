@@ -1,5 +1,8 @@
 """The Lights dashboard: serves its script (a dashboard strategy and its cards)
-to every page, and tells it how Hue-Lite is set up over the websocket."""
+to every page, and over the websocket tells it how Hue-Lite is set up and
+keeps the settings every dashboard shares (each room's and light's scenes,
+each dimmer's lights and scenes), sending them to the dashboards open as
+they change."""
 
 from __future__ import annotations
 
@@ -14,10 +17,18 @@ from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url, remove_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import (
+    area_registry as ar,
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+    label_registry as lr,
+)
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DOMAIN
-from .engine import HueLite, async_get_loaded
+from .const import DOMAIN, SIGNAL_SHARED
+from .dimmers import is_dimmer
+from .engine import TILE_SCENES, HueLite, async_get_loaded
 from .lights import rgb_color
 from .targets import LIGHT
 from .timeline import PALETTES, PRESETS
@@ -39,7 +50,8 @@ async def async_register(hass: HomeAssistant) -> None:
     content = await hass.async_add_executor_job(SCRIPT.read_bytes)
     hass.data[DATA_URL] = f"{URL}?v={hashlib.sha256(content).hexdigest()[:8]}"
     await hass.http.async_register_static_paths([StaticPathConfig(URL, str(SCRIPT), True)])
-    websocket_api.async_register_command(hass, websocket_config)
+    for command in (websocket_config, websocket_subscribe, websocket_set_scenes, websocket_set_dimmer):
+        websocket_api.async_register_command(hass, command)
 
 
 @callback
@@ -87,4 +99,84 @@ def _config(hue_lite: HueLite) -> dict[str, Any]:
         ],
         "entities": hue_lite.entity_ids,
         "presets": SCENE_COLOURS,
+        "dimmers": [
+            {"id": device.id, "name": device.name_by_user or device.name or "Hue dimmer", "area_id": device.area_id}
+            for device in devices.devices
+            if is_dimmer(device)
+        ]
+        if hue_lite.use_dimmers
+        else [],
     }
+
+
+# The most rooms and lights whose scenes are kept, so the shared settings
+# can't grow without end.
+MAX_LAYOUTS = 500
+SCENE_IDS = vol.All(cv.ensure_list, [vol.In(TILE_SCENES)], vol.Length(max=len(TILE_SCENES)))
+SCENES = vol.Any(None, {vol.Required("order"): SCENE_IDS, vol.Required("hidden"): SCENE_IDS})
+
+
+@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/subscribe"})
+@callback
+def websocket_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """The shared settings, now and whenever they change (from any dashboard,
+    and after Hue-Lite reloads)."""
+    if async_get_loaded(hass) is None:
+        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
+        return
+
+    @callback
+    def send() -> None:
+        if hue_lite := async_get_loaded(hass):
+            connection.send_message(websocket_api.event_message(msg["id"], hue_lite.shared()))
+
+    connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, SIGNAL_SHARED, send)
+    connection.send_result(msg["id"])
+    send()
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/set_scenes", vol.Required("key"): vol.All(str, vol.Length(1, 255)), vol.Required("scenes"): SCENES}
+)
+@callback
+def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Set a room's or light's scenes for every dashboard, or with None put
+    them back to the default. Anyone can: it's only which scenes show."""
+    if (hue_lite := async_get_loaded(hass)) is None:
+        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
+        return
+    if msg["scenes"] is not None and msg["key"] not in hue_lite.layouts and len(hue_lite.layouts) >= MAX_LAYOUTS:
+        connection.send_error(msg["id"], "too_many", "Too many rooms and lights with their own scenes")
+        return
+    hue_lite.set_layout(msg["key"], msg["scenes"])
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/set_dimmer",
+        vol.Required("device_id"): str,
+        vol.Optional("lights"): vol.Any(None, vol.All(cv.entity_ids, vol.Length(max=100))),
+        vol.Optional("scenes"): SCENES,
+    }
+)
+@websocket_api.require_admin
+@callback
+def websocket_set_dimmer(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Choose the lights a Hue dimmer controls (none: its area) or the scenes
+    its On button steps through (None: the default). Admins only: a dimmer
+    controls lights for whoever presses it."""
+    if (hue_lite := async_get_loaded(hass)) is None:
+        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
+        return
+    device = dr.async_get(hass).async_get(msg["device_id"])
+    if device is None or not is_dimmer(device):
+        connection.send_error(msg["id"], "not_found", "That isn't a Hue dimmer")
+        return
+    if lights := msg.get("lights"):
+        lights = [light for light in lights if light.startswith(f"{LIGHT}.")]
+    changes = {key: msg[key] for key in ("lights", "scenes") if key in msg}
+    if "lights" in changes:
+        changes["lights"] = lights or None
+    hue_lite.set_dimmer(device.id, **changes)
+    connection.send_result(msg["id"])

@@ -23,7 +23,7 @@ from datetime import date, datetime, time
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import ATTR_ENTITY_ID, ATTR_LABEL_ID, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import ATTR_AREA_ID, ATTR_ENTITY_ID, ATTR_LABEL_ID, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers import (
     area_registry as ar,
@@ -33,6 +33,7 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import TrackStates, async_track_state_change_event, async_track_state_change_filtered, async_track_time_change
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
@@ -51,6 +52,7 @@ from .const import (
     NATURAL,
     ROLES,
     ROUTINE,
+    SIGNAL_SHARED,
     STORAGE_KEY,
     STORAGE_VERSION,
     TIMES,
@@ -63,6 +65,7 @@ from .targets import LIGHT, excluded, resolve
 from .timeline import (
     PALETTES,
     PRESETS,
+    SCENE_CYCLE,
     Evening,
     EveningSettings,
     SunTimes,
@@ -75,8 +78,25 @@ from .timeline import (
 
 type HueLiteConfigEntry = ConfigEntry[HueLite]
 
-# Every scene a light can be in.
-SCENES = frozenset({NATURAL, ROUTINE, WAKE_UP, *PRESETS, *PALETTES})
+# Every scene a light can be in, and the ones with a tile on the dashboard.
+TILE_SCENES = frozenset({NATURAL, *PRESETS, *PALETTES})
+SCENES = TILE_SCENES | {ROUTINE, WAKE_UP}
+
+# A dimmer's scenes until they're set ({order, hidden}, as the dashboard
+# edits them): Natural light and the presets, as Hue's On button cycles.
+DIMMER_DEFAULT = {"order": [*SCENE_CYCLE, *PALETTES], "hidden": list(PALETTES)}
+
+
+def _setup(value: Any) -> dict[str, list[str]] | None:
+    """A stored set of scenes ({order, hidden}), or None if it isn't one."""
+    if not isinstance(value, dict):
+        return None
+
+    def ids(key: str) -> list[str]:
+        found = value.get(key)
+        return [s for s in found if s in TILE_SCENES] if isinstance(found, list) else []
+
+    return {"order": ids("order"), "hidden": ids("hidden")}
 
 
 @callback
@@ -109,6 +129,7 @@ def _stored(data: Any) -> dict[str, Any]:
         return data[key] if isinstance(data.get(key), kind) else kind()
 
     settings, scenes, auto = part("settings", dict), part("scenes", dict), part("auto", list)
+    layouts, dimmer_settings = part("layouts", dict), part("dimmers", dict)
     if isinstance(was := settings.get("evening_routine_enabled"), bool):
         settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
     renamed = {"movie": "nebula"}
@@ -127,7 +148,24 @@ def _stored(data: Any) -> dict[str, Any]:
         },
         "auto": [light for light in auto if isinstance(light, str)],
         "last_wake_up": _instant(data.get("last_wake_up")),
+        "layouts": {key: setup for key, value in layouts.items() if (setup := _setup(value))},
+        "dimmers": {
+            device: found
+            for device, value in dimmer_settings.items()
+            if isinstance(value, dict) and (found := _dimmer(value))
+        },
     }
+
+
+def _dimmer(value: dict[str, Any]) -> dict[str, Any]:
+    """A stored dimmer's settings: the lights it controls and its scenes,
+    whichever are set."""
+    found: dict[str, Any] = {}
+    if isinstance(lights := value.get("lights"), list) and (lights := [x for x in lights if isinstance(x, str)]):
+        found["lights"] = lights
+    if setup := _setup(value.get("scenes")):
+        found["scenes"] = setup
+    return found
 
 
 def _instant(value: Any) -> datetime | None:
@@ -162,11 +200,17 @@ class HueLite:
         self.entity_ids: dict[str, str] = {}
         self.device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name=NAME, entry_type=DeviceEntryType.SERVICE)
         self.last_wake_up: datetime | None = None
+        # Shared by everyone's dashboard: each room's and light's scenes
+        # ({order, hidden}, by the dashboard's key for them), and each Hue
+        # dimmer's settings (by device id: the lights it controls instead of
+        # its area, and its scenes).
+        self.layouts: dict[str, dict[str, list[str]]] = {}
+        self.dimmer_settings: dict[str, dict[str, Any]] = {}
         # The target each followed scene's lights were last moved to.
         self.followed: dict[str, Target] = {}
         self.sender = Sender(hass)
         self.routines = Routines(self)
-        self._dimmers: bool = entry.options.get(CONF_DIMMERS, True)
+        self.use_dimmers: bool = entry.options.get(CONF_DIMMERS, True)
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._sun: tuple[date, SunTimes] | None = None
         self._listeners: list[CALLBACK_TYPE] = []
@@ -186,6 +230,7 @@ class HueLite:
         data = _stored(await self._store.async_load())
         self.settings.update(data["settings"])
         self.last_wake_up = data["last_wake_up"]
+        self.layouts, self.dimmer_settings = data["layouts"], data["dimmers"]
         self.natural, self.evening = self._targets(dt_util.now())
         self.followed = {NATURAL: self.natural, ROUTINE: self.evening}
         self._shown = (self.natural, self.evening)
@@ -215,7 +260,7 @@ class HueLite:
             bus.async_listen(lr.EVENT_LABEL_REGISTRY_UPDATED, self._check_labels),
             *self.routines.async_start(),
         ]
-        if self._dimmers:
+        if self.use_dimmers:
             self._unsubs.append(dimmers.async_listen(self))
         self._watch_lights()
         self._check_labels()
@@ -236,6 +281,8 @@ class HueLite:
             "scenes": dict(sorted(self.scenes.items())),
             "auto": sorted(self.auto),
             "last_wake_up": self.last_wake_up.isoformat() if self.last_wake_up else None,
+            "layouts": self.layouts,
+            "dimmers": self.dimmer_settings,
         }
 
     @callback
@@ -356,6 +403,52 @@ class HueLite:
             self.auto.difference_update(lights)
         return len(self.auto) != before
 
+    # ---- Shared dashboard settings -------------------------------------------
+
+    def shared(self) -> dict[str, Any]:
+        """What every dashboard shares: the rooms' and lights' scenes, the
+        dimmers' settings, and a dimmer's scenes until they're set."""
+        return {"layouts": self.layouts, "dimmers": self.dimmer_settings, "dimmer_default": DIMMER_DEFAULT}
+
+    @callback
+    def set_layout(self, key: str, scenes: dict[str, list[str]] | None) -> None:
+        """Set a room's or light's scenes ({order, hidden}), or with None go
+        back to its default."""
+        if scenes is None:
+            self.layouts.pop(key, None)
+        else:
+            self.layouts[key] = scenes
+        self._shared_changed()
+
+    @callback
+    def set_dimmer(self, device_id: str, **changes: Any) -> None:
+        """Change a dimmer's `lights` (the ones it controls instead of its
+        area) or `scenes` ({order, hidden}); None, or no lights, goes back to
+        the default."""
+        settings = {**self.dimmer_settings.get(device_id, {}), **changes}
+        settings = {key: value for key, value in settings.items() if value}
+        if settings:
+            self.dimmer_settings[device_id] = settings
+        else:
+            self.dimmer_settings.pop(device_id, None)
+        self._shared_changed()
+
+    @callback
+    def _shared_changed(self) -> None:
+        self.save()
+        async_dispatcher_send(self.hass, SIGNAL_SHARED)
+
+    def dimmer_lights(self, device: dr.DeviceEntry) -> list[str]:
+        """The lights a dimmer controls: the ones chosen for it, or its area's."""
+        if chosen := self.dimmer_settings.get(device.id, {}).get("lights"):
+            return self.lights({ATTR_ENTITY_ID: chosen})
+        return self.lights({ATTR_AREA_ID: [device.area_id]}) if device.area_id else []
+
+    def dimmer_cycle(self, device_id: str) -> list[str]:
+        """The scenes a dimmer's On button steps through, in order."""
+        scenes = self.dimmer_settings.get(device_id, {}).get("scenes", DIMMER_DEFAULT)
+        return [scene for scene in scenes["order"] if scene not in scenes["hidden"]]
+
     # ---- Scenes --------------------------------------------------------------
 
     def in_scene(self, scene: str) -> list[str]:
@@ -424,13 +517,15 @@ class HueLite:
             self.set_scene(lights, NATURAL, leave_auto=True)
             await self.apply(NATURAL, lights, 2, parent)
 
-    async def async_next_scene(self, lights: list[str], parent: Context | None = None) -> None:
-        """Like pressing a Hue dimmer's On button again: Natural light, then
-        the presets in turn, and round. Lights that are off, or in something
-        not in that cycle, go to Natural light."""
+    async def async_next_scene(
+        self, lights: list[str], parent: Context | None = None, cycle: list[str] | None = None
+    ) -> None:
+        """Like pressing a Hue dimmer's On button again: the next scene in
+        `cycle` (by default Natural light, then the presets), and round.
+        Lights that are off, or in something not in it, go to its first."""
         if not lights:
             return
-        scene = next_scene(self.current_scene(lights))
+        scene = next_scene(self.current_scene(lights), cycle or SCENE_CYCLE)
         if scene == NATURAL:
             await self.async_natural_light(lights, parent=parent)
         else:

@@ -90,5 +90,8 @@ DIMMER_COMMANDS: Final = frozenset(
     {"on_short_release", "off_short_release", "up_press", "up_hold", "down_press", "down_hold"}
 )
 
+# Sent when the dashboards' shared settings change (scenes, dimmers).
+SIGNAL_SHARED: Final = f"{DOMAIN}_shared"
+
 # Everyone gone for this long turns the lights off.
 LEAVING_DELAY: Final = 120

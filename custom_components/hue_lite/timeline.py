@@ -6,6 +6,7 @@ be tested on their own. Times of day are minutes after midnight.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -265,9 +266,9 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
 # ---- Scene cycling -----------------------------------------------------------
 
 
-def next_scene(current: str) -> str:
-    """The scene after `current` in the dimmer cycle; Natural light after
-    anything unrecognised."""
-    if current in SCENE_CYCLE:
-        return SCENE_CYCLE[(SCENE_CYCLE.index(current) + 1) % len(SCENE_CYCLE)]
-    return SCENE_CYCLE[0]
+def next_scene(current: str, cycle: Sequence[str] = SCENE_CYCLE) -> str:
+    """The scene after `current` in a dimmer's cycle; its first after
+    anything not in it."""
+    if current in cycle:
+        return cycle[(list(cycle).index(current) + 1) % len(cycle)]
+    return cycle[0]

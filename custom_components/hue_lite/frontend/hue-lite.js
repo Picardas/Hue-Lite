@@ -12,6 +12,11 @@
 //   custom:hue-lite-rooms       every room as a collapsible, reorderable block
 //                               headed by a bar for all its lights
 //   custom:hue-lite-routines    Wake up, Evening and Coming & Going as collapsible blocks
+//   custom:hue-lite-dimmers     each Hue dimmer: the lights it controls and its scenes
+//
+// Each room's and light's scenes, and the dimmers' settings, are kept by
+// Hue-Lite and shared by every dashboard (websocket `hue_lite/subscribe`);
+// the rest of the layout is each person's own.
 //
 // Layout: Whole home (fixed at the top, a block that collapses like a room),
 // then the rooms card with one block per area with
@@ -164,6 +169,19 @@
       sections.push({ type: "grid", column_span: 2, cards: [{ type: "custom:hue-lite-rooms", rooms }] });
     }
     sections.push({ type: "grid", column_span: 3, cards: [routinesCard(setup.entities, path)] });
+    // Hue dimmers (when Hue-Lite's using them): which lights each controls, and its scenes.
+    if (setup.dimmers?.length && everything.length) {
+      sections.push({
+        type: "grid",
+        column_span: 3,
+        cards: [{
+          type: "custom:hue-lite-dimmers",
+          dimmers: setup.dimmers.map((d) => ({ ...d, area_name: hass.areas?.[d.area_id]?.name })),
+          lights: everything,
+          scenes: sceneTiles(setup, everything, {}).map((tile) => ({ ...tile, preview: true })),
+        }],
+      });
+    }
 
     return { title: "Lights", path: "lights", icon: "mdi:lightbulb-group", type: "sections", max_columns: 3, sections };
   }
@@ -246,7 +264,7 @@
       "",
       `**Coming & Going**: when someone gets home (optionally only after dark), lights labelled *${label("coming_home")}* that are off come on, and so do lights labelled *${label("first_home")}* if the house was empty. Evening lights join the evening routine if it's on, except in its last half hour or so before bed, so they don't go off again soon after; the rest come on in Natural light. When the last person leaves, every light can go off.`,
       "",
-      "**Hue dimmer switches** control the lights in their area: On steps through the scenes, Off turns them off, Up and Down dim them.",
+      "**Hue dimmer switches** control the lights in their area, or the ones chosen on the Dimmers card: On steps through their scenes (set on the same card), Off turns them off, Up and Down dim them.",
       "",
       `**Adding a light**: give it an area, and the labels for the routines it should join (on the light, its device or its area). It appears here on the next reload. To keep a light out of all of this (e.g. one run by its own motion sensor), give it the *${label("exclude")}* label.`,
     ].join("\n");
@@ -670,7 +688,8 @@
   // it is now; the others' colours are their `light` ({rgb_colors}).
   // `scenes_entity` says which scene each light is in (attributes `scenes` and
   // `auto`); `target` is passed to the actions: {area_id}, {label_id},
-  // {entity_id} or {} for all.
+  // {entity_id} or {} for all. With `preview` it only shows the scene (a
+  // dimmer's): a tap does nothing, and it's never ticked.
   class HueLiteSceneTile extends HueLiteCard {
     setConfig(config) {
       this._scene = config.natural ? NATURAL : [...PRESETS, ...COLOUR_SCENES].find((p) => p.id === config.preset);
@@ -702,6 +721,7 @@
     }
 
     _selected() {
+      if (this._config.preview) return false;
       const on = this._states().filter((s) => s.state === "on");
       const { scenes = {}, auto = [] } = this._hass.states[this._config.scenes_entity]?.attributes || {};
       return on.length > 0 && on.every((s) => scenes[s.entity_id] === this._scene.id && !auto.includes(s.entity_id));
@@ -738,6 +758,7 @@
       this._now = this._root.querySelector(".now");
       this._colours = null;
       onActivate(this._card, () => {
+        if (this._config.preview) return;
         const target = this._config.target || {};
         if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
         else this._hass.callService(DOMAIN, "apply_preset", { preset: this._scene.id }, target);
@@ -780,11 +801,13 @@
 
   // ---- Collapsible blocks (rooms and routines) -----------------------------
 
-  // Saved per signed-in user in Home Assistant's frontend storage (so it
-  // follows you across devices), falling back to this browser: the blocks'
-  // order, which are collapsed, which lights inside them have their scenes
-  // open (by block id|light), and each block's scenes ({order, hidden}, by
-  // block id). Lists of ids only: anything else (a damaged layout) is dropped.
+  // How each person has their dashboard, saved per signed-in user in Home
+  // Assistant's frontend storage (so it follows you across devices),
+  // falling back to this browser: the blocks' order, which are collapsed,
+  // and which lights inside them have their scenes open (by block id|light).
+  // Scenes ({order, hidden} by block id) were kept here before Hue-Lite
+  // shared them, and are only read to hand them over. Lists of ids only:
+  // anything else (a damaged layout) is dropped.
   async function loadLayout(hass, key) {
     let saved;
     try {
@@ -798,7 +821,8 @@
     if (saved?.scenes && typeof saved.scenes === "object") {
       for (const [block, s] of Object.entries(saved.scenes)) scenes[block] = { order: ids(s?.order), hidden: ids(s?.hidden) };
     }
-    return { order: ids(saved?.order), collapsed: ids(saved?.collapsed), open: ids(saved?.open), scenes };
+    const layout = { order: ids(saved?.order), collapsed: ids(saved?.collapsed), open: ids(saved?.open) };
+    return Object.keys(scenes).length ? { ...layout, scenes } : layout;
   }
 
   function saveLayout(hass, key, layout) {
@@ -823,7 +847,7 @@
       this._validate(config);
       this._config = config;
       this._seen = null;
-      this._layout = this._layout || { order: [], collapsed: [], open: [], scenes: {} };
+      this._layout = this._layout || { order: [], collapsed: [], open: [] };
       this._root = this._root || this.attachShadow({ mode: "open" });
       this._blocks = new Map();
       this._children = [];
@@ -1002,6 +1026,167 @@
     .draggable { cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
     .hint { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }`;
 
+  // ---- Shared settings -----------------------------------------------------
+
+  // What every dashboard shares, kept by Hue-Lite: each room's and light's
+  // scenes (`layouts`, by key) and each dimmer's settings (`dimmers`, by
+  // device id), with a dimmer's scenes until they're set (`dimmer_default`).
+  // One subscription per page tells every card that's watching (through its
+  // `_sharedChanged`) whenever they change, from any dashboard.
+  const shared = { data: null, cards: new Set(), subscribed: false };
+
+  function watchShared(hass, card) {
+    shared.cards.add(card);
+    if (shared.data) card._sharedChanged();
+    if (shared.subscribed) return;
+    shared.subscribed = true;
+    hass.connection.subscribeMessage((data) => {
+      shared.data = data;
+      for (const c of shared.cards) c._sharedChanged();
+    }, { type: `${DOMAIN}/subscribe` }).catch(() => { shared.subscribed = false; });
+  }
+
+  // Change a shared setting here straight away, then in Hue-Lite (which
+  // tells every dashboard, this one included).
+  function changeShared(hass, { type, ...message }, apply) {
+    if (shared.data) {
+      apply(shared.data);
+      for (const c of shared.cards) c._sharedChanged();
+    }
+    hass.callWS({ type: `${DOMAIN}/${type}`, ...message }).catch(() => {});
+  }
+
+  function setScenes(hass, key, scenes) {
+    changeShared(hass, { type: "set_scenes", key, scenes }, (data) => {
+      if (scenes) data.layouts[key] = scenes;
+      else delete data.layouts[key];
+    });
+  }
+
+  function setDimmer(hass, deviceId, changes) {
+    changeShared(hass, { type: "set_dimmer", device_id: deviceId, ...changes }, (data) => {
+      const settings = { ...data.dimmers[deviceId], ...changes };
+      for (const key of Object.keys(settings)) if (!settings[key] || settings[key].length === 0) delete settings[key];
+      if (Object.keys(settings).length) data.dimmers[deviceId] = settings;
+      else delete data.dimmers[deviceId];
+    });
+  }
+
+  // ---- Scene sets ----------------------------------------------------------
+
+  // A set's scenes as saved ({order, hidden}), completed: in the saved order
+  // then any it hasn't seen yet (a new scene) in the default one, or
+  // `fallback` when nothing's saved.
+  function sceneOrder(all, saved, fallback) {
+    const s = saved || fallback || { order: [], hidden: [] };
+    return {
+      order: [...s.order.filter((id) => all.includes(id)), ...all.filter((id) => !s.order.includes(id))],
+      hidden: s.hidden.filter((id) => all.includes(id)),
+    };
+  }
+
+  const SCENES_CSS = `
+    button { border: none; background: none; color: var(--secondary-text-color); font: inherit; font-size: 13px; cursor: pointer;
+             display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 18px; --mdc-icon-size: 20px; }
+    button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
+    button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
+    .scenes { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
+    .cell { position: relative; grid-column: span 4; height: 88px; }
+    .cell > hue-lite-scene-tile { display: block; height: 100%; }
+    .scenes:not(.editing) > .cell.off { display: none; }
+    .scenes.editing > .cell.off > hue-lite-scene-tile { opacity: 0.35; }
+    .eye { display: none; position: absolute; top: 4px; left: 4px; width: 30px; height: 30px; padding: 0; justify-content: center;
+           --mdc-icon-size: 18px; color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+           background: var(--ha-card-background, var(--card-background-color, #fff)); }
+    .eye:hover { background: var(--ha-card-background, var(--card-background-color, #fff)); }
+    .scenes.editing > .cell > .eye { display: inline-flex; }
+    .edit-row { grid-column: span 12; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+    .edit-row .hint { flex: 1; padding-left: 4px; }
+    .scenes:not(.editing) > .edit-row :is(.hint, .reset), .edit-row[hidden] { display: none; }`;
+
+  // A set of scene tiles (each a third of the grid's width), with a row
+  // under them: while it's being edited the tiles drag into another order,
+  // their eye shows or hides them, and Reset goes back to the default.
+  // `make(config)` makes a tile card (so its holder hands it hass);
+  // `save(scenes)` keeps a new {order, hidden}, or null for the default;
+  // `edit()`, if given, starts or stops editing from an Edit scenes button.
+  class SceneSet {
+    constructor(make, configs, { save, edit, hint, resetTitle }) {
+      this.editing = false;
+      this.grid = document.createElement("div");
+      this.grid.className = "scenes";
+      this.tiles = configs.map((config) => {
+        const cell = document.createElement("div");
+        const card = make(config);
+        cell.className = "cell";
+        cell.dataset.id = card.scene.id;
+        cell.innerHTML = `<button class="eye"><ha-icon></ha-icon></button>`;
+        cell.prepend(card);
+        const eye = cell.querySelector(".eye");
+        onActivate(eye, () => {
+          const { order, hidden } = this.scenes;
+          const id = card.scene.id;
+          save({ order, hidden: hidden.includes(id) ? hidden.filter((s) => s !== id) : [...hidden, id] });
+          eye.focus();
+        });
+        this.grid.appendChild(cell);
+        return { id: card.scene.id, cell, card };
+      });
+      this.ids = this.tiles.map((t) => t.id);
+      this.scenes = sceneOrder(this.ids);
+      this.grid.insertAdjacentHTML("beforeend", `
+        <div class="edit-row">
+          <span class="hint"></span>
+          <button class="reset"><ha-icon icon="mdi:restore"></ha-icon><span>Reset</span></button>
+          ${edit ? `<button class="edit" title="Put the scenes in another order or hide some"><ha-icon></ha-icon><span></span></button>` : ""}
+        </div>`);
+      this.grid.querySelector(".hint").textContent = hint || "Drag the scenes into the order you want; the eye shows or hides one.";
+      const reset = this.grid.querySelector(".reset");
+      reset.title = resetTitle || "Back to the usual order, with every scene shown";
+      onActivate(reset, () => save(null));
+      if (edit) onActivate(this.grid.querySelector(".edit"), edit);
+      this.sorter = sortable(this.grid, () => [...this.grid.querySelectorAll(":scope > .cell")], () => this.editing, (ids) => {
+        save({ order: ids, hidden: this.scenes.hidden });
+      });
+    }
+
+    // Shows `scenes` (completed, as sceneOrder makes them), editing or not.
+    // Tiles are only moved when they're out of order, so what has the
+    // keyboard's focus keeps it.
+    arrange(scenes, editing) {
+      this.scenes = scenes;
+      this.editing = editing;
+      const cells = new Map(this.tiles.map((t) => [t.id, t.cell]));
+      const row = this.grid.querySelector(".edit-row");
+      const shown = [...this.grid.querySelectorAll(":scope > .cell")].map((c) => c.dataset.id);
+      if (shown.join() !== scenes.order.join()) for (const id of scenes.order) row.before(cells.get(id));
+      for (const { id, cell, card } of this.tiles) {
+        const off = scenes.hidden.includes(id);
+        cell.classList.toggle("off", off);
+        cell.classList.toggle("draggable", editing);
+        // While editing, the cell takes the taps and the keyboard, not the tile.
+        card.inert = editing;
+        if (editing) cell.tabIndex = 0;
+        else cell.removeAttribute("tabindex");
+        const eye = cell.querySelector(".eye");
+        eye.title = `${off ? "Show" : "Hide"} ${card.scene.name}`;
+        eye.setAttribute("aria-label", `Show ${card.scene.name}`);
+        eye.setAttribute("aria-pressed", String(!off));
+        eye.querySelector("ha-icon").setAttribute("icon", off ? "mdi:eye-off-outline" : "mdi:eye-outline");
+      }
+      this.grid.classList.toggle("editing", editing);
+      const edit = this.grid.querySelector(".edit");
+      // With nothing in it (a set that can't be edited, not being edited), no row.
+      row.hidden = !edit && !editing;
+      if (edit) {
+        edit.classList.toggle("active", editing);
+        edit.querySelector("span").textContent = editing ? "Done" : "Edit scenes";
+        edit.querySelector("ha-icon").setAttribute("icon", editing ? "mdi:check" : "mdi:pencil-outline");
+      }
+      this.sorter.sync();
+    }
+  }
+
   // ---- Rooms card ----------------------------------------------------------
 
   // Every room (and label group) as a block headed by a light bar for all its
@@ -1046,26 +1231,10 @@
           .reordering .toolbar :is(h2, .hint) { display: block; flex: none; }
           .reordering .toolbar .hint { flex: 1; padding-left: 8px; }
           .reordering .fold { display: none; }
-          button { border: none; background: none; color: var(--secondary-text-color); font: inherit; font-size: 13px; cursor: pointer;
-                   display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 18px; --mdc-icon-size: 20px; }
-          button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
-          button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
+          ${SCENES_CSS}
           .head > hue-lite-light-bar, .light > hue-lite-light-bar { display: block; }
           .reordering .body { display: none; }
           .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-          .scenes { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
-          .cell { position: relative; grid-column: span 4; height: 88px; }
-          .cell > hue-lite-scene-tile { display: block; height: 100%; }
-          .scenes:not(.editing) > .cell.off { display: none; }
-          .scenes.editing > .cell.off > hue-lite-scene-tile { opacity: 0.35; }
-          .eye { display: none; position: absolute; top: 4px; left: 4px; width: 30px; height: 30px; padding: 0; justify-content: center;
-                 --mdc-icon-size: 18px; color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-                 background: var(--ha-card-background, var(--card-background-color, #fff)); }
-          .eye:hover { background: var(--ha-card-background, var(--card-background-color, #fff)); }
-          .scenes.editing > .cell > .eye { display: inline-flex; }
-          .edit-row { grid-column: span 12; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
-          .edit-row .hint { flex: 1; padding-left: 4px; }
-          .scenes:not(.editing) > .edit-row :is(.hint, .reset) { display: none; }
           /* The room's lights sit under it, set in with a rule down their side. */
           .lights { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 0 6px; padding-left: 10px;
                     border-left: 2px solid var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12)); }
@@ -1149,45 +1318,54 @@
       return card;
     }
 
-    // A set of scene tiles (each a third of the grid's width, with its eye)
-    // and its Edit scenes row, in a grid added to `container`: a room's (key:
-    // its id), or one of its lights' (key: room id|light, `room` its room).
+    // The scene tiles of a room (key: its id) or of one of its lights (key:
+    // room id|light, `room` its room), added to `container`.
     _sceneSet(key, room, configs, container) {
-      const grid = document.createElement("div");
-      grid.className = "scenes";
-      const tiles = configs.map((config) => {
-        const cell = document.createElement("div");
-        const card = this._card(config);
-        cell.className = "cell";
-        cell.dataset.id = card.scene.id;
-        cell.innerHTML = `<button class="eye"><ha-icon></ha-icon></button>`;
-        cell.prepend(card);
-        const eye = cell.querySelector(".eye");
-        onActivate(eye, () => {
-          this._toggleHidden(key, card.scene.id);
-          eye.focus();
-        });
-        grid.appendChild(cell);
-        return { id: card.scene.id, cell, card };
+      const set = new SceneSet((config) => this._card(config), configs, {
+        save: (scenes) => setScenes(this._hass, key, scenes),
+        edit: () => {
+          this._editing = this._editing === key ? null : key;
+          this._arrange();
+        },
+        resetTitle: room ? "Back to the room's scenes" : undefined,
       });
-      grid.insertAdjacentHTML("beforeend", `
-        <div class="edit-row">
-          <span class="hint">Drag the scenes into the order you want; the eye shows or hides one.</span>
-          <button class="reset"><ha-icon icon="mdi:restore"></ha-icon><span>Reset</span></button>
-          <button class="edit" title="Put the scenes in another order or hide some"><ha-icon></ha-icon><span></span></button>
-        </div>`);
-      const reset = grid.querySelector(".reset");
-      reset.title = room ? "Back to the room's scenes" : "Back to the usual order, with every scene shown";
-      onActivate(reset, () => this._setScenes(key, null));
-      onActivate(grid.querySelector(".edit"), () => {
-        this._editing = this._editing === key ? null : key;
-        this._arrange();
-      });
-      const sorter = sortable(grid, () => [...grid.querySelectorAll(":scope > .cell")], () => this._editing === key, (ids) => {
-        this._setScenes(key, { order: ids, hidden: this._scenesOf(key).hidden });
-      });
-      container.appendChild(grid);
-      this._sets.set(key, { key, room, grid, tiles, sorter });
+      Object.assign(set, { key, room });
+      container.appendChild(set.grid);
+      this._sets.set(key, set);
+    }
+
+    connectedCallback() {
+      if (this._hass) watchShared(this._hass, this);
+    }
+
+    disconnectedCallback() {
+      shared.cards.delete(this);
+    }
+
+    set hass(hass) {
+      if (!this._hass) watchShared(hass, this);
+      super.hass = hass;
+    }
+
+    // Everyone's scenes changed. The first time, scenes this user arranged
+    // before they were shared are handed to Hue-Lite, unless there are some
+    // there already.
+    _sharedChanged() {
+      if (this._unshared && shared.data) {
+        if (!Object.keys(shared.data.layouts).length) {
+          for (const [key, scenes] of Object.entries(this._unshared)) setScenes(this._hass, key, scenes);
+        }
+        this._unshared = null;
+        this._save();
+      }
+      this._arrange();
+    }
+
+    async _load() {
+      await super._load();
+      if (this._layout.scenes) this._unshared = this._layout.scenes;
+      delete this._layout.scenes;
+      if (this._unshared && shared.data) this._sharedChanged();
     }
 
     _showOpen(el, open) {
@@ -1202,35 +1380,16 @@
       this._arrange();
     }
 
-    // A set's scenes: all of them in its order (as saved, then any it hasn't
-    // seen yet, like a new scene, in the default order), and the hidden ones.
-    // A light that's never been edited has its room's.
+    // A room's or light's scenes, shared by everyone; a light that's never
+    // been edited has its room's.
     _scenesOf(key) {
       const set = this._sets.get(key);
-      const all = set.tiles.map((t) => t.id);
-      const saved = this._layout.scenes[key] || (set.room ? this._scenesOf(set.room) : { order: [], hidden: [] });
-      const order = [...saved.order.filter((s) => all.includes(s)), ...all.filter((s) => !saved.order.includes(s))];
-      return { order, hidden: saved.hidden.filter((s) => all.includes(s)) };
-    }
-
-    // Save a set's scenes, or with none go back to the default (a light's
-    // room's).
-    _setScenes(key, scenes) {
-      const { [key]: _, ...others } = this._layout.scenes;
-      this._layout.scenes = scenes ? { ...others, [key]: scenes } : others;
-      this._save();
-      this._arrange();
-    }
-
-    // Show or hide one of a set's scenes.
-    _toggleHidden(key, scene) {
-      const { order, hidden } = this._scenesOf(key);
-      this._setScenes(key, { order, hidden: hidden.includes(scene) ? hidden.filter((s) => s !== scene) : [...hidden, scene] });
+      return sceneOrder(set.ids, shared.data?.layouts[key], set.room ? this._scenesOf(set.room) : undefined);
     }
 
     // Puts the rooms in order and their scenes in each room's order (hidden
     // ones left out, or dimmed while editing), and applies the collapsed,
-    // reorder and editing states. Things are only moved when they're out of
+    // reorder and editing states. Rooms are only moved when they're out of
     // order, so what has the keyboard's focus keeps it.
     _arrange() {
       const list = this._root.querySelector(".blocks");
@@ -1253,34 +1412,7 @@
         light.el.classList.toggle("collapsed", !open);
         light.bar.expanded = open;
       }
-      for (const set of this._sets.values()) {
-        const editing = this._editing === set.key;
-        const { order: scenes, hidden } = this._scenesOf(set.key);
-        const cells = new Map(set.tiles.map((t) => [t.id, t.cell]));
-        const editRow = set.grid.querySelector(".edit-row");
-        if (ids([...set.grid.querySelectorAll(":scope > .cell")]) !== scenes.join()) {
-          for (const scene of scenes) editRow.before(cells.get(scene));
-        }
-        for (const { id: scene, cell, card } of set.tiles) {
-          const off = hidden.includes(scene);
-          cell.classList.toggle("off", off);
-          cell.classList.toggle("draggable", editing);
-          card.inert = editing;
-          if (editing) cell.tabIndex = 0;
-          else cell.removeAttribute("tabindex");
-          const eye = cell.querySelector(".eye");
-          eye.title = `${off ? "Show" : "Hide"} ${card.scene.name}`;
-          eye.setAttribute("aria-label", `Show ${card.scene.name}`);
-          eye.setAttribute("aria-pressed", String(!off));
-          eye.querySelector("ha-icon").setAttribute("icon", off ? "mdi:eye-off-outline" : "mdi:eye-outline");
-        }
-        set.grid.classList.toggle("editing", editing);
-        const edit = set.grid.querySelector(".edit");
-        edit.classList.toggle("active", editing);
-        edit.querySelector("span").textContent = editing ? "Done" : "Edit scenes";
-        edit.querySelector("ha-icon").setAttribute("icon", editing ? "mdi:check" : "mdi:pencil-outline");
-        set.sorter.sync();
-      }
+      for (const set of this._sets.values()) set.arrange(this._scenesOf(set.key), this._editing === set.key);
       this._root.querySelector(".rooms").classList.toggle("reordering", this._reordering);
       const reorder = this._root.querySelector(".reorder");
       const fold = this._root.querySelector(".fold");
@@ -1326,11 +1458,30 @@
   // The whole card's folded state, kept with the blocks' under this id.
   const ALL_ROUTINES = "all";
 
+  // Its blocks come from `_blocksConfig()` ({id, name, icon}), filled by
+  // `_fillBody` and summed up by `_summary`; the Dimmers card is one too.
   class HueLiteRoutines extends CollapsibleBlocks {
     static layoutKey = "hue_lite_routines";
+    static title = "Routines";
 
     _validate(config) {
       if (!Array.isArray(config.routines)) throw new Error("routines is required");
+    }
+
+    _blocksConfig() {
+      return this._config.routines;
+    }
+
+    _fillBody(render, body, r) {
+      this._fill(render, body, r.cards);
+    }
+
+    _summary(id) {
+      return SUMMARIES[id]?.(this._hass, this._config.entities || {}) || "";
+    }
+
+    _css() {
+      return "";
     }
 
     _watching() {
@@ -1361,20 +1512,24 @@
           .chev { --mdc-icon-size: 22px; color: var(--secondary-text-color); transition: transform 180ms; flex: none; }
           .collapsed .chev { transform: rotate(-90deg); }
           .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+          ${this._css()}
         </style>
         <div class="card">
-          <div class="card-head" role="button" tabindex="0" title="Show or hide the routines">
-            <h2>Routines</h2><ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
+          <div class="card-head" role="button" tabindex="0">
+            <h2></h2><ha-icon class="chev" icon="mdi:chevron-down"></ha-icon>
           </div>
           <div class="blocks"></div>
           <div class="footer"></div>
         </div>`;
+      const title = this.constructor.title;
+      this._root.querySelector("h2").textContent = title;
+      this._root.querySelector(".card-head").title = `Show or hide the ${title.toLowerCase()}`;
       onActivate(this._root.querySelector(".card-head"), () => this._toggleCollapsed(ALL_ROUTINES));
       const list = this._root.querySelector(".blocks");
       const render = (this._rendering = {});
-      for (const r of this._config.routines) {
+      for (const r of this._blocksConfig()) {
         const el = this._block(r.id, this._heading(r));
-        this._fill(render, el.querySelector(".body"), r.cards);
+        this._fillBody(render, el.querySelector(".body"), r);
         list.appendChild(el);
       }
       this._fill(render, this._root.querySelector(".footer"), this._config.footer || []);
@@ -1424,9 +1579,143 @@
 
     _update() {
       if (!this._hass) return;
-      for (const [id, el] of this._blocks) {
-        el.querySelector(".summary").textContent = SUMMARIES[id]?.(this._hass, this._config.entities || {}) || "";
+      for (const [id, el] of this._blocks) el.querySelector(".summary").textContent = this._summary(id);
+    }
+  }
+
+  // ---- Dimmers card --------------------------------------------------------
+
+  // Each Hue dimmer as a block, like the routines: the lights it controls
+  // (its area's, or ones chosen as chips) and the scenes its On button steps
+  // through, set like a room's (drag the tiles, the eye leaves one out).
+  // Kept by Hue-Lite for everyone; only admins can change them.
+  //   {dimmers: [{id, name, area_id, area_name}], lights, scenes}
+  // `lights` are every light it could control, `scenes` the scene tiles.
+  class HueLiteDimmers extends HueLiteRoutines {
+    static layoutKey = "hue_lite_dimmers";
+    static title = "Dimmers";
+
+    _validate(config) {
+      if (!Array.isArray(config.dimmers)) throw new Error("dimmers is required");
+      this._sets = new Map();
+    }
+
+    _blocksConfig() {
+      return this._config.dimmers.map((d) => ({ ...d, icon: "mdi:remote" }));
+    }
+
+    get _admin() {
+      return Boolean(this._hass?.user?.is_admin);
+    }
+
+    _settings(id) {
+      return shared.data?.dimmers[id] || {};
+    }
+
+    // Its lights as chips (the first one for its area), then its scenes.
+    _fillBody(render, body, d) {
+      body.innerHTML = `
+        <div class="label">Controls</div>
+        <div class="chips"><button class="chip area"><ha-icon icon="mdi:check"></ha-icon><span></span></button></div>
+        <div class="label">On steps through</div>`;
+      body.querySelector(".area span").textContent = d.area_name ? `Its area · ${d.area_name}` : "Its area (none)";
+      onActivate(body.querySelector(".area"), () => setDimmer(this._hass, d.id, { lights: null }));
+      const chips = body.querySelector(".chips");
+      for (const light of this._config.lights) {
+        const chip = document.createElement("button");
+        chip.className = "chip";
+        chip.dataset.id = light;
+        chip.innerHTML = `<ha-icon icon="mdi:check"></ha-icon><span></span>`;
+        onActivate(chip, () => {
+          const chosen = this._settings(d.id).lights || [];
+          const lights = chosen.includes(light) ? chosen.filter((l) => l !== light) : [...chosen, light];
+          setDimmer(this._hass, d.id, { lights: lights.length ? lights : null });
+        });
+        chips.appendChild(chip);
       }
+      const set = new SceneSet((config) => this._card(config), this._config.scenes, {
+        save: (scenes) => setDimmer(this._hass, d.id, { scenes }),
+        hint: "Drag the scenes into the order On steps through; the eye leaves one out.",
+        resetTitle: "Back to Natural light and the presets",
+      });
+      body.appendChild(set.grid);
+      this._sets.set(d.id, set);
+    }
+
+    // One of the Hue-Lite cards inside (its scene tiles), handed hass along with the rest.
+    _card(config) {
+      const card = document.createElement(config.type.replace(/^custom:/, ""));
+      card.setConfig(config);
+      if (this._hass) card.hass = this._hass;
+      this._children.push(card);
+      return card;
+    }
+
+    _summary(id) {
+      const d = this._config.dimmers.find((x) => x.id === id);
+      const lights = this._settings(id).lights;
+      const set = this._sets.get(id);
+      const scenes = set ? set.scenes.order.filter((s) => !set.scenes.hidden.includes(s)).length : 0;
+      const controls = lights ? `${lights.length} light${lights.length === 1 ? "" : "s"}` : d?.area_name || "No area";
+      return `${controls} · ${scenes} scene${scenes === 1 ? "" : "s"}`;
+    }
+
+    connectedCallback() {
+      if (this._hass) watchShared(this._hass, this);
+    }
+
+    disconnectedCallback() {
+      shared.cards.delete(this);
+    }
+
+    set hass(hass) {
+      const first = !this._hass;
+      super.hass = hass;
+      if (first) {
+        watchShared(hass, this);
+        this._arrange();
+      }
+    }
+
+    _sharedChanged() {
+      this._arrange();
+    }
+
+    // Shows each dimmer's lights and scenes as set (editable for admins).
+    _arrange() {
+      for (const [id, el] of this._blocks) {
+        const settings = this._settings(id);
+        const chosen = settings.lights || [];
+        el.querySelector(".chip.area").classList.toggle("on", !chosen.length);
+        for (const chip of el.querySelectorAll(".chip[data-id]")) {
+          chip.classList.toggle("on", chosen.includes(chip.dataset.id));
+          chip.querySelector("span").textContent = this._hass?.states[chip.dataset.id]?.attributes.friendly_name || chip.dataset.id;
+        }
+        for (const chip of el.querySelectorAll(".chip")) {
+          chip.disabled = !this._admin;
+          chip.setAttribute("aria-pressed", String(chip.classList.contains("on")));
+        }
+        const set = this._sets.get(id);
+        if (!set) continue;
+        set.arrange(sceneOrder(set.ids, settings.scenes, shared.data?.dimmer_default), this._admin);
+        // They only show the scenes: a tap here mustn't set any lights.
+        for (const { card } of set.tiles) card.inert = true;
+      }
+      super._arrange();
+    }
+
+    _css() {
+      return `
+        ${DRAG_CSS}
+        ${SCENES_CSS}
+        .label { font-size: 13px; font-weight: 500; line-height: 20px; color: var(--secondary-text-color); padding: 0 4px; }
+        .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .chips .chip { border: 1px solid var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12)); padding: 5px 12px 5px 10px;
+                       color: var(--primary-text-color); --mdc-icon-size: 16px; }
+        .chips .chip ha-icon { display: none; }
+        .chips .chip.on { color: var(--primary-color); border-color: transparent; background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
+        .chips .chip.on ha-icon { display: inline-flex; }
+        .chips .chip:disabled { cursor: default; }`;
     }
   }
 
@@ -1436,6 +1725,7 @@
     ["hue-lite-scene-tile", HueLiteSceneTile],
     ["hue-lite-rooms", HueLiteRooms],
     ["hue-lite-routines", HueLiteRoutines],
+    ["hue-lite-dimmers", HueLiteDimmers],
   ]) {
     if (!customElements.get(tag)) customElements.define(tag, cls);
   }

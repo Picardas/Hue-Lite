@@ -50,6 +50,7 @@
   <h2>Rooms</h2>
   <div id="rooms"></div>
   <div id="routines"></div>
+  <div id="dimmers" style="margin-top: 16px"></div>
   <h2>Generated dashboard</h2>
   <pre id="config"></pre>
   <script>
@@ -140,7 +141,21 @@
         aurora: { rgb_colors: [[20, 255, 126], [110, 255, 185], [109, 250, 255], [162, 255, 69], [110, 255, 238]] },
         nebula: { rgb_colors: [[108, 21, 255], [179, 127, 255], [151, 80, 255], [222, 168, 255], [88, 135, 255]] },
       },
+      dimmers: [{ id: "dimmer_living", name: "Living room dimmer", area_id: "living_room" }],
     };
+
+    // Hue-Lite's shared settings, as its websocket keeps them: set_scenes and
+    // set_dimmer change them and tell every subscriber. ?unshared starts with
+    // scenes saved the old way, per user, to see them handed over.
+    window.sharedData = {
+      layouts: {}, dimmers: {},
+      dimmer_default: { order: ["natural", "energize", "cool_bright", "read", "relax", "rest", "nightlight", "golden_hour", "nebula", "aurora"], hidden: ["golden_hour", "nebula", "aurora"] },
+    };
+    const subscribers = new Set();
+    const publish = () => { for (const cb of subscribers) cb(JSON.parse(JSON.stringify(window.sharedData))); };
+    window.userData = location.search.includes("unshared")
+      ? { hue_lite_rooms: { order: [], collapsed: [], scenes: { living_room: { order: ["relax", "energize"], hidden: ["aurora"] } } } }
+      : {};
 
     window.calls = [];
     window.hass = {
@@ -156,12 +171,38 @@
         hall: { area_id: "hall", name: "Hall", floor_id: "ground" },
       },
       floors: { ground: { level: 0 }, first: { level: 1 } },
+      user: { is_admin: !location.search.includes("user") },
+      connection: {
+        async subscribeMessage(cb, msg) {
+          if (msg.type !== "hue_lite/subscribe") throw new Error("unknown subscription");
+          subscribers.add(cb);
+          setTimeout(publish, 0);
+          return () => subscribers.delete(cb);
+        },
+      },
       async callWS(msg) {
+        window.calls.push({ ws: msg });
         if (msg.type === "hue_lite/config") {
           if (window.notSetUp) throw { code: "not_loaded" };
           return setup;
         }
-        if (msg.type === "frontend/get_user_data") return { value: null };
+        if (msg.type === "hue_lite/set_scenes") {
+          if (msg.scenes) window.sharedData.layouts[msg.key] = msg.scenes;
+          else delete window.sharedData.layouts[msg.key];
+          setTimeout(publish, 0);
+          return null;
+        }
+        if (msg.type === "hue_lite/set_dimmer") {
+          if (!window.hass.user.is_admin) throw { code: "unauthorized" };
+          const settings = { ...window.sharedData.dimmers[msg.device_id] };
+          for (const key of ["lights", "scenes"]) if (key in msg) { if (msg[key]) settings[key] = msg[key]; else delete settings[key]; }
+          if (Object.keys(settings).length) window.sharedData.dimmers[msg.device_id] = settings;
+          else delete window.sharedData.dimmers[msg.device_id];
+          setTimeout(publish, 0);
+          return null;
+        }
+        if (msg.type === "frontend/get_user_data") return { value: window.userData[msg.key] ?? null };
+        if (msg.type === "frontend/set_user_data") { window.userData[msg.key] = msg.value; return null; }
         return null;
       },
       callService(domain, service, data, target) {
@@ -189,10 +230,11 @@
     window.ready = (async () => {
       window.dash = await customElements.get("ll-strategy-dashboard-hue-lite").generate({}, window.hass);
       document.getElementById("config").textContent = JSON.stringify(window.dash, null, 1);
-      const [home, rooms, routines] = window.dash.views[0].sections;
+      const [home, rooms, routines, dimmers] = window.dash.views[0].sections;
       for (const config of home.cards.filter((c) => c.type.startsWith("custom:"))) document.getElementById("home").appendChild(card(config));
       document.getElementById("rooms").appendChild(card(rooms.cards[0]));
       document.getElementById("routines").appendChild(card(routines.cards[0]));
+      if (dimmers) document.getElementById("dimmers").appendChild(card(dimmers.cards[0]));
     })();
   </script>
 </body>

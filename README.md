@@ -57,9 +57,14 @@ gives (Natural light's as it is now), filled and ticked while the lights are
 in it. Like Hue, each room has its own scenes, and so does each light:
 **Edit scenes** under them lets you drag the tiles into another order and
 hide some with their eye (a light has its room's until you edit its own;
-Reset takes it back), and **Reorder** drags the rooms the same way (with a
-finger, hold a moment first; the arrow keys work too). Both are saved per
-user.
+Reset takes it back). Hue-Lite keeps these, so every phone and browser shows
+the same. **Reorder** drags the rooms the same way (with a finger, hold a
+moment first; the arrow keys work too); the rooms' order, and which are
+folded, are each person's own.
+
+With Hue dimmers, a **Dimmers** card sets each one up: the lights it
+controls (its area, or lights you pick) and the scenes its On button steps
+through, dragged and hidden like a room's. Only admins can change them.
 
 ## How it works
 
@@ -94,8 +99,9 @@ user.
   whichever routine is running, or goes off if neither is (the day, after
   bedtime, or the evening with nobody home). Taking a light off Auto lets
   the routine holding it go; its labels still count next time.
-- **Hue dimmers** (RWL02x on ZHA) control their area: On steps through the
-  scenes, Off turns the lights off, Up and Down dim.
+- **Hue dimmers** (RWL02x on ZHA) control their area, or the lights chosen
+  on the Dimmers card: On steps through their scenes (Natural light and the
+  presets, unless set otherwise), Off turns the lights off, Up and Down dim.
 
 The settings are switch, time and number entities on the **Hue-Lite**
 device, so they work in automations too. `sensor.hue_lite_light_scenes` shows
