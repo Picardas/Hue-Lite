@@ -37,6 +37,7 @@ async def test_user_flow_reuses_and_creates_labels(hass: HomeAssistant) -> None:
         ("wake_up", "Wake up"),
         ("nightlight", "Nightlight"),
         ("coming_home", "Coming home"),
+        ("first_home", "First one home"),
     ):
         assert labels.async_get_label(options[f"label_{role}"]).name == name
 
@@ -44,6 +45,18 @@ async def test_user_flow_reuses_and_creates_labels(hass: HomeAssistant) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_USER})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "single_instance_allowed"
+
+
+async def test_an_older_setup_gets_the_first_one_home_label(hass: HomeAssistant, home: Home, entry: MockConfigEntry) -> None:
+    """Set up before First one home existed, Hue-Lite finds or creates its label."""
+    older = MockConfigEntry(
+        domain=DOMAIN, title="Hue-Lite", options={key: value for key, value in entry.options.items() if key != "label_first_home"}
+    )
+    older.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(older.entry_id)
+    await hass.async_block_till_done()
+    assert older.minor_version == 2
+    assert older.options["label_first_home"] == older.runtime_data.labels["first_home"] == home.labels["first_home"]
 
 
 async def test_options_flow_remaps_a_label(hass: HomeAssistant, home: Home, entry: MockConfigEntry) -> None:

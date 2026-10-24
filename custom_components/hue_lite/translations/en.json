@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Hue-Lite",
-        "description": "Hue-style scenes, a Natural light scene that follows the sun, and wake-up, evening and coming-home routines for your lights.\n\nLights take part through labels: Evening, Wake up, Nightlight, Coming home and Exclude from lighting. Hue-Lite uses the ones you already have and creates the rest.",
+        "description": "Hue-style scenes, a Natural light scene that follows the sun, and wake-up, evening and coming-home routines for your lights.\n\nLights take part through labels: Evening, Wake up, Nightlight, Coming home, First one home and Exclude from lighting. Hue-Lite uses the ones you already have and creates the rest.",
         "data": {
           "presence": "Home zone",
           "dimmers": "Hue dimmer switches"
@@ -31,6 +31,7 @@
           "label_wake_up": "Wake up",
           "label_nightlight": "Nightlight",
           "label_coming_home": "Coming home",
+          "label_first_home": "First one home",
           "label_exclude": "Excluded",
           "presence": "Home zone",
           "dimmers": "Hue dimmer switches"
@@ -39,7 +40,8 @@
           "label_evening": "Lights the evening routine takes: on before sunset, through the scenes, off at bedtime.",
           "label_wake_up": "Lights that fade up at the wake-up time.",
           "label_nightlight": "Lights that get Nightlight instead of Rest overnight (Natural light) and before bed (evening routine).",
-          "label_coming_home": "Lights that come on in Natural light (or back in the evening routine, if it has them) when someone arrives home.",
+          "label_coming_home": "Lights that come on whenever someone gets home: in the evening routine if it takes them and it's the evening, otherwise in Natural light.",
+          "label_first_home": "Like Coming home, but only when the first person gets home (the house was empty), not for everyone after: a bedroom, say.",
           "label_exclude": "Lights left out of everything (the dashboard, scenes, routines and dimmers) when they, their device or their area has this label. Hidden lights are left out too.",
           "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
           "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area."

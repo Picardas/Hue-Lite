@@ -127,7 +127,6 @@ def _stored(data: Any) -> dict[str, Any]:
         },
         "auto": [light for light in auto if isinstance(light, str)],
         "last_wake_up": _instant(data.get("last_wake_up")),
-        "last_evening": _day(data.get("last_evening")),
     }
 
 
@@ -138,14 +137,6 @@ def _instant(value: Any) -> datetime | None:
     except ValueError:
         return None
     return when if when and when.tzinfo else None
-
-
-def _day(value: Any) -> date | None:
-    """A stored date, or None."""
-    try:
-        return date.fromisoformat(value) if isinstance(value, str) else None
-    except ValueError:
-        return None
 
 
 class HueLite:
@@ -171,9 +162,6 @@ class HueLite:
         self.entity_ids: dict[str, str] = {}
         self.device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name=NAME, entry_type=DeviceEntryType.SERVICE)
         self.last_wake_up: datetime | None = None
-        # The evening (by its day) the routine last started on, so it starts
-        # once a night however it's started (see Routines._welcome_home).
-        self.last_evening: date | None = None
         # The target each followed scene's lights were last moved to.
         self.followed: dict[str, Target] = {}
         self.sender = Sender(hass)
@@ -198,7 +186,6 @@ class HueLite:
         data = _stored(await self._store.async_load())
         self.settings.update(data["settings"])
         self.last_wake_up = data["last_wake_up"]
-        self.last_evening = data["last_evening"]
         self.natural, self.evening = self._targets(dt_util.now())
         self.followed = {NATURAL: self.natural, ROUTINE: self.evening}
         self._shown = (self.natural, self.evening)
@@ -249,7 +236,6 @@ class HueLite:
             "scenes": dict(sorted(self.scenes.items())),
             "auto": sorted(self.auto),
             "last_wake_up": self.last_wake_up.isoformat() if self.last_wake_up else None,
-            "last_evening": self.last_evening.isoformat() if self.last_evening else None,
         }
 
     @callback

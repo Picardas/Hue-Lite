@@ -10,7 +10,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from . import dashboard, services
-from .const import DOMAIN, ROLES, STORAGE_KEY, STORAGE_VERSION
+from .config_flow import role_labels
+from .const import DOMAIN, ROLES, STORAGE_KEY, STORAGE_VERSION, label_option
 from .engine import HueLite, HueLiteConfigEntry
 
 PLATFORMS = [Platform.NUMBER, Platform.SENSOR, Platform.SWITCH, Platform.TIME]
@@ -33,6 +34,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> b
     entry.async_on_unload(hue_lite.async_stop)
     entry.async_on_unload(dashboard.async_add_script(hass))
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> bool:
+    """Set up before a role existed (First one home, added in 1.2), find or
+    create its label."""
+    if entry.version == 1 and entry.minor_version < 2:
+        missing = [role for role in ROLES if label_option(role) not in entry.options]
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, **role_labels(hass, missing)}, minor_version=2
+        )
     return True
 
 

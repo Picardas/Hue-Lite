@@ -25,11 +25,13 @@ def _schema(labels: bool) -> vol.Schema:
 
 
 @callback
-def _role_labels(hass: HomeAssistant) -> dict[str, str]:
-    """Each role's label: an existing one with its usual id or name, or a new one."""
+def role_labels(hass: HomeAssistant, roles: list[str] | None = None) -> dict[str, str]:
+    """Each role's label (or these roles'): an existing one with its usual
+    id or name, or a new one."""
     registry = lr.async_get(hass)
     options = {}
-    for role, (label_id, name, icon, color, description) in ROLES.items():
+    for role in roles or ROLES:
+        label_id, name, icon, color, description = ROLES[role]
         label = registry.async_get_label(label_id) or next(
             (label for label in registry.async_list_labels() if label.name.casefold() == name.casefold()), None
         )
@@ -41,10 +43,12 @@ def _role_labels(hass: HomeAssistant) -> dict[str, str]:
 
 class HueLiteConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+    # 1.2 added the First one home label.
+    MINOR_VERSION = 2
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(title=NAME, data={}, options={**user_input, **_role_labels(self.hass)})
+            return self.async_create_entry(title=NAME, data={}, options={**user_input, **role_labels(self.hass)})
         return self.async_show_form(step_id="user", data_schema=_schema(labels=False))
 
     @staticmethod

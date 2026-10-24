@@ -28,7 +28,8 @@ labels. **Configure** changes these later.
 | Evening | Taken by the evening routine: on before sunset, through the scenes, off at bedtime |
 | Wake up | Fades up to Energize at the wake-up time |
 | Nightlight | Gets Nightlight instead of Rest overnight and before bed |
-| Coming home | Comes on in Natural light when someone arrives home |
+| Coming home | Comes on whenever someone gets home |
+| First one home | Comes on only when the first person gets home (the house was empty): a bedroom, say |
 | Exclude from lighting | Left out of everything |
 
 A label counts on the light, its device or its area. Hidden lights are left
@@ -67,18 +68,19 @@ per user, with the rooms' order).
   midday, Relax at sunset, Rest at night. A light stays in it, on or off,
   until you pick another scene, change the light yourself or from an
   automation, or use one of your own Home Assistant scenes on it.
-- **Evening routine:** before sunset, the Evening lights come on dim,
-  brighten, wind down through Relax and Rest, and fade out at bedtime. It
-  needs someone home: if nobody is when it's due, it starts when the first
-  person gets home, and if it's running, the first one home gets its lights
-  that are off back on. Sun–Thu and Fri & Sat nights each have their own
-  switch and bedtime, like wake up's days.
+- **Evening routine:** before sunset, if someone's home, the Evening lights
+  come on dim, brighten, wind down through Relax and Rest, and fade out at
+  bedtime. Sun–Thu and Fri & Sat nights each have their own switch and
+  bedtime, like wake up's days.
 - **Wake up:** the Wake up lights that are off fade from a warm glow to
   Energize by your wake-up time, and can turn off again afterwards.
-- **Coming & Going:** the Coming home lights that are off come on when
-  someone arrives (optionally only after dark): in Natural light, or back in
-  the evening routine if it has them. Lights with neither label (nor Auto)
-  are left as they are. Every light can go off when everyone has left.
+- **Coming & Going:** when someone gets home (optionally only after dark),
+  the Coming home lights that are off come on, and so do the First one home
+  lights if the house was empty. Evening lights (and lights on Auto) join
+  the evening routine if it's on, except in its last half hour or so before
+  bed (its Nightlight stretch), so they don't go off again soon after; the
+  rest come on in Natural light. Every light can go off when everyone has
+  left.
 - **Auto:** the button at the end of each light's and room's bar. A light is
   on Auto while wake up or the evening routine has it, or once you put it on
   Auto: then it follows both routines whether or not it has their labels,

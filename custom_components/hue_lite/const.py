@@ -21,7 +21,8 @@ ROLES: Final = {
     "evening": ("evening", "Evening", "mdi:weather-sunset", "amber", "Taken by the evening routine"),
     "wake_up": ("wake_up", "Wake up", "mdi:weather-sunset-up", "orange", "Faded up at the wake-up time"),
     "nightlight": ("nightlight", "Nightlight", "mdi:weather-night", "red", "Gets Nightlight instead of Rest at night"),
-    "coming_home": ("coming_home", "Coming home", "mdi:home-import-outline", "green", "Put into Natural light when someone arrives"),
+    "coming_home": ("coming_home", "Coming home", "mdi:home-import-outline", "green", "Comes on whenever someone gets home"),
+    "first_home": ("first_one_home", "First one home", "mdi:home-account", "light-green", "Comes on only when the first person gets home"),
     "exclude": ("lighting_exclude", "Exclude from lighting", "mdi:lightbulb-off-outline", "grey", "Left out of Hue-Lite"),
 }
 

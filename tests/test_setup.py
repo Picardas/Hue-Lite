@@ -148,7 +148,7 @@ async def test_dashboard_script_and_config(hass: HomeAssistant, home: Home, entr
     config = connection.send_result.call_args.args[1]
     names = {label["name"] for label in config["labels"]}
     # Labels on lights and their devices, and the role labels; not the rest.
-    assert {"Lamps", "Shelf", "Evening", "Wake up", "Nightlight", "Coming home", "Exclude from lighting"} <= names
+    assert {"Lamps", "Shelf", "Evening", "Wake up", "Nightlight", "Coming home", "First one home", "Exclude from lighting"} <= names
     assert "Payroll" not in names
     assert config["roles"] == home.labels
     assert config["entities"]["light_scenes"] == "sensor.hue_lite_light_scenes"
