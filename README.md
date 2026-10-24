@@ -71,11 +71,12 @@ per user, with the rooms' order).
   come on dim, brighten, wind down through Relax and Rest, and fade out at
   bedtime. Sun–Thu and Fri & Sat nights each have their own switch and
   bedtime, like wake up's days.
-- **Wake up:** the Wake up lights fade from a warm glow to Energize by your
-  wake-up time, and can turn off again afterwards.
-- **Coming & Going:** the Coming home lights come on in Natural light when
-  someone arrives (optionally only after dark), and every light can go off
-  when everyone has left.
+- **Wake up:** the Wake up lights that are off fade from a warm glow to
+  Energize by your wake-up time, and can turn off again afterwards.
+- **Coming & Going:** the Coming home lights that are off come on when
+  someone arrives (optionally only after dark): in Natural light, or back in
+  the evening routine if it has them. Every light can go off when everyone
+  has left.
 - **Auto:** the button at the end of each light's and room's bar. A light is
   on Auto while wake up or the evening routine has it, or once you put it on
   Auto: then it follows both routines whether or not it has their labels,

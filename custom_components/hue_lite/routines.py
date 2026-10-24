@@ -51,14 +51,16 @@ class Routines:
     @callback
     def evening_moved(self, was: Evening) -> None:
         """The routine's timeline has been worked out again: start it, move
-        its lights, or fade them out at bedtime."""
+        its lights, or fade them out once the evening's over. That's
+        usually bedtime, but a bedtime after 05:00 ends it in the day, and a
+        later start set during the evening ends it until then."""
         lite = self.lite
         phase = lite.evening.phase
         if was.phase == "day" and phase in EVENING_PHASES:
             self._start_evening()
         elif phase in EVENING_PHASES:
             lite.follow(ROUTINE)
-        elif was.phase in EVENING_PHASES and phase == "night":
+        elif was.phase in EVENING_PHASES:
             lite.spawn(self._bedtime())
 
     @property
@@ -167,9 +169,12 @@ class Routines:
 
     @callback
     def _start_wake_up(self) -> None:
+        """Wake up takes its lights that are off: one that's on already is in
+        use (and with Auto, one light left on mustn't stop the rest)."""
         lights = self.lite.routine_lights("wake_up")
-        if lights and not self.lite.on(lights):
-            self.lite.spawn(self._wake_up(lights))
+        on = self.lite.on(lights)
+        if off := [light for light in lights if light not in on]:
+            self.lite.spawn(self._wake_up(off))
 
     async def _wake_up(self, lights: list[str]) -> None:
         """Fade from a dim warm glow up to Energize, reaching it at the wake-up
@@ -216,17 +221,21 @@ class Routines:
 
     @callback
     def _someone_arrived(self, parent: Context) -> None:
-        """Put the Coming home lights that are off into Natural light
-        (optionally only after dark). That's the routine's doing, not a scene
-        someone picked, so lights on Auto stay on it."""
+        """Turn on the Coming home lights that are off (optionally only after
+        dark): in Natural light, or in the evening routine if it has them
+        (switched off when everyone left, say), so they still fade out at
+        bedtime. That's the routine's doing, not a scene someone picked, so
+        lights on Auto stay on it."""
         lite = self.lite
         s = lite.settings
         if not s["coming_home_enabled"] or (s["coming_home_only_dark"] and is_up(lite.hass)):
             return
         lights = [light for light in lite.labelled("coming_home") if lite.hass.states.is_state(light, STATE_OFF)]
-        if lights:
-            lite.set_scene(lights, NATURAL)
-            lite.spawn(lite.apply(NATURAL, lights, 2, parent))
+        if evening := [light for light in lights if lite.scenes.get(light) == ROUTINE]:
+            lite.spawn(lite.apply(ROUTINE, evening, 2, parent))
+        if natural := [light for light in lights if light not in evening]:
+            lite.set_scene(natural, NATURAL)
+            lite.spawn(lite.apply(NATURAL, natural, 2, parent))
 
     @callback
     def _everyone_left(self, _now: datetime) -> None:

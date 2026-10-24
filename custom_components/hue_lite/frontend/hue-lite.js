@@ -7,8 +7,8 @@
 // (websocket `hue_lite/config`). Also defines four cards:
 //   custom:hue-lite-light-bar   a light or a room: tap to toggle, slide to dim,
 //                               Auto at the end, hold a single light for its colour dialog
-//   custom:hue-lite-scene-tile  a scene button (Natural or a preset) that lights
-//                               up while its lights are in that scene
+//   custom:hue-lite-scene-tile  a scene button (Natural light, a preset or a colour
+//                               scene) that lights up while its lights are in it
 //   custom:hue-lite-rooms       every room as a collapsible, reorderable block
 //                               headed by a bar for all its lights
 //   custom:hue-lite-routines    Wake up, Evening and Coming & Going as collapsible blocks
@@ -239,11 +239,11 @@
       "",
       "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you pick a scene for it or change it. Put on Auto, it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
       "",
-      `**Wake up**: on the days it's on (Mon–Fri and Sat & Sun each have a switch and a time), lights labelled *${label("wake_up")}* fade from a dim warm glow to Energize, reaching full brightness *at* your wake-up time.`,
+      `**Wake up**: on the days it's on (Mon–Fri and Sat & Sun each have a switch and a time), lights labelled *${label("wake_up")}* that are off fade from a dim warm glow to Energize, reaching full brightness *at* your wake-up time.`,
       "",
       `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
-      `**Coming & Going**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light, optionally only if it's after dark. When the last person leaves, every light can go off.`,
+      `**Coming & Going**: when someone arrives home, lights labelled *${label("coming_home")}* that are off come on in Natural light (or back in the evening routine, if it has them), optionally only if it's after dark. When the last person leaves, every light can go off.`,
       "",
       "**Hue dimmer switches** control the lights in their area: On steps through the scenes, Off turns them off, Up and Down dim them.",
       "",
@@ -448,7 +448,6 @@
       return 2;
     }
 
-    // A little taller than the scene buttons (56px), so lights stand apart.
     getGridOptions() {
       return { columns: "full", rows: "auto" };
     }
@@ -465,10 +464,14 @@
       this._hass.callService("light", service, data, { entity_id: entities });
     }
 
-    // How many of the bar's lights are on Auto.
-    _onAuto() {
+    // How many of the bar's lights are on Auto, of how many could be: an
+    // unavailable light can't be put on it, so it would leave a room's Auto
+    // never all on, and a tap never taking the room off it.
+    _auto() {
       const auto = this._hass?.states[this._config.scenes_entity]?.attributes.auto || [];
-      return this._config.entities.filter((id) => auto.includes(id)).length;
+      const lights = this._states().filter((s) => s.state !== "unavailable").map((s) => s.entity_id);
+      const on = lights.filter((id) => auto.includes(id)).length;
+      return { on, of: lights.length, all: on > 0 && on === lights.length };
     }
 
     set expanded(open) {
@@ -537,8 +540,7 @@
       if (auto) {
         auto.addEventListener("pointerdown", (ev) => ev.stopPropagation());
         onActivate(auto, () => {
-          const all = this._onAuto() === this._config.entities.length;
-          this._hass.callService(DOMAIN, "set_auto", { auto: !all }, { entity_id: this._config.entities });
+          this._hass.callService(DOMAIN, "set_auto", { auto: !this._auto().all }, { entity_id: this._config.entities });
         });
       }
 
@@ -577,6 +579,7 @@
     // another tap goes from there rather than sending the same command again.
     _toggle() {
       const states = this._states();
+      if (this._unavailable(states)) return;
       const on = !(this._pending?.on ?? states.some((s) => s.state === "on"));
       this._settle();
       const seen = new Map(states.map((s) => [s.entity_id, s]));
@@ -591,6 +594,11 @@
       this._pending = null;
     }
 
+    // None of the lights can be reached (or there aren't any).
+    _unavailable(states) {
+      return states.every((s) => s.state === "unavailable");
+    }
+
     _update() {
       if (!this._el || !this._hass) return;
       const { card, icon, name, state, slider } = this._el;
@@ -599,7 +607,7 @@
       const brightness = on.map((s) => s.attributes.brightness).filter((b) => typeof b === "number");
       const pct = brightness.length ? Math.max(1, Math.round((brightness.reduce((a, b) => a + b, 0) / brightness.length / 255) * 100)) : 0;
       const single = this._single ? states[0] : undefined;
-      const unavailable = this._single && (!single || single.state === "unavailable");
+      const unavailable = this._unavailable(states);
       // Settled once the lights report where the tap was taking them (a
       // report since the tap, not the state they were already in).
       const reported = this._pending && states.some((s) => s !== this._pending.seen.get(s.entity_id));
@@ -607,7 +615,7 @@
       const pending = this._pending;
 
       card.classList.toggle("on", pending ? pending.on : on.length > 0);
-      card.classList.toggle("unavailable", Boolean(unavailable));
+      card.classList.toggle("unavailable", unavailable);
       // The icon and the slider show the colour of the lights that are on.
       card.style.setProperty("--light-rgb", lightsColour(on).join(", "));
       icon.setAttribute("icon", this._config.icon || (!this._single ? "mdi:lightbulb-group"
@@ -618,7 +626,7 @@
         : this._single ? (on.length ? `${pct}%` : "Off")
         : on.length ? `${on.length} of ${states.length} on · ${pct}%` : `All ${states.length} off`;
 
-      slider.disabled = Boolean(unavailable);
+      slider.disabled = unavailable;
       slider.setAttribute("aria-label", `Brightness of ${name.textContent}`);
       if (this._root.activeElement !== slider) {
         const shown = pending?.on === false ? 0 : on.length ? pct : 0;
@@ -627,12 +635,11 @@
       }
 
       if (this._el.auto) {
-        const onAuto = this._onAuto();
-        const all = onAuto === states.length && onAuto > 0;
+        const { on: onAuto, of, all } = this._auto();
         this._el.auto.classList.toggle("all", all);
         this._el.auto.classList.toggle("some", onAuto > 0 && !all);
         this._el.auto.setAttribute("aria-pressed", all ? "true" : onAuto ? "mixed" : "false");
-        this._el.auto.title = (all ? "On Auto" : onAuto ? `${onAuto} of ${states.length} on Auto` : "Not on Auto")
+        this._el.auto.title = (all ? "On Auto" : onAuto ? `${onAuto} of ${of} on Auto` : "Not on Auto")
           + ": following wake up and the evening routine. Tap to " + (all ? "stop." : "start.");
       }
     }
@@ -724,7 +731,7 @@
         </ha-card>`;
       this._card = this._root.querySelector("ha-card");
       this._now = this._root.querySelector(".now");
-      this._looked = false;
+      this._colours = null;
       onActivate(this._card, () => {
         const target = this._config.target || {};
         if (this._config.natural) this._hass.callService(DOMAIN, "natural_light", {}, target);
@@ -748,12 +755,12 @@
     _update() {
       if (!this._card || !this._hass) return;
       // Natural light's tile shows where it is now: its colour and phase. The
-      // look is only worked out again when the colours change.
+      // look is only worked out again when the colours change (not whenever
+      // the sensor's written, which is on every scene change).
       const now = this._config.natural ? this._hass.states[this._config.natural_entity] : undefined;
-      const colours = now ? now.attributes.rgb_color : this._config.light?.rgb_colors;
-      if (colours !== this._colours || !this._looked) {
+      const colours = String(now ? now.attributes.rgb_color : this._config.light?.rgb_colors);
+      if (colours !== this._colours) {
         this._colours = colours;
-        this._looked = true;
         for (const [name, value] of Object.entries(sceneLook(this.sceneColours()))) this._card.style.setProperty(name, value);
       }
       this._now.textContent = (now && PHASES[now.state]) || "";

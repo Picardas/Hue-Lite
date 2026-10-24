@@ -39,7 +39,7 @@
           "label_evening": "Lights the evening routine takes: on before sunset, through the scenes, off at bedtime.",
           "label_wake_up": "Lights that fade up at the wake-up time.",
           "label_nightlight": "Lights that get Nightlight instead of Rest overnight (Natural light) and before bed (evening routine).",
-          "label_coming_home": "Lights that come on in Natural light when someone arrives home.",
+          "label_coming_home": "Lights that come on in Natural light (or back in the evening routine, if it has them) when someone arrives home.",
           "label_exclude": "Lights left out of everything (the dashboard, scenes, routines and dimmers) when they, their device or their area has this label. Hidden lights are left out too.",
           "presence": "The zone whose number of people decides coming home, leaving home and whether the evening routine starts.",
           "dimmers": "Let Hue Dimmer Switches (RWL02x) paired with ZHA control the lights in their area."

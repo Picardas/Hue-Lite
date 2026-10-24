@@ -75,6 +75,9 @@ from .timeline import (
 
 type HueLiteConfigEntry = ConfigEntry[HueLite]
 
+# Every scene a light can be in.
+SCENES = frozenset({NATURAL, ROUTINE, WAKE_UP, *PRESETS, *PALETTES})
+
 
 @callback
 def async_get_loaded(hass: HomeAssistant) -> HueLite | None:
@@ -97,9 +100,9 @@ def _stored(data: Any) -> dict[str, Any]:
     """The stored data, brought up to date from earlier versions (the evening
     routine's one switch is now one for Sun–Thu nights and one for Fri & Sat
     nights, both starting as it was; the Movie scene is now Nebula), with
-    anything of the wrong kind left out: a damaged file, or a setting of the
-    wrong type, which keeps its default (a bad time would break every
-    minute's tick)."""
+    anything of the wrong kind left out: a damaged file, a scene there isn't
+    any more, or a setting of the wrong type, which keeps its default (a bad
+    time would break every minute's tick)."""
     data = data if isinstance(data, dict) else {}
 
     def part(key: str, kind: type) -> Any:
@@ -117,7 +120,11 @@ def _stored(data: Any) -> dict[str, Any]:
             and type(value) is type(DEFAULT_SETTINGS[key])
             and (key not in TIMES or _is_time(value))
         },
-        "scenes": {light: renamed.get(scene, scene) for light, scene in scenes.items() if isinstance(scene, str)},
+        "scenes": {
+            light: scene
+            for light, was in scenes.items()
+            if isinstance(was, str) and (scene := renamed.get(was, was)) in SCENES
+        },
         "auto": [light for light in auto if isinstance(light, str)],
         "last_wake_up": _instant(data.get("last_wake_up")),
     }
@@ -259,7 +266,11 @@ class HueLite:
     @callback
     def async_set_setting(self, key: str, value: Any) -> None:
         """Change a setting; the timelines, routines and sensors follow
-        straight away."""
+        straight away. Setting one to what it is already does nothing, so
+        an automation switching the evening routine on again doesn't take
+        back the lights moved out of it."""
+        if self.settings[key] == value:
+            return
         self.settings[key] = value
         self.save()
         self._refresh()

@@ -103,11 +103,18 @@ async def test_bad_or_stale_saved_data_is_dropped(
     hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
 ) -> None:
     """Values of the wrong kind keep their defaults (a malformed time would
-    break every tick), and lights excluded since are let go."""
+    break every tick), and lights excluded since, or in a scene there isn't
+    any more, are let go."""
     stored(
         hass_storage,
         settings={"bedtime_weeknight": "25:99", "bedtime_fade_minutes": "lots", "wake_up_weekdays": True},
-        scenes={"light.bedroom": "relax", "light.living_room": "movie", "light.garden": "natural", "light.broken": 3},
+        scenes={
+            "light.bedroom": "relax",
+            "light.living_room": "movie",
+            "light.garden": "natural",
+            "light.broken": 3,
+            "light.desk": "sleep",
+        },
     )
     hue_lite = await set_up(hass, entry)
     assert hue_lite.settings["bedtime_weeknight"] == "23:00"
