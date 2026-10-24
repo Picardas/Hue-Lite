@@ -41,6 +41,28 @@
       static get observedAttributes() { return ["icon"]; }
       attributeChangedCallback() { this.textContent = (this.getAttribute("icon") || "").replace("mdi:", ""); }
     });
+    // A form of labelled text boxes, one per field of its schema, sending
+    // value-changed as Home Assistant's does.
+    customElements.define("ha-form", class extends HTMLElement {
+      set data(data) {
+        this._data = data;
+        if (!this._built && this.schema) {
+          this._built = true;
+          for (const field of this.schema) {
+            const label = document.createElement("label");
+            label.style.cssText = "display: flex; flex-direction: column; gap: 2px; font-size: 12px; margin-bottom: 8px;";
+            label.textContent = this.computeLabel?.(field) || field.name;
+            const input = document.createElement("input");
+            input.name = field.name;
+            input.style.cssText = "font: inherit; font-size: 14px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;";
+            input.addEventListener("input", () => this.dispatchEvent(new CustomEvent("value-changed", { detail: { value: { ...this._data, [field.name]: input.value } } })));
+            label.append(input);
+            this.append(label);
+          }
+        }
+        for (const input of this.querySelectorAll("input")) if (document.activeElement !== input) input.value = data?.[input.name] ?? "";
+      }
+    });
   </script>
   <script src="../../custom_components/hue_lite/frontend/hue-lite.js"></script>
 </head>
@@ -154,11 +176,20 @@
       : [{ url_path: "dashboard-home", title: "Home", mode: "storage", config: { views: [] } }];
     window.dashboardClaimed = false;
 
-    // Hue-Lite's shared settings, as its websocket keeps them: set_scenes and
-    // set_dimmer change them and tell every subscriber. ?unshared starts with
-    // scenes saved the old way, per user, to see them handed over.
+    // Hue-Lite's shared settings, as its websocket keeps them: set_scenes,
+    // set_dimmer, save_scene and delete_scene change them and tell every
+    // subscriber. One scene of your own, Disco, is shown in the bedroom.
+    // ?unshared starts with scenes saved the old way, per user, to see them
+    // handed over.
+    const DEFAULT_ORDER = ["energize", "cool_bright", "read", "relax", "rest", "nightlight", "natural", "golden_hour", "nebula", "aurora", "ember", "forest", "moonlit"];
     window.sharedData = {
-      layouts: {}, dimmers: {},
+      layouts: { bedroom: { order: [...DEFAULT_ORDER, "custom_disco"], hidden: [] } }, dimmers: {},
+      custom: {
+        custom_disco: {
+          name: "Disco", icon: "mdi:party-popper", colours: [[0.68, 0.31, 60], [0.17, 0.05, 40]], white: [50, 2700], drift_minutes: 1,
+          rgb_colors: [[255, 40, 20], [60, 40, 255]],
+        },
+      },
       dimmer_default: {
         order: ["natural", "energize", "cool_bright", "read", "relax", "rest", "nightlight", "golden_hour", "nebula", "aurora", "ember", "forest", "moonlit"],
         hidden: ["golden_hour", "nebula", "aurora", "ember", "forest", "moonlit"],
@@ -211,6 +242,33 @@
           for (const key of ["lights", "scenes"]) if (key in msg) { if (msg[key]) settings[key] = msg[key]; else delete settings[key]; }
           if (Object.keys(settings).length) window.sharedData.dimmers[msg.device_id] = settings;
           else delete window.sharedData.dimmers[msg.device_id];
+          setTimeout(publish, 0);
+          return null;
+        }
+        if (msg.type === "hue_lite/save_scene") {
+          const data = window.sharedData;
+          const id = msg.scene || `custom_${Math.random().toString(16).slice(2, 8)}`;
+          data.custom[id] = {
+            name: msg.name, icon: msg.icon, colours: msg.colours.map((c) => [0.4, 0.4, c.brightness]), white: [50, 2700],
+            drift_minutes: msg.drift_minutes, rgb_colors: msg.colours.map((c) => c.rgb),
+          };
+          for (const key of msg.show?.layouts || []) {
+            const s = data.layouts[key] || { order: DEFAULT_ORDER, hidden: [] };
+            data.layouts[key] = { order: [...s.order, id], hidden: s.hidden };
+          }
+          for (const d of msg.show?.dimmers || []) {
+            const s = data.dimmers[d]?.scenes || data.dimmer_default;
+            data.dimmers[d] = { ...data.dimmers[d], scenes: { order: [...s.order, id], hidden: s.hidden } };
+          }
+          setTimeout(publish, 0);
+          return { id };
+        }
+        if (msg.type === "hue_lite/delete_scene") {
+          const data = window.sharedData;
+          delete data.custom[msg.scene];
+          const forget = (s) => s && { order: s.order.filter((x) => x !== msg.scene), hidden: s.hidden.filter((x) => x !== msg.scene) };
+          for (const key of Object.keys(data.layouts)) data.layouts[key] = forget(data.layouts[key]);
+          for (const d of Object.values(data.dimmers)) if (d.scenes) d.scenes = forget(d.scenes);
           setTimeout(publish, 0);
           return null;
         }
@@ -268,6 +326,18 @@
       page.hass = window.hass;
       document.body.appendChild(page);
     })();
+
+    // ?editor opens the scene editor on Disco, with a third colour.
+    if (location.search.includes("editor")) {
+      window.ready.then(() => setTimeout(() => {
+        document.querySelector("#rooms hue-lite-rooms").shadowRoot.querySelector('.block[data-id="bedroom"] .cell[data-id="custom_disco"] .pen').click();
+        const ed = document.querySelector("hue-lite-scene-editor").shadowRoot;
+        ed.querySelector(".more").click();
+        const picker = ed.querySelectorAll('input[type="color"]')[2];
+        picker.value = "#ff40c0";
+        picker.dispatchEvent(new Event("input"));
+      }, 300));
+    }
   </script>
 </body>
 </html>

@@ -173,10 +173,10 @@ Also fixed today: `services.yaml` (the preset options), `services.py` (the
   - From a dimmer: just that dimmer.
   - This needs each set to know its area, so `room()` and `areaBlocks()`
     pass it.
-- **Editor dialog** (new `hue-lite-scene-editor`):
-  - Built with `ha-form`: name (text), icon (`icon` selector), and a list
-    of 1–8 colours (`color_rgb` selector plus a 1–100 brightness slider for
-    each).
+- **Editor dialog** (new `hue-lite-scene-editor`, a native `<dialog>`):
+  - Name and icon with `ha-form` (`text` and `icon` selectors), then a list
+    of 1–8 colours, each a native colour picker plus a 1–100 brightness
+    slider (simpler than one `ha-form` whose schema changes per row).
   - Add and remove colour rows. One row makes a static scene; more make a
     dynamic one, which shows a drift slider (1–60 minutes).
   - A live preview swatch uses `sceneLook`.

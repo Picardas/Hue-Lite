@@ -16,8 +16,9 @@
 //   custom:hue-lite-dimmers     each Hue dimmer: the lights it controls and its scenes
 //   custom:hue-lite-light-card  one block of the Lights dashboard (a light, room or
 //                               label group) for any dashboard, in the card picker
+//   hue-lite-scene-editor       the dialog for making or changing one of your own scenes
 //
-// Each room's and light's scenes, and the dimmers' settings, are kept by
+// Each room's and light's scenes, your own scenes, and the dimmers' settings, are kept by
 // Hue-Lite and shared by every dashboard (websocket `hue_lite/subscribe`);
 // the rest of the layout is each person's own.
 //
@@ -53,6 +54,9 @@
     { id: "forest", name: "Forest", icon: "mdi:pine-tree" },
     { id: "moonlit", name: "Moonlit", icon: "mdi:moon-waning-crescent" },
   ];
+  const BUILT_IN = [...PRESETS, ...COLOUR_SCENES];
+  // Your own scenes (kept by Hue-Lite, in the shared settings) have ids like this.
+  const isCustom = (id) => id.startsWith("custom_");
 
   // ---- Registry helpers ----------------------------------------------------
 
@@ -115,12 +119,24 @@
   }
 
   // A block for the rooms card: a bar for its lights, with its icon (and
-  // name, or the light's own), heading the block, over their scenes.
-  function room(setup, id, name, icon, lights, target) {
+  // name, or the light's own), heading the block, over their scenes. `show`
+  // says where a scene made from it is shown ({layouts, dimmers}): by
+  // default, just here.
+  function room(setup, id, name, icon, lights, target, show = { layouts: [id], dimmers: [] }) {
     return {
       id,
+      show,
       head: lightBar(setup, lights, { name, icon, expandable: true, heading: true }),
       scenes: sceneTiles(setup, lights, target),
+    };
+  }
+
+  // Where a scene made in an area is shown: every block of the area (the
+  // room's, and each of its lights') and its dimmers.
+  function areaShow(setup, area, lights) {
+    return {
+      layouts: [area, ...lights.map((light) => `${area}|${light}`)],
+      dimmers: (setup.dimmers || []).filter((d) => d.area_id && d.area_id === area).map((d) => d.id),
     };
   }
 
@@ -128,8 +144,9 @@
   // is that light); with several, one per light, each with the room's icon
   // and its own name and scenes, rather than one for them all.
   function areaBlocks(setup, id, name, icon, lights, target) {
-    if (lights.length === 1) return [room(setup, id, name, icon, lights, target)];
-    return lights.map((light) => room(setup, `${id}|${light}`, undefined, icon, [light], { entity_id: [light] }));
+    const show = areaShow(setup, id, lights);
+    if (lights.length === 1) return [room(setup, id, name, icon, lights, target, show)];
+    return lights.map((light) => room(setup, `${id}|${light}`, undefined, icon, [light], { entity_id: [light] }, show));
   }
 
   function whenOn(toggle, row) {
@@ -272,6 +289,8 @@
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
       "**Colour scenes**: Golden hour, Nebula, Aurora, Ember, Forest and Moonlit spread their colours across a room's colour bulbs, each at its own brightness, and drift slowly between them, a step every three minutes.",
+      "",
+      "**Your own scenes**: Edit scenes under any room's scenes, then the + tile at the end, makes one: one colour (static) or up to eight, each at its own brightness, drifting at their own speed. The pencil on a tile changes one of yours, or starts a copy of a built-in scene. A new scene shows in the room it was made in and on its dimmers; elsewhere Edit scenes shows it.",
       "",
       "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you pick a scene for it or change it. Put on Auto, it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
       "",
@@ -711,6 +730,7 @@
   // tapped, until the lights report it (or PENDING_MS passes).
   //   {natural: true, natural_entity, entities, target, scenes_entity}   Natural light
   //   {preset: id, light, entities, target, scenes_entity}               a preset or colour scene
+  //   {preset: id, name, icon, light, ...}                               one of your own
   // Natural light's tile takes its colour and phase from `natural_entity`, as
   // it is now; the others' colours are their `light` ({rgb_colors}).
   // `scenes_entity` says which scene each light is in (attributes `scenes` and
@@ -719,7 +739,8 @@
   // dimmer's): a tap does nothing, and it's never ticked.
   class HueLiteSceneTile extends HueLiteCard {
     setConfig(config) {
-      this._scene = config.natural ? NATURAL : [...PRESETS, ...COLOUR_SCENES].find((p) => p.id === config.preset);
+      this._scene = config.natural ? NATURAL : BUILT_IN.find((p) => p.id === config.preset)
+        || (config.name && { id: config.preset, name: config.name, icon: config.icon || "mdi:palette" });
       if (!this._scene) throw new Error(`unknown preset ${config.preset}`);
       super.setConfig(config);
     }
@@ -777,10 +798,13 @@
           ha-card.on .check { display: block; }
         </style>
         <ha-card role="button" tabindex="0">
-          <div class="circle"><ha-icon icon="${this._scene.icon}"></ha-icon></div>
-          <div class="text"><div class="name">${this._scene.name}</div><div class="now"></div></div>
+          <div class="circle"><ha-icon></ha-icon></div>
+          <div class="text"><div class="name"></div><div class="now"></div></div>
           <ha-icon class="check" icon="mdi:check-circle"></ha-icon>
         </ha-card>`;
+      // Your own scenes' names are anyone's text: never HTML.
+      this._root.querySelector(".circle ha-icon").setAttribute("icon", this._scene.icon);
+      this._root.querySelector(".name").textContent = this._scene.name;
       this._card = this._root.querySelector("ha-card");
       this._now = this._root.querySelector(".now");
       this._colours = null;
@@ -912,6 +936,11 @@
       if (this._hass) card.hass = this._hass;
       this._children.push(card);
       return card;
+    }
+
+    // Stop handing hass to a card that's gone (one of your own scenes, deleted).
+    _forget(card) {
+      this._children = this._children.filter((c) => c !== card);
     }
 
     get _layoutKey() {
@@ -1126,15 +1155,17 @@
   // ---- Scene sets ----------------------------------------------------------
 
   // A set's scenes as saved ({order, hidden}), completed: in the saved order
-  // then any it hasn't seen yet (a new scene) in the default one, shown (or
-  // with `unseenHidden`, hidden: a dimmer's cycle doesn't change by itself),
-  // or `fallback` when nothing's saved.
-  function sceneOrder(all, saved, fallback, unseenHidden = false) {
+  // then any it hasn't seen yet in the default one, or `fallback` when
+  // nothing's saved. Unseen ones are hidden when `hideUnseen` says so: by
+  // default your own scenes (shown only where they were made), while a new
+  // built-in one shows; a dimmer's cycle hides them all, as it doesn't
+  // change by itself.
+  function sceneOrder(all, saved, fallback, hideUnseen = isCustom) {
     const s = saved || fallback || { order: [], hidden: [] };
     const unseen = all.filter((id) => !s.order.includes(id));
     return {
       order: [...s.order.filter((id) => all.includes(id)), ...unseen],
-      hidden: [...s.hidden.filter((id) => all.includes(id)), ...(unseenHidden ? unseen : [])],
+      hidden: [...s.hidden.filter((id) => all.includes(id)), ...unseen.filter(hideUnseen)],
     };
   }
 
@@ -1148,11 +1179,16 @@
     .cell > hue-lite-scene-tile { display: block; height: 100%; }
     .scenes:not(.editing) > .cell.off { display: none; }
     .scenes.editing > .cell.off > hue-lite-scene-tile { opacity: 0.35; }
-    .eye { display: none; position: absolute; top: 4px; left: 4px; width: 30px; height: 30px; padding: 0; justify-content: center;
+    :is(.eye, .pen) { display: none; position: absolute; top: 4px; left: 4px; width: 30px; height: 30px; padding: 0; justify-content: center;
            --mdc-icon-size: 18px; color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
            background: var(--ha-card-background, var(--card-background-color, #fff)); }
-    .eye:hover { background: var(--ha-card-background, var(--card-background-color, #fff)); }
-    .scenes.editing > .cell > .eye { display: inline-flex; }
+    :is(.eye, .pen):hover { background: var(--ha-card-background, var(--card-background-color, #fff)); }
+    .pen { left: auto; right: 4px; }
+    .scenes.editing > .cell > :is(.eye, .pen) { display: inline-flex; }
+    .add { display: none; grid-column: span 4; height: 88px; box-sizing: border-box; flex-direction: column; justify-content: center;
+           border: 2px dashed var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12));
+           border-radius: var(--ha-card-border-radius, 12px); --mdc-icon-size: 24px; }
+    .scenes.editing > .add { display: inline-flex; }
     .edit-row { grid-column: span 12; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
     .edit-row .hint { flex: 1; padding-left: 4px; }
     .scenes:not(.editing) > .edit-row :is(.hint, .reset), .edit-row[hidden] { display: none; }`;
@@ -1160,33 +1196,29 @@
   // A set of scene tiles (each a third of the grid's width), with a row
   // under them: while it's being edited the tiles drag into another order,
   // their eye shows or hides them, and Reset goes back to the default.
-  // `make(config)` makes a tile card (so its holder hands it hass);
+  // `holder` makes the tile cards (`_card`, so it hands them hass) and
+  // forgets ones that go (`_forget`). `configs` are the built-in scenes'
+  // tiles; your own scenes join them (`sync`) with the same lights and target.
   // `save(scenes)` keeps a new {order, hidden}, or null for the default;
-  // `edit()`, if given, starts or stops editing from an Edit scenes button.
+  // `edit()`, if given, starts or stops editing from an Edit scenes button;
+  // `editor(config)`, if given, opens the scene editor while editing: from a
+  // tile's pencil (its config: one of your own to change, or a built-in one
+  // to copy), or from the + tile at the end (null: a new one).
   class SceneSet {
-    constructor(make, configs, { save, edit, hint, resetTitle }) {
+    constructor(holder, configs, { save, edit, editor, hint, resetTitle }) {
+      this.holder = holder;
+      this.save = save;
+      this.editor = editor;
       this.editing = false;
       this.grid = document.createElement("div");
       this.grid.className = "scenes";
-      this.tiles = configs.map((config) => {
-        const cell = document.createElement("div");
-        const card = make(config);
-        cell.className = "cell";
-        cell.dataset.id = card.scene.id;
-        cell.innerHTML = `<button class="eye"><ha-icon></ha-icon></button>`;
-        cell.prepend(card);
-        const eye = cell.querySelector(".eye");
-        onActivate(eye, () => {
-          const { order, hidden } = this.scenes;
-          const id = card.scene.id;
-          save({ order, hidden: hidden.includes(id) ? hidden.filter((s) => s !== id) : [...hidden, id] });
-          eye.focus();
-        });
-        this.grid.appendChild(cell);
-        return { id: card.scene.id, cell, card };
-      });
-      this.ids = this.tiles.map((t) => t.id);
-      this.scenes = sceneOrder(this.ids);
+      const { preset, light, ...base } = configs.find((c) => c.preset) || {};
+      this.base = base;
+      this.custom = null;
+      this.tiles = [];
+      this.grid.innerHTML = editor
+        ? `<button class="add" title="Make a scene of your own"><ha-icon icon="mdi:plus"></ha-icon><span>New scene</span></button>` : "";
+      if (editor) onActivate(this.grid.querySelector(".add"), () => editor(null));
       this.grid.insertAdjacentHTML("beforeend", `
         <div class="edit-row">
           <span class="hint"></span>
@@ -1198,9 +1230,65 @@
       reset.title = resetTitle || "Back to the usual order, with every scene shown";
       onActivate(reset, () => save(null));
       if (edit) onActivate(this.grid.querySelector(".edit"), edit);
+      for (const config of configs) this._add(config);
+      this.scenes = sceneOrder(this.ids);
       this.sorter = sortable(this.grid, () => [...this.grid.querySelectorAll(":scope > .cell")], () => this.editing, (ids) => {
         save({ order: ids, hidden: this.scenes.hidden });
       });
+    }
+
+    get ids() {
+      return this.tiles.map((t) => t.id);
+    }
+
+    // Where tiles go: before the + tile, or the row under them.
+    get _end() {
+      return this.grid.querySelector(":scope > .add") || this.grid.querySelector(".edit-row");
+    }
+
+    // A tile, with its eye (and pencil, in a set with the editor; Natural
+    // light has none, as it isn't made of colours).
+    _add(config) {
+      const cell = document.createElement("div");
+      const card = this.holder._card(config);
+      const tile = { id: card.scene.id, cell, card, config };
+      cell.className = "cell";
+      cell.dataset.id = tile.id;
+      cell.innerHTML = `<button class="eye"><ha-icon></ha-icon></button>${this.editor && !config.natural
+        ? `<button class="pen"><ha-icon icon="mdi:pencil-outline"></ha-icon></button>` : ""}`;
+      cell.prepend(card);
+      const eye = cell.querySelector(".eye");
+      onActivate(eye, () => {
+        const { order, hidden } = this.scenes;
+        this.save({ order, hidden: hidden.includes(tile.id) ? hidden.filter((s) => s !== tile.id) : [...hidden, tile.id] });
+        eye.focus();
+      });
+      const pen = cell.querySelector(".pen");
+      if (pen) onActivate(pen, () => this.editor(tile.config));
+      this._end.before(cell);
+      this.tiles.push(tile);
+    }
+
+    // Your own scenes as they are now (by id, from the shared settings): a
+    // new one gets a tile, a changed one's is redrawn, a deleted one's goes.
+    sync(custom = {}) {
+      const now = JSON.stringify(custom);
+      if (now === this.custom) return;
+      this.custom = now;
+      for (const tile of this.tiles.filter((t) => isCustom(t.id) && !custom[t.id])) {
+        tile.cell.remove();
+        this.holder._forget(tile.card);
+      }
+      this.tiles = this.tiles.filter((t) => !isCustom(t.id) || custom[t.id]);
+      for (const [id, scene] of Object.entries(custom)) {
+        const config = { ...this.base, preset: id, name: scene.name, icon: scene.icon, light: { rgb_colors: scene.rgb_colors } };
+        const tile = this.tiles.find((t) => t.id === id);
+        if (!tile) this._add(config);
+        else if (JSON.stringify(config) !== JSON.stringify(tile.config)) {
+          tile.config = config;
+          tile.card.setConfig(config);
+        }
+      }
     }
 
     // Shows `scenes` (completed, as sceneOrder makes them), editing or not.
@@ -1211,8 +1299,9 @@
       this.editing = editing;
       const cells = new Map(this.tiles.map((t) => [t.id, t.cell]));
       const row = this.grid.querySelector(".edit-row");
+      const end = this._end;
       const shown = [...this.grid.querySelectorAll(":scope > .cell")].map((c) => c.dataset.id);
-      if (shown.join() !== scenes.order.join()) for (const id of scenes.order) row.before(cells.get(id));
+      if (shown.join() !== scenes.order.join()) for (const id of scenes.order) end.before(cells.get(id));
       for (const { id, cell, card } of this.tiles) {
         const off = scenes.hidden.includes(id);
         cell.classList.toggle("off", off);
@@ -1226,6 +1315,8 @@
         eye.setAttribute("aria-label", `Show ${card.scene.name}`);
         eye.setAttribute("aria-pressed", String(!off));
         eye.querySelector("ha-icon").setAttribute("icon", off ? "mdi:eye-off-outline" : "mdi:eye-outline");
+        const pen = cell.querySelector(".pen");
+        if (pen) pen.title = isCustom(id) ? `Change ${card.scene.name}` : `Make a scene from ${card.scene.name}`;
       }
       this.grid.classList.toggle("editing", editing);
       const edit = this.grid.querySelector(".edit");
@@ -1319,7 +1410,7 @@
         head.appendChild(bar);
         const el = this._block(r.id, head);
         list.appendChild(el);
-        if (r.scenes?.length) this._sceneSet(r.id, r.scenes, el.querySelector(".body"));
+        if (r.scenes?.length) this._sceneSet(r.id, r.scenes, el.querySelector(".body"), r.show);
       }
 
       if (this._config.toolbar === false) return;
@@ -1337,14 +1428,16 @@
       });
     }
 
-    // A block's scene tiles (shared by everyone under its id), added to `container`.
-    _sceneSet(key, configs, container) {
-      const set = new SceneSet((config) => this._card(config), configs, {
+    // A block's scene tiles (shared by everyone under its id), added to
+    // `container`. A scene made from them is shown where `show` says.
+    _sceneSet(key, configs, container, show = { layouts: [key], dimmers: [] }) {
+      const set = new SceneSet(this, configs, {
         save: (scenes) => setScenes(this._hass, key, scenes),
         edit: () => {
           this._editing = this._editing === key ? null : key;
           this._arrange();
         },
+        editor: (config) => openSceneEditor(this._hass, config, show),
       });
       set.key = key;
       container.appendChild(set.grid);
@@ -1395,6 +1488,7 @@
       }
       this._sorter.sync();
       for (const set of this._sets.values()) {
+        set.sync(shared.data?.custom);
         set.arrange(sceneOrder(set.ids, shared.data?.layouts[set.key]), this._editing === set.key);
       }
       this._root.querySelector(".rooms").classList.toggle("reordering", this._reordering);
@@ -1618,8 +1712,9 @@
         });
         chips.appendChild(chip);
       }
-      const set = new SceneSet((config) => this._card(config), this._config.scenes, {
+      const set = new SceneSet(this, this._config.scenes, {
         save: (scenes) => setDimmer(this._hass, d.id, { scenes }),
+        editor: (config) => openSceneEditor(this._hass, config, { layouts: [], dimmers: [d.id] }),
         hint: "Drag the scenes into the order On steps through; the eye leaves one out.",
         resetTitle: "Back to Natural light and the presets",
       });
@@ -1656,7 +1751,8 @@
         }
         const set = this._sets.get(id);
         if (!set) continue;
-        set.arrange(sceneOrder(set.ids, settings.scenes, shared.data?.dimmer_default, true), this._admin);
+        set.sync(shared.data?.custom);
+        set.arrange(sceneOrder(set.ids, settings.scenes, shared.data?.dimmer_default, () => true), this._admin);
         // They only show the scenes: a tap here mustn't set any lights.
         for (const { card } of set.tiles) card.inert = true;
       }
@@ -1675,6 +1771,205 @@
         .chips .chip.on { color: var(--primary-color); border-color: transparent; background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
         .chips .chip.on ha-icon { display: inline-flex; }
         .chips .chip:disabled { cursor: default; }`;
+    }
+  }
+
+  // ---- Scene editor --------------------------------------------------------
+
+  const hex = (rgb) => `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+  const rgbOf = (value) => [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16));
+
+  // Opens the scene editor for a tile's config: one of your own scenes to
+  // change, a copy of a built-in one, or (null) a new one, which is shown
+  // where `show` says ({layouts, dimmers}: where it was made).
+  function openSceneEditor(hass, config, show) {
+    const id = config && isCustom(config.preset) ? config.preset : null;
+    const mine = id && shared.data?.custom?.[id];
+    const builtIn = config && BUILT_IN.find((p) => p.id === config.preset);
+    let scene = { name: "", icon: "mdi:palette", drift_minutes: 3, colours: [{ rgb: [255, 170, 90], brightness: 70 }] };
+    if (mine) {
+      scene = { ...mine, colours: mine.rgb_colors.map((rgb, i) => ({ rgb, brightness: mine.colours[i][2] })) };
+    } else if (builtIn) {
+      const { rgb_colors: rgbs = [], brightness = [] } = config.light || {};
+      scene = {
+        name: `Copy of ${builtIn.name}`.slice(0, 30),
+        icon: builtIn.icon,
+        drift_minutes: 3,
+        colours: rgbs.map((rgb, i) => ({ rgb, brightness: brightness[i] || 70 })),
+      };
+    }
+    if (config && !mine && !builtIn) return;
+    const editor = document.createElement("hue-lite-scene-editor");
+    document.body.appendChild(editor);
+    editor.open(hass, id, scene, id ? null : show);
+  }
+
+  // A dialog for one of your own scenes: its name and icon, then one to
+  // eight colours, each with its brightness (one colour: a static scene;
+  // more: a dynamic one, drifting between them at its own speed), with a
+  // swatch of how its tile looks. Save sends it to Hue-Lite, which tells
+  // every dashboard; Delete (tapped twice, to be sure) deletes it.
+  class HueLiteSceneEditor extends HTMLElement {
+    open(hass, id, scene, show) {
+      this._hass = hass;
+      this._id = id;
+      this._show = show;
+      this._value = { name: scene.name, icon: scene.icon };
+      this._drift = scene.drift_minutes || 3;
+      this._colours = scene.colours.slice(0, 8).map((c) => ({ rgb: [...c.rgb], brightness: c.brightness }));
+      if (!this._colours.length) this._colours.push({ rgb: [255, 170, 90], brightness: 70 });
+      const root = this.attachShadow({ mode: "open" });
+      root.innerHTML = `
+        <style>
+          ${FOCUS_CSS}
+          dialog { border: none; border-radius: var(--ha-dialog-border-radius, 24px); padding: 24px; box-sizing: border-box;
+                   width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - 32px);
+                   background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color);
+                   font-family: var(--paper-font-body1_-_font-family, inherit); }
+          dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+          header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+          h2 { flex: 1; margin: 0; font-size: 20px; font-weight: 500; }
+          .swatch { width: 40px; height: 40px; border-radius: 50%; background: var(--swatch); flex: none; }
+          .label { font-size: 13px; font-weight: 500; color: var(--secondary-text-color); margin: 16px 0 4px; }
+          .row { display: flex; align-items: center; gap: 8px; height: 40px; }
+          input[type="color"] { width: 40px; height: 32px; padding: 0; border: none; background: none; cursor: pointer; flex: none; }
+          input[type="range"] { flex: 1; min-width: 0; accent-color: var(--primary-color); }
+          .value { width: 52px; font-size: 13px; color: var(--secondary-text-color); text-align: right; flex: none; }
+          button { border: none; background: none; font: inherit; font-size: 14px; cursor: pointer; color: var(--primary-color);
+                   display: inline-flex; align-items: center; gap: 4px; padding: 8px 12px; border-radius: 18px; --mdc-icon-size: 20px; }
+          button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
+          button[hidden], .drift[hidden] { display: none; }
+          .remove { padding: 6px; color: var(--secondary-text-color); }
+          .error { color: var(--error-color, #db4437); font-size: 13px; min-height: 18px; margin-top: 8px; }
+          .actions { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+          .actions .space { flex: 1; }
+          .delete { color: var(--error-color, #db4437); }
+          .save { background: var(--primary-color); color: var(--text-primary-color, #fff); }
+          .save:hover { background: var(--primary-color); filter: brightness(1.08); }
+        </style>
+        <dialog>
+          <header><div class="swatch"></div><h2></h2></header>
+          <ha-form></ha-form>
+          <div class="label">Colours</div>
+          <div class="colours"></div>
+          <button class="more"><ha-icon icon="mdi:plus"></ha-icon><span>Add a colour</span></button>
+          <div class="drift">
+            <div class="label">Drift between them</div>
+            <div class="row"><input type="range" min="1" max="60" step="1" aria-label="Minutes per step"><span class="value"></span></div>
+          </div>
+          <div class="error" role="alert"></div>
+          <div class="actions">
+            <button class="delete"></button><span class="space"></span>
+            <button class="cancel">Cancel</button><button class="save">Save</button>
+          </div>
+        </dialog>`;
+      const $ = (sel) => root.querySelector(sel);
+      this._dialog = $("dialog");
+      $("h2").textContent = id ? "Change scene" : "New scene";
+      const form = $("ha-form");
+      form.hass = hass;
+      form.schema = [
+        { name: "name", required: true, selector: { text: {} } },
+        { name: "icon", selector: { icon: {} } },
+      ];
+      form.computeLabel = (field) => ({ name: "Name", icon: "Icon" })[field.name];
+      form.data = this._value;
+      form.addEventListener("value-changed", (ev) => {
+        this._value = { ...this._value, ...ev.detail.value };
+        form.data = this._value;
+      });
+      const drift = $(".drift input");
+      drift.value = this._drift;
+      drift.addEventListener("input", () => {
+        this._drift = Number(drift.value);
+        this._showValues();
+      });
+      onActivate($(".more"), () => {
+        const last = this._colours[this._colours.length - 1];
+        this._colours.push({ rgb: [...last.rgb], brightness: last.brightness });
+        this._rows();
+      });
+      const remove = $(".delete");
+      remove.hidden = !id;
+      remove.textContent = "Delete";
+      onActivate(remove, () => {
+        if (remove.textContent === "Delete") remove.textContent = "Tap again to delete";
+        else this._send({ type: `${DOMAIN}/delete_scene`, scene: id });
+      });
+      onActivate($(".cancel"), () => this._dialog.close());
+      onActivate($(".save"), () => this._save());
+      this._dialog.addEventListener("close", () => this.remove());
+      this._rows();
+      this._dialog.showModal();
+    }
+
+    // A row for each colour: its colour, its brightness and (with more than one) a cross.
+    _rows() {
+      const list = this.shadowRoot.querySelector(".colours");
+      list.replaceChildren();
+      this._colours.forEach((colour, i) => {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML = `<input type="color"><input type="range" min="1" max="100" step="1"><span class="value"></span>
+          <button class="remove"><ha-icon icon="mdi:close"></ha-icon></button>`;
+        const [picker, slider] = row.querySelectorAll("input");
+        picker.value = hex(colour.rgb);
+        picker.setAttribute("aria-label", `Colour ${i + 1}`);
+        picker.addEventListener("input", () => {
+          colour.rgb = rgbOf(picker.value);
+          this._showValues();
+        });
+        slider.value = colour.brightness;
+        slider.setAttribute("aria-label", `Brightness of colour ${i + 1}`);
+        slider.addEventListener("input", () => {
+          colour.brightness = Number(slider.value);
+          this._showValues();
+        });
+        const remove = row.querySelector(".remove");
+        remove.title = "Remove this colour";
+        remove.hidden = this._colours.length === 1;
+        onActivate(remove, () => {
+          this._colours.splice(i, 1);
+          this._rows();
+        });
+        list.appendChild(row);
+      });
+      this.shadowRoot.querySelector(".more").hidden = this._colours.length >= 8;
+      this._showValues();
+    }
+
+    // The swatch, the brightnesses and the drift (only for more than one colour) as they are now.
+    _showValues() {
+      const root = this.shadowRoot;
+      for (const [name, value] of Object.entries(sceneLook(this._colours.map((c) => c.rgb)))) this._dialog.style.setProperty(name, value);
+      root.querySelectorAll(".colours .value").forEach((el, i) => { el.textContent = `${this._colours[i].brightness}%`; });
+      root.querySelector(".drift").hidden = this._colours.length === 1;
+      root.querySelector(".drift .value").textContent = `${this._drift} min`;
+    }
+
+    _save() {
+      const name = String(this._value.name || "").trim().slice(0, 30);
+      if (!name) {
+        this.shadowRoot.querySelector(".error").textContent = "Give it a name.";
+        return;
+      }
+      const message = {
+        type: `${DOMAIN}/save_scene`, name, icon: this._value.icon || "mdi:palette", colours: this._colours, drift_minutes: this._drift,
+      };
+      if (this._id) message.scene = this._id;
+      else if (this._show) message.show = this._show;
+      this._send(message);
+    }
+
+    // Sends it to Hue-Lite; closes once it's done, or says why not.
+    async _send(message) {
+      try {
+        await this._hass.callWS(message);
+        this._dialog.close();
+      } catch (err) {
+        this.shadowRoot.querySelector(".error").textContent = err?.code === "too_many"
+          ? "There are too many scenes of your own: delete one first." : `Couldn't do that: ${err?.message || err}`;
+      }
     }
   }
 
@@ -1700,15 +1995,17 @@
       const entry = hass.entities?.[entity];
       if (!entry || !hass.states[entity]) return null;
       const areaId = areaOf(hass, entry);
-      const alone = lights.filter((x) => areaOf(hass, x) === areaId).length <= 1;
-      const id = `${areaId || "no-area"}${alone ? "" : `|${entity}`}`;
+      const inArea = ids(lights.filter((x) => areaOf(hass, x) === areaId));
+      const id = `${areaId || "no-area"}${inArea.length <= 1 ? "" : `|${entity}`}`;
       const icon = hass.areas?.[areaId]?.icon || (areaId ? "mdi:texture-box" : "mdi:lightbulb-question-outline");
-      return room(setup, id, undefined, icon, [entity], { entity_id: [entity] });
+      return room(setup, id, undefined, icon, [entity], { entity_id: [entity] }, areaShow(setup, areaId || "no-area", inArea));
     }
     if (area) {
       const inArea = ids(lights.filter((x) => areaOf(hass, x) === area));
       const a = hass.areas?.[area];
-      return inArea.length ? room(setup, area, a?.name || area, a?.icon || "mdi:texture-box", inArea, { area_id: area }) : null;
+      return inArea.length
+        ? room(setup, area, a?.name || area, a?.icon || "mdi:texture-box", inArea, { area_id: area }, areaShow(setup, area, inArea))
+        : null;
     }
     const tagged = ids(lights.filter((x) => labelsOf(hass, x).has(label)));
     const l = setup.labels.find((x) => x.label_id === label);
@@ -1822,6 +2119,7 @@
     ["hue-lite-rooms", HueLiteRooms],
     ["hue-lite-routines", HueLiteRoutines],
     ["hue-lite-dimmers", HueLiteDimmers],
+    ["hue-lite-scene-editor", HueLiteSceneEditor],
   ]) {
     if (!customElements.get(tag)) customElements.define(tag, cls);
   }

@@ -38,6 +38,9 @@ Lights join in by **area** and **label**, with no YAML for each light.
 - **Colour scenes.** Golden hour, Nebula, Aurora, Ember, Forest and Moonlit.
   Each spreads its colours across a room's bulbs and drifts slowly between
   them.
+- **Your own scenes.** One colour, or up to eight that drift at their own
+  speed, each at its own brightness. Start from scratch or from any built-in
+  scene.
 - **Routines:**
   - The evening routine comes on before sunset and winds down to bedtime.
   - Wake up brings your lights up like a sunrise.
@@ -132,8 +135,23 @@ scene.
 **Edit scenes:**
 - Drag a block's scene tiles into another order.
 - Hide scenes with their eye.
+- Make your own scene with the **+** tile at the end, or change one with its
+  pencil. The pencil on a built-in scene starts a copy of it.
 
 Hue-Lite keeps these, so every phone and browser shows the same.
+
+**Your own scenes:**
+- Give one a name, an icon and one to eight colours, each with its
+  brightness. One colour makes a static scene. More make a dynamic one,
+  which drifts between them every 1 to 60 minutes (3 by default).
+- White bulbs get the first colour's nearest white.
+- A new scene shows where you made it: in that room (each of its lights,
+  when it has several) and on its dimmers. Elsewhere it starts hidden, and
+  Edit scenes shows it.
+- Anyone can make, change and delete them; the built-in scenes can't be
+  changed or deleted. There can be up to 50.
+
+![The scene editor: a name, an icon, and colours each with a brightness](docs/images/scene-editor.png)
 
 **Reorder:**
 - Drag the rooms into another order. With a finger, hold a moment first; the
@@ -160,6 +178,7 @@ on the Hue-Lite device page instead.
   - A room's colour bulbs show different colours from the scene, each at its
     own brightness, and drift to the next every three minutes. White bulbs
     get a matching white.
+  - Your own dynamic scenes work the same way, at their own speed.
 - **Natural light** follows the sun:
   1. Energize from dawn.
   2. Cool bright by midday.
@@ -216,8 +235,8 @@ scene each light is in.
 ```yaml
 action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
 target: {area_id: living_room}  # nightlight, golden_hour, nebula, aurora,
-data: {preset: relax}           # ember, forest, moonlit
----
+data: {preset: relax}           # ember, forest, moonlit,
+---                             # or one of your own scenes' ids (custom_…)
 action: hue_lite.natural_light  # follow: false takes the lights out instead
 target: {label_id: lamps}
 ---

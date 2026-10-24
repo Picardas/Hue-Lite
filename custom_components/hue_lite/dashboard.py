@@ -43,10 +43,17 @@ SCRIPT = Path(__file__).parent / "frontend" / "hue-lite.js"
 URL = f"/{DOMAIN}/hue-lite.js"
 DATA_URL = f"{DOMAIN}_dashboard_url"
 
-# Each preset's and colour scene's colours as a colour bulb reports them, for their tiles.
+# Each preset's and colour scene's colours as a colour bulb reports them, for
+# their tiles, and their brightness, for a copy made in the scene editor.
 SCENE_COLOURS = {
-    **{preset: {"rgb_colors": [rgb_color(light.xy_color)]} for preset, light in PRESETS.items()},
-    **{scene: {"rgb_colors": [rgb_color((x, y)) for x, y, _ in palette.colours]} for scene, palette in PALETTES.items()},
+    **{
+        preset: {"rgb_colors": [rgb_color(light.xy_color)], "brightness": [round(light.brightness_pct)]}
+        for preset, light in PRESETS.items()
+    },
+    **{
+        scene: {"rgb_colors": [rgb_color((x, y)) for x, y, _ in palette.colours], "brightness": [round(b) for _, _, b in palette.colours]}
+        for scene, palette in PALETTES.items()
+    },
 }
 
 
@@ -223,7 +230,7 @@ def websocket_set_dimmer(hass: HomeAssistant, connection: websocket_api.ActiveCo
     """Choose the lights a Hue dimmer controls (none: its area) or the scenes
     its On button steps through (None: the default). Admins only: a dimmer
     controls lights for whoever presses it."""
-    device =dr.async_get(hass).async_get(msg["device_id"])
+    device = dr.async_get(hass).async_get(msg["device_id"])
     if device is None or not is_dimmer(device):
         connection.send_error(msg["id"], "not_found", "That isn't a Hue dimmer")
         return
@@ -271,7 +278,8 @@ def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveCo
     as RGB with a brightness each (one colour: static), and white bulbs get
     `white` (by default: the first colour's nearest white, at the colours'
     average brightness). A new one is shown where `show` says (the room,
-    lights and dimmers it was made for). Anyone can: it's only colours."""
+    lights and dimmers it was made for). Anyone can: it's only colours, though
+    only an admin's new scene joins a dimmer's (as only admins set dimmers)."""
     scene_id = msg.get("scene")
     if scene_id is not None and scene_id not in hue_lite.custom:
         connection.send_error(msg["id"], "not_found", "That isn't one of your scenes")
@@ -303,7 +311,9 @@ def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveCo
     show = {
         # New rooms and lights only while there's room for them.
         "layouts": [k for k in show.get("layouts", []) if k in hue_lite.layouts or len(hue_lite.layouts) < MAX_LAYOUTS],
-        "dimmers": [d for d in show.get("dimmers", []) if (device := devices.async_get(d)) and is_dimmer(device)],
+        "dimmers": [
+            d for d in show.get("dimmers", []) if connection.user.is_admin and (device := devices.async_get(d)) and is_dimmer(device)
+        ],
     }
     connection.send_result(msg["id"], {"id": hue_lite.save_custom_scene(scene_id, scene, show)})
 

@@ -81,10 +81,9 @@ async def test_making_changing_and_deleting_scenes(
     def delete(scene_id: str) -> Mock:
         return ws(hass, dashboard.websocket_delete_scene, {"type": f"{DOMAIN}/delete_scene", "scene": scene_id})
 
-    # Anyone can make one: colours as RGB, each with a brightness; white
-    # bulbs get the first colour's nearest white, at their average brightness.
+    # Colours come as RGB, each with a brightness; white bulbs get the first
+    # colour's nearest white, at their average brightness.
     sea = save(
-        admin=False,
         name="Sea",
         colours=[{"rgb": [0, 128, 255], "brightness": 50}, {"rgb": [0, 255, 128], "brightness": 30}],
         show={"layouts": ["living_room", "kitchen"], "dimmers": [dimmer.id, "not_a_dimmer"]},
@@ -121,6 +120,13 @@ async def test_making_changing_and_deleting_scenes(
     assert (hue_lite.custom, hue_lite.scenes) == ({}, {})
     assert hue_lite.layouts["living_room"] == {"order": ["relax", "natural"], "hidden": []}
     assert sea not in hue_lite.dimmer_settings[dimmer.id]["scenes"]["order"]
+
+    # Anyone can make one, but only an admin's joins a dimmer's scenes.
+    monkeypatch.setattr(dashboard, "MAX_CUSTOM", 50)
+    hue_lite.set_dimmer(dimmer.id, scenes=None)
+    mine = save(admin=False, name="Mine", colours=[{"rgb": [1, 2, 3], "brightness": 5}], show={"layouts": ["bedroom"], "dimmers": [dimmer.id]})
+    assert mine.send_result.call_args.args[1]["id"] in hue_lite.layouts["bedroom"]["order"]
+    assert hue_lite.dimmer_settings == {}
 
 
 async def test_damaged_scenes_are_left_out(hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]) -> None:

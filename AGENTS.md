@@ -40,8 +40,8 @@ pytest
   on a Windows drive the tests take minutes.
 - **Dashboard script:** there are no JavaScript tests. Serve the repository
   root (`python3 -m http.server --bind 127.0.0.1`) and open
-  `/tests/harness/`. It takes `?dark`, `?user` (not an admin), `?unshared`
-  and `?existing`, and exposes `window.dash` and `window.calls`.
+  `/tests/harness/`. It takes `?dark`, `?user` (not an admin), `?unshared`,
+  `?existing` and `?editor` (the scene editor, open), and exposes `window.dash` and `window.calls`.
 - **Real bulbs:** say plainly what hasn't been tried on real bulbs or a real
   Home Assistant.
 
@@ -73,7 +73,8 @@ pytest
   2. Add its name to `translations/en.json` and its icon to `icons.json`.
   3. Put it on the dashboard: `routinesCard` or `settingsView` in
      `hue-lite.js`.
-- **A colour scene:**
+- **A built-in colour scene** (your own scenes need no code: they live in
+  the Store, under `custom_scenes`, with ids starting `custom_`):
   1. Add it to `PALETTES` in `timeline.py`. Each colour is an xy value
      inside Hue's gamut C and a brightness.
   2. Add it to `COLOUR_SCENES` and `howItWorks` in `hue-lite.js`.
