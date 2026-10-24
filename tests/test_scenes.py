@@ -114,18 +114,21 @@ async def test_lights_turned_on_or_changed(hass: HomeAssistant, home: Home, hue_
 
     # Switched off and on again by hand, it picks the scene up; switched on
     # at a brightness of your own (the slider), that's a change by hand.
-    by_hand = Context(user_id="someone")
+    # (Each action by hand has a context of its own.)
+    def by_hand() -> Context:
+        return Context(user_id="someone")
+
     await action(hass, "natural_light", {"entity_id": "light.living_room"})
     on(hass, hue_lite, "light.living_room")
     hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=ours(hue_lite))
-    hass.states.async_set("light.living_room", "off", context=by_hand)
+    hass.states.async_set("light.living_room", "off", context=by_hand())
     home.turn_on.clear()
-    hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=by_hand)
+    hass.states.async_set("light.living_room", "on", {"brightness": 255}, context=by_hand())
     await settle(hass)
     assert (natural(hass), len(home.turn_on)) == (["light.living_room"], 1)
-    hass.states.async_set("light.living_room", "off", context=by_hand)
+    hass.states.async_set("light.living_room", "off", context=by_hand())
     home.turn_on.clear()
-    hass.states.async_set("light.living_room", "on", {"brightness": 60}, context=by_hand)
+    hass.states.async_set("light.living_room", "on", {"brightness": 60}, context=by_hand())
     await settle(hass)
     assert (natural(hass), home.turn_on) == ([], [])
 

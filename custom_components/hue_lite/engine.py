@@ -504,7 +504,10 @@ class HueLite:
         automation) leaves its scene and Auto: one that's on and changed, or
         one switched on at a brightness of their own (the slider). Bulbs
         reporting their own state don't count, and nor does plain switching
-        on and off. A wake-up light that's switched off is done with."""
+        on and off, and nor does a bulb's follow-up report a moment after a
+        command, which Home Assistant gives the command's context (so a
+        switch-on from the dashboard reports again as if by its user). A
+        wake-up light that's switched off is done with."""
         old, new = event.data["old_state"], event.data["new_state"]
         if old is None or new is None:
             return
@@ -517,7 +520,8 @@ class HueLite:
         if new.state != STATE_ON or self.sender.is_ours(new.context):
             return
         by_someone = bool(new.context.user_id or new.context.parent_id)
-        if by_someone and (old.state == STATE_ON or self._own_brightness(new)):
+        follow_up = new.context.id == old.context.id
+        if by_someone and not follow_up and (old.state == STATE_ON or self._own_brightness(new)):
             self.set_scene([light], "", leave_auto=True)
         elif old.state != STATE_ON and (scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES)):
             self.spawn(self.apply(scene, [light], 2))

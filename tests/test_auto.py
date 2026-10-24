@@ -146,7 +146,10 @@ async def test_auto_during_wake_up(
 async def test_picking_a_scene_or_a_change_takes_a_light_off_auto(
     hass: HomeAssistant, home: Home, hue_lite: HueLite, hass_admin_user: MockUser
 ) -> None:
-    by_hand = Context(user_id=hass_admin_user.id)
+    def by_hand() -> Context:
+        """Each action by hand has a context of its own."""
+        return Context(user_id=hass_admin_user.id)
+
     await action(hass, "apply_preset", {"preset": "relax", "entity_id": "light.living_room"})
     # Put on Auto, a light leaves its scene: it's on Auto, not in Relax.
     await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
@@ -154,12 +157,12 @@ async def test_picking_a_scene_or_a_change_takes_a_light_off_auto(
 
     # Turning it on and off isn't a change: it stays on Auto...
     for state in ("on", "off", "on"):
-        hass.states.async_set("light.living_room", state, context=by_hand)
+        hass.states.async_set("light.living_room", state, context=by_hand())
     await settle(hass)
     assert auto(hass) == ["light.living_room"]
 
     # ...but changing it takes it off.
-    hass.states.async_set("light.living_room", "on", {"brightness": 50}, context=by_hand)
+    hass.states.async_set("light.living_room", "on", {"brightness": 50}, context=by_hand())
     await settle(hass)
     assert auto(hass) == []
 
@@ -167,6 +170,23 @@ async def test_picking_a_scene_or_a_change_takes_a_light_off_auto(
     await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
     await action(hass, "apply_preset", {"preset": "rest", "area_id": "living_room"})
     assert (auto(hass), scenes(hass)) == ([], {"light.living_room": "rest"})
+
+
+async def test_a_bulb_reporting_again_after_a_switch_on_isnt_a_change(
+    hass: HomeAssistant, home: Home, hue_lite: HueLite, hass_admin_user: MockUser
+) -> None:
+    """Switched on from the dashboard, a bulb reports again a moment later, and
+    Home Assistant gives that the switch-on's context, user and all (seen on
+    real Hue bulbs, 0.05-0.3 s apart). That's still the switch-on: the light
+    stays on Auto, or in its scene."""
+    await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
+    await action(hass, "natural_light", {"entity_id": "light.bedroom"})
+    for light in ("light.living_room", "light.bedroom"):
+        switch_on = Context(user_id=hass_admin_user.id)
+        hass.states.async_set(light, "on", {"brightness": 120}, context=switch_on)
+        hass.states.async_set(light, "on", {"brightness": 124}, context=switch_on)
+    await settle(hass)
+    assert (auto(hass), scenes(hass)) == (["light.living_room"], {"light.bedroom": "natural"})
 
 
 async def test_coming_home_keeps_auto(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
