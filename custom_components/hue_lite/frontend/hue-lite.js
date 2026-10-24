@@ -862,6 +862,7 @@
     _block(id, head) {
       const el = document.createElement("div");
       el.className = "block";
+      el.dataset.id = id;
       const body = document.createElement("div");
       body.className = "body";
       el.append(head, body);
@@ -888,16 +889,111 @@
     }
   }
 
+  // ---- Drag to reorder -----------------------------------------------------
+
+  // How long a finger holds still before it picks up what's under it, so a
+  // swipe still scrolls the page.
+  const PICK_UP_MS = 250;
+
+  const under = (el, x, y) => {
+    const r = el.getBoundingClientRect();
+    return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+  };
+
+  // Drag to reorder in `list`, by mouse, pen or finger: while `active()`, the
+  // elements `items()` gives (in their order on the page) can be dragged
+  // among themselves, taking each one's place as they pass over it, or moved
+  // with the arrow keys when focused. Then `moved(ids)` gets their new order,
+  // by `data-id`. Buttons inside them stay buttons.
+  function sortable(list, items, active, moved) {
+    let drag = null;
+    const ids = () => items().map((el) => el.dataset.id);
+    // Keep the dragged item under the pointer, wherever the layout has put it.
+    const follow = () => {
+      const { el, grab, x, y } = drag;
+      el.style.transform = "";
+      const at = el.getBoundingClientRect();
+      el.style.transform = `translate(${x - grab.x - at.left}px, ${y - grab.y - at.top}px)`;
+    };
+    const pickUp = () => {
+      clearTimeout(drag.timer);
+      drag.timer = null;
+      drag.dragging = true;
+      drag.el.classList.add("dragging");
+      try { list.setPointerCapture(drag.pointer); } catch (err) { /* already up */ }
+      follow();
+    };
+    const drop = (ev) => {
+      if (!drag || ev.pointerId !== drag.pointer) return;
+      const { el, timer, dragging } = drag;
+      drag = null;
+      clearTimeout(timer);
+      el.classList.remove("dragging");
+      el.style.transform = "";
+      if (dragging) moved(ids());
+    };
+    list.addEventListener("pointerdown", (ev) => {
+      const el = active() && ev.button === 0 && !ev.target.closest("button") && items().find((item) => item.contains(ev.target));
+      if (!el) return;
+      const at = el.getBoundingClientRect();
+      drag = {
+        el, pointer: ev.pointerId, x: ev.clientX, y: ev.clientY, from: [ev.clientX, ev.clientY],
+        grab: { x: ev.clientX - at.left, y: ev.clientY - at.top }, dragging: false,
+        timer: ev.pointerType === "touch" ? setTimeout(pickUp, PICK_UP_MS) : null,
+      };
+    });
+    list.addEventListener("pointermove", (ev) => {
+      if (!drag || ev.pointerId !== drag.pointer) return;
+      drag.x = ev.clientX;
+      drag.y = ev.clientY;
+      if (!drag.dragging) {
+        if (Math.hypot(drag.x - drag.from[0], drag.y - drag.from[1]) < 6) return;
+        // A finger moving before it's picked anything up is scrolling.
+        if (drag.timer) return drop(ev);
+        pickUp();
+      }
+      const all = items();
+      const over = all.find((item) => item !== drag.el && under(item, drag.x, drag.y));
+      if (over) over[all.indexOf(over) > all.indexOf(drag.el) ? "after" : "before"](drag.el);
+      follow();
+    });
+    list.addEventListener("pointerup", drop);
+    list.addEventListener("pointercancel", drop);
+    // Once something's picked up, the finger moves it instead of the page.
+    list.addEventListener("touchmove", (ev) => { if (drag?.dragging) ev.preventDefault(); }, { passive: false });
+    list.addEventListener("contextmenu", (ev) => { if (active()) ev.preventDefault(); });
+    list.addEventListener("keydown", (ev) => {
+      const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[ev.key];
+      const all = items();
+      const from = all.indexOf(ev.target);
+      if (!active() || !step || from < 0) return;
+      ev.preventDefault();
+      const to = all[from + step];
+      if (!to) return;
+      to[step > 0 ? "after" : "before"](ev.target);
+      moved(ids());
+      ev.target.focus();
+    });
+  }
+
+  // How something being dragged looks, and what's draggable while it can be.
+  const DRAG_CSS = `
+    .dragging { position: relative; z-index: 2; cursor: grabbing; }
+    .dragging > :not(button) { scale: 1.03; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); border-radius: 12px; }
+    .draggable { cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+    .hint { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }`;
+
   // ---- Rooms card ----------------------------------------------------------
 
   // Every room (and label group) as a block headed by a light bar for all its
   // lights (`head`): its icon switches them on or off, the slider dims them,
   // Auto puts them on Auto, and tapping the rest of it shows or hides the
-  // room's own light bars and scenes (`cards`). Reorder moves rooms up or
-  // down; new rooms join at the end. With `toolbar: false` there's no Rooms
-  // heading, Collapse all or Reorder (the Whole home block uses that, with a
-  // `layout_key` of its own). Like Hue, each room has its own scenes: Edit
-  // scenes puts them in another order or hides some, saved with the layout.
+  // room's own light bars and scenes (`cards`). Reorder shows just the rooms'
+  // bars, to drag into another order; new rooms join at the end. With
+  // `toolbar: false` there's no Rooms heading, Collapse all or Reorder (the
+  // Whole home block uses that, with a `layout_key` of its own). Like Hue,
+  // each room has its own scenes: Edit scenes lets you drag its tiles into
+  // another order and hide some with their eye, saved with the layout.
   class HueLiteRooms extends CollapsibleBlocks {
     static layoutKey = "hue_lite_rooms";
 
@@ -921,56 +1017,59 @@
       this._root.innerHTML = `
         <style>
           ${BLOCKS_CSS}
+          ${DRAG_CSS}
           .toolbar { display: flex; align-items: center; gap: 4px; padding: 0 4px 8px; }
           .toolbar h2 { flex: 1; margin: 0; font-size: 16px; font-weight: 500; color: var(--primary-text-color); }
+          .toolbar .hint { display: none; flex: 1; }
+          .reordering .toolbar :is(h2, .hint) { display: block; flex: none; }
+          .reordering .toolbar .hint { flex: 1; padding-left: 8px; }
+          .reordering .fold { display: none; }
           button { border: none; background: none; color: var(--secondary-text-color); font: inherit; font-size: 13px; cursor: pointer;
                    display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; border-radius: 18px; --mdc-icon-size: 20px; }
           button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
           button.active { color: var(--primary-color); background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.12); }
-          .head { display: flex; align-items: center; gap: 4px; }
-          .head > hue-lite-light-bar { flex: 1; min-width: 0; }
-          .move { display: none; }
-          .reordering .move { display: inline-flex; }
-          .move button:disabled { opacity: 0.3; cursor: default; }
+          .head > hue-lite-light-bar { display: block; }
+          .reordering .body { display: none; }
           .body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
-          .cell > * { display: block; height: 100%; }
+          .cell { position: relative; }
+          .cell > hue-lite-scene-tile, .cell > hue-lite-light-bar { display: block; height: 100%; }
           .body > .cell.tile { height: 88px; }
-          .edit-row { grid-column: span 12; display: flex; justify-content: flex-end; }
-          .editor { grid-column: span 12; display: none; flex-direction: column; gap: 6px; }
-          .editing .editor { display: flex; }
-          .editing :is(.cell.tile, .edit-row) { display: none; }
-          .scene { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 4px 0 10px; border-radius: 12px;
-                   background: var(--ha-card-background, var(--card-background-color, #fff)); }
-          .scene.off :is(.swatch, .scene-name) { opacity: 0.4; }
-          .swatch { width: 30px; height: 30px; border-radius: 50%; flex: none; display: flex; align-items: center;
-                    justify-content: center; --mdc-icon-size: 18px; background: var(--swatch); color: var(--ink); }
-          .scene-name { flex: 1; min-width: 0; font-size: 14px; color: var(--primary-text-color);
-                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-          .scene button:disabled { opacity: 0.3; cursor: default; }
-          .editor-actions { display: flex; justify-content: flex-end; gap: 4px; }
+          .block:not(.editing) .cell.off { display: none; }
+          .editing .cell.off > hue-lite-scene-tile { opacity: 0.35; }
+          .eye { display: none; position: absolute; top: 4px; left: 4px; width: 30px; height: 30px; padding: 0; justify-content: center;
+                 --mdc-icon-size: 18px; color: var(--primary-text-color); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+                 background: var(--ha-card-background, var(--card-background-color, #fff)); }
+          .eye:hover { background: var(--ha-card-background, var(--card-background-color, #fff)); }
+          .editing .eye { display: inline-flex; }
+          .edit-row { grid-column: span 12; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+          .edit-row .hint { flex: 1; padding-left: 4px; }
+          .block:not(.editing) .edit-row :is(.hint, .reset) { display: none; }
         </style>
+        <div class="rooms">
         ${this._config.toolbar === false ? "" : `
         <div class="toolbar">
           <h2>Rooms</h2>
+          <span class="hint">Drag the rooms into the order you want</span>
           <button class="fold" title="Collapse or expand every room"><ha-icon icon="mdi:unfold-less-horizontal"></ha-icon><span>Collapse all</span></button>
-          <button class="reorder" title="Move rooms up or down"><ha-icon icon="mdi:swap-vertical"></ha-icon><span>Reorder</span></button>
+          <button class="reorder" title="Drag the rooms into another order"><ha-icon icon="mdi:swap-vertical"></ha-icon><span>Reorder</span></button>
         </div>`}
-        <div class="blocks"></div>`;
+        <div class="blocks"></div>
+        </div>`;
 
       const list = this._root.querySelector(".blocks");
+      sortable(list, () => [...list.children], () => this._reordering, (ids) => {
+        this._layout.order = ids;
+        this._save();
+        this._arrange();
+      });
       // Each room's scene tiles: {id, cell, card}, in the default order.
       this._tiles = new Map();
       for (const r of this._config.rooms) {
         const head = document.createElement("div");
         head.className = "head";
-        head.innerHTML = `
-          <span class="move">
-            <button class="up" title="Move up"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
-            <button class="down" title="Move down"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
-          </span>`;
         const bar = this._card(r.head);
         bar.addEventListener("hue-lite-expand", () => this._toggleCollapsed(r.id));
-        head.prepend(bar);
+        head.appendChild(bar);
         const el = this._block(r.id, head);
         const body = el.querySelector(".body");
         const tiles = [];
@@ -984,22 +1083,33 @@
           body.appendChild(cell);
           if (card.scene) {
             cell.classList.add("tile");
+            cell.dataset.id = card.scene.id;
+            cell.insertAdjacentHTML("beforeend", `<button class="eye"><ha-icon></ha-icon></button>`);
+            const eye = cell.querySelector(".eye");
+            onActivate(eye, () => {
+              this._toggleHidden(r.id, card.scene.id);
+              eye.focus();
+            });
             tiles.push({ id: card.scene.id, cell, card });
           }
         }
         if (tiles.length) {
           this._tiles.set(r.id, tiles);
           body.insertAdjacentHTML("beforeend", `
-            <div class="edit-row"><button class="edit" title="Put the scenes in another order or hide some">
-              <ha-icon icon="mdi:pencil-outline"></ha-icon><span>Edit scenes</span></button></div>
-            <div class="editor"></div>`);
+            <div class="edit-row">
+              <span class="hint">Drag the scenes into the order you want; the eye shows or hides one.</span>
+              <button class="reset" title="Back to the usual order, with every scene shown"><ha-icon icon="mdi:restore"></ha-icon><span>Reset</span></button>
+              <button class="edit" title="Put the scenes in another order or hide some"><ha-icon></ha-icon><span></span></button>
+            </div>`);
           onActivate(body.querySelector(".edit"), () => {
-            this._editing = r.id;
+            this._editing = this._editing === r.id ? null : r.id;
             this._arrange();
           });
+          onActivate(body.querySelector(".reset"), () => this._setScenes(r.id, null));
+          sortable(body, () => [...body.querySelectorAll(":scope > .cell.tile")], () => this._editing === r.id, (ids) => {
+            this._setScenes(r.id, { order: ids, hidden: this._scenesOf(r.id).hidden });
+          });
         }
-        onActivate(el.querySelector(".up"), () => this._move(r.id, -1));
-        onActivate(el.querySelector(".down"), () => this._move(r.id, 1));
         list.appendChild(el);
       }
 
@@ -1013,6 +1123,7 @@
       });
       onActivate(this._root.querySelector(".reorder"), () => {
         this._reordering = !this._reordering;
+        if (this._reordering) this._editing = null;
         this._arrange();
       });
     }
@@ -1028,17 +1139,6 @@
 
     _showOpen(el, open) {
       el.querySelector(".head > hue-lite-light-bar").expanded = open;
-    }
-
-    _move(id, step) {
-      const order = this._orderedIds();
-      const from = order.indexOf(id);
-      const to = from + step;
-      if (to < 0 || to >= order.length) return;
-      [order[from], order[to]] = [order[to], order[from]];
-      this._layout.order = order;
-      this._save();
-      this._arrange();
     }
 
     // A room's scenes: all of them in its order (as saved, then any it hasn't
@@ -1058,83 +1158,58 @@
       this._arrange();
     }
 
-    // A room's scene editor: each scene, with its colours, moved earlier or
-    // later and shown or hidden; Reset goes back to the default order with
-    // everything shown, Done back to the tiles. Scene names and icons are
-    // Hue-Lite's own, set as text and attributes all the same.
-    _renderEditor(id) {
-      const editor = this._blocks.get(id).querySelector(".editor");
-      const cards = new Map(this._tiles.get(id).map((t) => [t.id, t.card]));
+    // Show or hide one of a room's scenes.
+    _toggleHidden(id, scene) {
       const { order, hidden } = this._scenesOf(id);
-      const save = (newOrder, newHidden) => this._setScenes(id, { order: newOrder, hidden: newHidden });
-      const swap = (i, j) => {
-        const moved = [...order];
-        [moved[i], moved[j]] = [moved[j], moved[i]];
-        save(moved, hidden);
-      };
-      editor.replaceChildren();
-      order.forEach((scene, i) => {
-        const card = cards.get(scene);
-        const off = hidden.includes(scene);
-        const row = document.createElement("div");
-        row.className = `scene${off ? " off" : ""}`;
-        row.innerHTML = `
-          <span class="swatch"><ha-icon></ha-icon></span><span class="scene-name"></span>
-          <button class="earlier" title="Move earlier"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
-          <button class="later" title="Move later"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
-          <button class="show"><ha-icon></ha-icon></button>`;
-        const swatch = row.querySelector(".swatch");
-        for (const [name, value] of Object.entries(sceneLook(card.sceneColours()))) swatch.style.setProperty(name, value);
-        swatch.querySelector("ha-icon").setAttribute("icon", card.scene.icon);
-        row.querySelector(".scene-name").textContent = card.scene.name;
-        const show = row.querySelector(".show");
-        show.title = off ? "Show" : "Hide";
-        show.setAttribute("aria-pressed", String(!off));
-        show.querySelector("ha-icon").setAttribute("icon", off ? "mdi:eye-off-outline" : "mdi:eye-outline");
-        row.querySelector(".earlier").disabled = i === 0;
-        row.querySelector(".later").disabled = i === order.length - 1;
-        onActivate(row.querySelector(".earlier"), () => swap(i, i - 1));
-        onActivate(row.querySelector(".later"), () => swap(i, i + 1));
-        onActivate(show, () => save(order, off ? hidden.filter((s) => s !== scene) : [...hidden, scene]));
-        editor.appendChild(row);
-      });
-      const actions = document.createElement("div");
-      actions.className = "editor-actions";
-      actions.innerHTML = `
-        <button class="reset" title="Back to the default order, with every scene shown"><ha-icon icon="mdi:restore"></ha-icon><span>Reset</span></button>
-        <button class="done active"><ha-icon icon="mdi:check"></ha-icon><span>Done</span></button>`;
-      onActivate(actions.querySelector(".reset"), () => this._setScenes(id, null));
-      onActivate(actions.querySelector(".done"), () => {
-        this._editing = null;
-        this._arrange();
-      });
-      editor.appendChild(actions);
+      this._setScenes(id, { order, hidden: hidden.includes(scene) ? hidden.filter((s) => s !== scene) : [...hidden, scene] });
     }
 
-    // Puts the rooms in order, their scenes in each room's order (hidden ones
-    // left out), and applies the collapsed, reorder and editing states.
+    // Puts the rooms in order and their scenes in each room's order (hidden
+    // ones left out, or dimmed while editing), and applies the collapsed,
+    // reorder and editing states. Things are only moved when they're out of
+    // order, so what has the keyboard's focus keeps it.
     _arrange() {
       const list = this._root.querySelector(".blocks");
       const order = this._orderedIds();
-      order.forEach((id, i) => {
-        const el = this._blocks.get(id);
-        list.appendChild(el);
-        el.querySelector(".up").disabled = i === 0;
-        el.querySelector(".down").disabled = i === order.length - 1;
-      });
+      const ids = (els) => els.map((x) => x.dataset.id).join();
+      if (ids([...list.children]) !== order.join()) for (const id of order) list.appendChild(this._blocks.get(id));
+      // While dragging's on, what's being dragged takes the taps and the
+      // keyboard's focus, not the bars and tiles in it.
+      for (const el of list.children) {
+        el.classList.toggle("draggable", this._reordering);
+        el.querySelector(".head").inert = this._reordering;
+        if (this._reordering) el.tabIndex = 0;
+        else el.removeAttribute("tabindex");
+      }
       for (const [id, tiles] of this._tiles) {
         const el = this._blocks.get(id);
+        const editing = this._editing === id;
         const { order: scenes, hidden } = this._scenesOf(id);
-        const cells = new Map(tiles.map((t) => [t.id, t.cell]));
+        const byId = new Map(tiles.map((t) => [t.id, t]));
         const editRow = el.querySelector(".edit-row");
-        for (const scene of scenes) {
-          cells.get(scene).hidden = hidden.includes(scene);
-          editRow.before(cells.get(scene));
+        if (ids([...el.querySelectorAll(".body > .cell.tile")]) !== scenes.join()) {
+          for (const scene of scenes) editRow.before(byId.get(scene).cell);
         }
-        el.classList.toggle("editing", this._editing === id);
-        if (this._editing === id) this._renderEditor(id);
+        for (const { id: scene, cell, card } of tiles) {
+          const off = hidden.includes(scene);
+          cell.classList.toggle("off", off);
+          cell.classList.toggle("draggable", editing);
+          card.inert = editing;
+          if (editing) cell.tabIndex = 0;
+          else cell.removeAttribute("tabindex");
+          const eye = cell.querySelector(".eye");
+          eye.title = `${off ? "Show" : "Hide"} ${card.scene.name}`;
+          eye.setAttribute("aria-label", `Show ${card.scene.name}`);
+          eye.setAttribute("aria-pressed", String(!off));
+          eye.querySelector("ha-icon").setAttribute("icon", off ? "mdi:eye-off-outline" : "mdi:eye-outline");
+        }
+        el.classList.toggle("editing", editing);
+        const edit = el.querySelector(".edit");
+        edit.classList.toggle("active", editing);
+        edit.querySelector("span").textContent = editing ? "Done" : "Edit scenes";
+        edit.querySelector("ha-icon").setAttribute("icon", editing ? "mdi:check" : "mdi:pencil-outline");
       }
-      list.classList.toggle("reordering", this._reordering);
+      this._root.querySelector(".rooms").classList.toggle("reordering", this._reordering);
       const reorder = this._root.querySelector(".reorder");
       const fold = this._root.querySelector(".fold");
       if (reorder && fold) {
