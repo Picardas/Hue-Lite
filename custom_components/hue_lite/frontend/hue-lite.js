@@ -109,11 +109,14 @@
   }
 
   // A room (or label group, or the whole home) for the rooms card: a bar for
-  // all its lights, with its icon, heading the block; inside, the room's
-  // scenes, then (when it has several lights, unless `eachLight` is false)
-  // each light's bar, opening onto that light's own scenes.
-  function room(setup, id, name, icon, lights, target, eachLight = true) {
-    const light = (l) => ({ id: l, bar: lightBar(setup, [l], { expandable: true }), scenes: sceneTiles(setup, [l], { entity_id: [l] }) });
+  // all its lights, with its icon, heading the block, over the room's
+  // scenes. When it has several lights (and `eachLight`: rooms, not label
+  // groups or the whole home, so no light shows twice), each light has a
+  // block of its own after it, like a room: its bar over its own scenes.
+  function room(setup, id, name, icon, lights, target, eachLight = false) {
+    const light = (l) => ({
+      id: l, bar: lightBar(setup, [l], { expandable: true, heading: true }), scenes: sceneTiles(setup, [l], { entity_id: [l] }),
+    });
     return {
       id,
       name,
@@ -140,7 +143,7 @@
       type: "grid",
       cards: [{
         type: "custom:hue-lite-rooms",
-        rooms: [room(setup, "home", "Whole home", "mdi:home", everything, {}, false)],
+        rooms: [room(setup, "home", "Whole home", "mdi:home", everything, {})],
         toolbar: false,
         layout_key: "hue_lite_home",
       }],
@@ -151,12 +154,12 @@
     const rooms = [];
     for (const area of sortedAreas(hass)) {
       const inArea = ids(lights.filter((x) => areaOf(hass, x) === area.area_id));
-      if (inArea.length) rooms.push(room(setup, area.area_id, area.name, area.icon || "mdi:texture-box", inArea, { area_id: area.area_id }));
+      if (inArea.length) rooms.push(room(setup, area.area_id, area.name, area.icon || "mdi:texture-box", inArea, { area_id: area.area_id }, true));
     }
 
     // Not "other": an area called Other would have that id too.
     const noArea = ids(lights.filter((x) => !areaOf(hass, x)));
-    if (noArea.length) rooms.push(room(setup, "no-area", "Other", "mdi:lightbulb-question-outline", noArea, { entity_id: noArea }));
+    if (noArea.length) rooms.push(room(setup, "no-area", "Other", "mdi:lightbulb-question-outline", noArea, { entity_id: noArea }, true));
 
     const labels = setup.labels
       .filter((l) => !roleLabels.includes(l.label_id))
@@ -555,7 +558,7 @@
       const { card, light, slider, auto } = this._el;
       const which = this._single ? "on or off" : "all on or off";
       const hold = this._single ? ", hold for colour" : "";
-      card.title = expandable ? `Tap to show or hide ${this._config.heading ? "the room's scenes and lights" : "its scenes"}${hold}`
+      card.title = expandable ? `Tap to show or hide ${this._single ? "its" : "the room's"} scenes${hold}`
         : `Tap to switch ${which}${hold}`;
       if (expandable) light.title = `Switch ${which}`;
 
@@ -908,10 +911,15 @@
       this._arrange();
     }
 
+    // Whether a block is folded away (each starts open).
+    _isCollapsed(id) {
+      return this._layout.collapsed.includes(id);
+    }
+
     // Applies the collapsed state, then redraws.
     _arrange() {
       for (const [id, el] of this._blocks) {
-        const collapsed = this._layout.collapsed.includes(id);
+        const collapsed = this._isCollapsed(id);
         el.classList.toggle("collapsed", collapsed);
         this._showOpen(el, !collapsed);
       }
@@ -1192,15 +1200,16 @@
   // Every room (and label group) as a block headed by a light bar for all its
   // lights (`head`): its icon switches them on or off, the slider dims them,
   // Auto puts them on Auto, and tapping the rest of it shows or hides the
-  // room's scenes (`scenes`) and, under them, its lights (`lights`: each
-  // {id, bar, scenes}), each a bar opening onto that light's own scenes.
-  // Reorder shows just the rooms' bars, to drag into another order; new rooms
-  // join at the end. With `toolbar: false` there's no Rooms heading,
+  // room's scenes (`scenes`). Each of its lights (`lights`: {id, bar,
+  // scenes}) gets a block of its own after it, the same: its bar over its
+  // own scenes (folded until opened, and only built then). Reorder shows
+  // just the bars, to drag into another order; new blocks join after the
+  // one before them. With `toolbar: false` there's no Rooms heading,
   // Collapse all or Reorder (the Whole home block uses that, with a
   // `layout_key` of its own). Like Hue, each room has its own scenes, and so
   // does each light: Edit scenes under them lets you drag the tiles into
-  // another order and hide some with their eye, saved with the layout. A
-  // light has its room's until you edit its own.
+  // another order and hide some with their eye. A light has its room's
+  // until you edit its own.
   class HueLiteRooms extends CollapsibleBlocks {
     static layoutKey = "hue_lite_rooms";
 
@@ -1214,10 +1223,20 @@
       return 10;
     }
 
-    // Saved order first, then any rooms the saved order doesn't know yet.
+    // The saved order, with any blocks it doesn't know yet (a new room, or
+    // a light's) after the block before them in the usual order.
     _orderedIds() {
-      const ids = this._config.rooms.map((r) => r.id);
-      return [...this._layout.order.filter((id) => ids.includes(id)), ...ids.filter((id) => !this._layout.order.includes(id))];
+      const usual = this._config.rooms.flatMap((r) => [r.id, ...(r.lights || []).map((l) => `${r.id}|${l.id}`)]);
+      const order = this._layout.order.filter((id) => usual.includes(id));
+      usual.forEach((id, i) => {
+        if (!order.includes(id)) order.splice(i ? order.indexOf(usual[i - 1]) + 1 : 0, 0, id);
+      });
+      return order;
+    }
+
+    // A room starts open; a light's block starts folded.
+    _isCollapsed(id) {
+      return this._lights.has(id) ? !this._layout.open.includes(id) : super._isCollapsed(id);
     }
 
     _render() {
@@ -1232,15 +1251,9 @@
           .reordering .toolbar .hint { flex: 1; padding-left: 8px; }
           .reordering .fold { display: none; }
           ${SCENES_CSS}
-          .head > hue-lite-light-bar, .light > hue-lite-light-bar { display: block; }
+          .head > hue-lite-light-bar { display: block; }
           .reordering .body { display: none; }
           .body { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-          /* The room's lights sit under it, set in with a rule down their side. */
-          .lights { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 0 6px; padding-left: 10px;
-                    border-left: 2px solid var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12)); }
-          .lights-title { font-size: 13px; font-weight: 500; line-height: 20px; color: var(--secondary-text-color); padding: 0 4px; }
-          .light > .scenes { margin-top: 8px; }
-          .light.collapsed > .scenes { display: none; }
         </style>
         <div class="rooms">
         ${this._config.toolbar === false ? "" : `
@@ -1260,45 +1273,37 @@
         this._arrange();
       });
       // The sets of scene tiles, each with its own Edit scenes (by key: a
-      // room's id, or room id|light for one of its lights), and the rooms'
-      // lights (by the same key), whose scenes are built when first opened.
+      // room's id, or room id|light for one of its lights, which is also its
+      // block's id), and the lights' blocks (by the same key), whose scenes
+      // are built when first opened.
       this._sets = new Map();
       this._lights = new Map();
-      for (const r of this._config.rooms) {
+      const block = (id, barConfig, onExpand) => {
         const head = document.createElement("div");
         head.className = "head";
-        const bar = this._card(r.head);
-        bar.addEventListener("hue-lite-expand", () => this._toggleCollapsed(r.id));
+        const bar = this._card(barConfig);
+        bar.addEventListener("hue-lite-expand", onExpand);
         head.appendChild(bar);
-        const el = this._block(r.id, head);
-        const body = el.querySelector(".body");
-        if (r.scenes?.length) this._sceneSet(r.id, null, r.scenes, body);
-        // Its lights, under it: each a bar opening onto that light's own scenes.
-        if (r.lights?.length) {
-          const lights = document.createElement("div");
-          lights.className = "lights";
-          lights.innerHTML = `<div class="lights-title"></div>`;
-          lights.firstChild.textContent = `Lights in ${r.name}`;
-          for (const l of r.lights) {
-            const key = `${r.id}|${l.id}`;
-            const light = document.createElement("div");
-            light.className = "light";
-            const lightBar = this._card(l.bar);
-            lightBar.addEventListener("hue-lite-expand", () => this._toggleLight(key));
-            light.appendChild(lightBar);
-            lights.appendChild(light);
-            this._lights.set(key, { key, room: r.id, el: light, bar: lightBar, scenes: l.scenes });
-          }
-          body.appendChild(lights);
-        }
+        const el = this._block(id, head);
         list.appendChild(el);
+        return el;
+      };
+      for (const r of this._config.rooms) {
+        const el = block(r.id, r.head, () => this._toggleCollapsed(r.id));
+        if (r.scenes?.length) this._sceneSet(r.id, null, r.scenes, el.querySelector(".body"));
+        for (const l of r.lights || []) {
+          const key = `${r.id}|${l.id}`;
+          const lightEl = block(key, l.bar, () => this._toggleLight(key));
+          this._lights.set(key, { key, room: r.id, el: lightEl, scenes: l.scenes });
+        }
       }
 
       if (this._config.toolbar === false) return;
       onActivate(this._root.querySelector(".fold"), () => {
-        const ids = this._config.rooms.map((r) => r.id);
-        const allCollapsed = ids.every((id) => this._layout.collapsed.includes(id));
-        this._layout.collapsed = allCollapsed ? [] : ids;
+        const rooms = this._config.rooms.map((r) => r.id);
+        const allCollapsed = [...this._blocks.keys()].every((id) => this._isCollapsed(id));
+        this._layout.collapsed = allCollapsed ? [] : rooms;
+        if (!allCollapsed) this._layout.open = [];
         this._save();
         this._arrange();
       });
@@ -1372,8 +1377,9 @@
       el.querySelector(".head > hue-lite-light-bar").expanded = open;
     }
 
-    // Show or hide a light's scenes (by its key, block id|light).
+    // Open or fold a light's block (by its key, room id|light).
     _toggleLight(key) {
+      if (this._reordering) return;
       const open = this._layout.open;
       this._layout.open = open.includes(key) ? open.filter((x) => x !== key) : [...open, key];
       this._save();
@@ -1405,12 +1411,11 @@
         else el.removeAttribute("tabindex");
       }
       this._sorter.sync();
-      // An open light shows its own scenes, built the first time it's opened.
+      // A light's scenes are built the first time its block's opened.
       for (const light of this._lights.values()) {
-        const open = this._layout.open.includes(light.key);
-        if (open && !this._sets.has(light.key)) this._sceneSet(light.key, light.room, light.scenes, light.el);
-        light.el.classList.toggle("collapsed", !open);
-        light.bar.expanded = open;
+        if (!this._isCollapsed(light.key) && !this._sets.has(light.key)) {
+          this._sceneSet(light.key, light.room, light.scenes, light.el.querySelector(".body"));
+        }
       }
       for (const set of this._sets.values()) set.arrange(this._scenesOf(set.key), this._editing === set.key);
       this._root.querySelector(".rooms").classList.toggle("reordering", this._reordering);
@@ -1419,7 +1424,7 @@
       if (reorder && fold) {
         reorder.classList.toggle("active", this._reordering);
         reorder.querySelector("span").textContent = this._reordering ? "Done" : "Reorder";
-        const allCollapsed = order.every((id) => this._layout.collapsed.includes(id));
+        const allCollapsed = order.every((id) => this._isCollapsed(id));
         fold.querySelector("span").textContent = allCollapsed ? "Expand all" : "Collapse all";
         fold.querySelector("ha-icon").setAttribute("icon", allCollapsed ? "mdi:unfold-more-horizontal" : "mdi:unfold-less-horizontal");
       }
