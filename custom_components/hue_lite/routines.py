@@ -8,7 +8,7 @@ import random
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, HomeAssistant, State, callback
+from homeassistant.core import CALLBACK_TYPE, Context, CoreState, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.sun import is_up
@@ -36,8 +36,9 @@ class Routines:
         self._leaving: CALLBACK_TYPE | None = None
         # The end of the last wake-up check: each check covers the time since.
         self._checked = dt_util.now()
-        # Away: the lights it's switched on, and when it next switches one.
-        self._mimicked: set[str] = set()
+        # Away: the lights it's switched on (kept across restarts, so it can
+        # still turn them off), and when it next switches one.
+        self.mimicked: set[str] = set()
         self._next_mimic: datetime | None = None
 
     @callback
@@ -48,17 +49,36 @@ class Routines:
             async_at_started(self.lite.hass, self._catch_up),
         ]
 
+    @property
+    def _started(self) -> bool:
+        """Whether Home Assistant has finished starting. Until then the lights
+        may not answer, so the routines wait for _catch_up."""
+        return self.lite.hass.state is CoreState.running
+
     @callback
     def _catch_up(self, _hass: HomeAssistant) -> None:
-        """Once Home Assistant has started (so the lights can be reached),
-        start a wake-up or an evening routine that was due in the last
-        CATCH_UP, which a restart would otherwise skip for the day. A late
-        wake-up fades in faster, still reaching Energize at the wake-up time.
-        One already started (before a reload of Hue-Lite) isn't started again."""
+        """Once Home Assistant has started, do what fell due in the last
+        CATCH_UP (while it was restarting), which would otherwise be missed:
+        start a wake-up (fading in faster, still reaching Energize at the
+        wake-up time) or the evening routine, or at bedtime fade out the
+        routine's lights. Further back, they're just let go. Away's lights go
+        off once its evening's over, unless someone's home, when they're
+        left. What's been done already (before Hue-Lite was reloaded) isn't
+        done again."""
         lite, now = self.lite, dt_util.now()
-        start = self._at(now.date(), lite.evening.start, now)
-        if lite.evening.phase in EVENING_PHASES and now - CATCH_UP < start <= now and not lite.in_scene(ROUTINE):
-            self._start_evening()
+        if lite.evening.phase in EVENING_PHASES:
+            start = self._at(now.date(), lite.evening.start, now)
+            if now - CATCH_UP < start <= now and not lite.in_scene(ROUTINE):
+                self._start_evening()
+        else:
+            bedtimes = [self._at(day, lite.evening.bedtime, now) for day in (now.date() - timedelta(days=1), now.date())]
+            if now - CATCH_UP < max(b for b in bedtimes if b <= now):
+                lite.spawn(self._bedtime())
+            else:
+                lite.set_scene(lite.in_scene(ROUTINE), "")
+        home = bool(_people(lite.hass.states.get(lite.presence)))
+        if home or lite.evening.phase not in EVENING_PHASES:
+            self._stop_mimicking(turn_off=not home)
         self._checked = min(self._checked, now - CATCH_UP)
         self.tick(now)
 
@@ -76,6 +96,8 @@ class Routines:
         its lights, or fade them out once the evening's over. That's
         usually bedtime, but a bedtime after 05:00 ends it in the day, and a
         later start set during the evening ends it until then."""
+        if not self._started:
+            return
         lite = self.lite
         phase = lite.evening.phase
         if was.phase == "day" and phase in EVENING_PHASES:
@@ -175,6 +197,8 @@ class Routines:
         and with a missed tick. Either can fall on another day than the
         wake-up itself (a 00:15 wake-up fades in from 23:45), so each uses that
         wake-up day's time and toggle."""
+        if not self._started:
+            return
         since, self._checked = self._checked, now
         s = self.lite.settings
         fade, off_after = timedelta(minutes=s["wake_up_fade_minutes"]), timedelta(minutes=s["wake_up_off_after_minutes"])
@@ -213,7 +237,8 @@ class Routines:
         light and the routine, so neither moves them during the fade) until
         they're changed or turned off; one that is stays as it is."""
         lite = self.lite
-        lite.last_wake_up = dt_util.utcnow()
+        # When it was due to start (later lights on Auto join it on that time).
+        lite.last_wake_up = wake - timedelta(minutes=lite.settings["wake_up_fade_minutes"])
         lite.set_scene(lights, WAKE_UP)
         await lite.sender.send(lights, PRESETS["nightlight"], 0)
         await asyncio.sleep(2)
@@ -311,16 +336,19 @@ class Routines:
             return
         light = random.choice(lights)
         if lite.hass.states.is_state(light, STATE_ON):
-            self._mimicked.discard(light)
+            self.mimicked.discard(light)
             lite.spawn(lite.sender.call("turn_off", [light], transition=2))
         else:
-            self._mimicked.add(light)
+            self.mimicked.add(light)
             lite.spawn(lite.sender.send([light], lite.evening.light, 2))
+        lite.save()
 
     @callback
     def _stop_mimicking(self, turn_off: bool) -> None:
         """Stop Away, turning off the lights it switched on (at bedtime, or
         when it's switched off) or leaving them (when someone's home)."""
-        lights, self._mimicked, self._next_mimic = sorted(self._mimicked), set(), None
+        lights, self.mimicked, self._next_mimic = sorted(self.mimicked), set(), None
+        if lights:
+            self.lite.save()
         if turn_off and (on := self.lite.on(lights)):
             self.lite.spawn(self.lite.sender.call("turn_off", on, transition=60))

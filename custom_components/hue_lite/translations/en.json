@@ -106,7 +106,8 @@
         "name": "Light scenes",
         "state_attributes": {
           "scenes": { "name": "Scenes" },
-          "auto": { "name": "On Auto" }
+          "auto": { "name": "On Auto" },
+          "custom_scenes": { "name": "Your scenes" }
         }
       }
     },
@@ -149,7 +150,7 @@
   "services": {
     "apply_preset": {
       "name": "Apply preset",
-      "description": "Sets lights to a Hue-style preset or colour scene (Golden hour, Nebula, Aurora, Ember, Forest, Moonlit: their colours are spread across the colour bulbs and drift slowly), taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
+      "description": "Sets lights to a Hue-style preset, a colour scene (Golden hour, Nebula, Aurora, Ember, Forest, Moonlit: their colours are spread across the colour bulbs and drift slowly) or one of your own scenes, taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
       "fields": {
         "preset": { "name": "Preset", "description": "The preset or colour scene to apply, or the name or id of one of your own scenes (listed on the Light scenes sensor)." }
       }
@@ -167,7 +168,7 @@
     },
     "set_brightness": {
       "name": "Set brightness",
-      "description": "Dims or brightens lights, keeping them in their scene at that level: Natural light keeps following the sun and a colour scene keeps drifting, until a scene is picked again. Lights in a scene that are off come on in it. With no target, every light.",
+      "description": "Dims or brightens lights, keeping them in their scene at that level: Natural light keeps following the sun and a colour scene keeps drifting, until a scene is picked again. Lights in a scene that are off come on in it, and a light in its wake-up stops brightening. With no target, every light.",
       "fields": {
         "brightness_pct": { "name": "Brightness", "description": "The brightness, in %." }
       }

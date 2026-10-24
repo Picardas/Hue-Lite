@@ -327,22 +327,20 @@ def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveCo
 @websocket_api.websocket_command(
     {vol.Required("type"): f"{DOMAIN}/preview_scene", vol.Required("lights"): vol.All(cv.entity_ids, vol.Length(1, 100)), **COLOURS}
 )
-@websocket_api.async_response
-async def websocket_preview_scene(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+@_with_hue_lite
+def websocket_preview_scene(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
     """Show colours being picked in the scene editor on the lights it was
     opened for, as a colour scene spreads them. The lights leave their scene,
     as if set by hand. Only lights the user may control (as with the
     actions), and not excluded ones (which the dashboard doesn't show)."""
-    if (hue_lite := async_get_loaded(hass)) is None:
-        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
-        return
     user = connection.user
     lights = [
         light
         for light in hue_lite.lights({ATTR_ENTITY_ID: msg["lights"]})
         if not hue_lite.excluded(light) and (user.is_admin or user.permissions.check_entity(light, POLICY_CONTROL))
     ]
-    await hue_lite.async_preview(lights, palette_from_stored({**_colours(msg), "drift_minutes": 3}), connection.context(msg))
+    palette = palette_from_stored({**_colours(msg), "drift_minutes": 3})
+    hue_lite.spawn(hue_lite.async_preview(lights, palette, connection.context(msg)))
     connection.send_result(msg["id"])
 
 

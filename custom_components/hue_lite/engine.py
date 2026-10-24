@@ -26,7 +26,15 @@ import secrets
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import ATTR_AREA_ID, ATTR_ENTITY_ID, ATTR_LABEL_ID, STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import (
+    ATTR_AREA_ID,
+    ATTR_ENTITY_ID,
+    ATTR_LABEL_ID,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers import (
     area_registry as ar,
@@ -203,6 +211,7 @@ def _stored(data: Any) -> dict[str, Any]:
         },
         "custom_scenes": custom,
         "auto": [light for light in auto if isinstance(light, str)],
+        "mimicked": [light for light in part("mimicked", list) if isinstance(light, str)],
         "dimmed": {
             light: float(level)
             for light, level in dimmed.items()
@@ -304,6 +313,9 @@ class HueLite:
         self.palettes: dict[str, Palette] = dict(PALETTES)
         # Each colour scene's drift step its bulbs were last moved on at.
         self._drifted: dict[str, int] = {}
+        # Lights that were off when their scene changed: they get it as it
+        # is now when they're next switched on.
+        self._stale: set[str] = set()
 
     # ---- Lifecycle -----------------------------------------------------------
 
@@ -319,16 +331,13 @@ class HueLite:
         self.natural, self.evening = self._targets(dt_util.now())
         self.followed = {NATURAL: self.natural, ROUTINE: self.evening}
         self._shown = (self.natural, self.evening)
-        # Lights excluded since are let go, and so are the routine's when bedtime
-        # passed while Home Assistant was down.
-        routine_over = self.evening.phase not in EVENING_PHASES
-        self.scenes = {
-            light: scene
-            for light, scene in data["scenes"].items()
-            if not self.excluded(light) and not (routine_over and scene == ROUTINE)
-        }
+        # Lights excluded since are let go. If bedtime passed while Home
+        # Assistant was down, the routine's (and Away's) are faded out or let
+        # go once it's started (see Routines.catch_up).
+        self.scenes = {light: scene for light, scene in data["scenes"].items() if not self.excluded(light)}
         self.auto = {light for light in data["auto"] if not self.excluded(light)}
         self.dimmed = {light: level for light, level in data["dimmed"].items() if light in self.scenes}
+        self.routines.mimicked = {light for light in data["mimicked"] if not self.excluded(light)}
 
     @callback
     def async_start(self) -> None:
@@ -372,6 +381,7 @@ class HueLite:
             "dimmers": self.dimmer_settings,
             "dashboard_added": self.dashboard_added,
             "custom_scenes": self.custom,
+            "mimicked": sorted(self.routines.mimicked),
         }
 
     @callback
@@ -511,9 +521,10 @@ class HueLite:
     @callback
     def save_custom_scene(self, scene_id: str | None, scene: dict[str, Any], show: Mapping[str, list[str]] | None = None) -> str:
         """Add one of your own scenes (no id; its new id is returned) or
-        change one (its lights in it that are on get it straight away). A new
-        one is shown in the rooms' and lights' scenes and dimmers in `show`
-        (where it was made), and hidden elsewhere until shown there."""
+        change one (its lights that are on get it straight away, the others
+        when they're next switched on). A new one is shown in the rooms' and
+        lights' scenes and dimmers in `show` (where it was made), and hidden
+        elsewhere until shown there."""
         new = scene_id is None
         if new:
             scene_id = f"{CUSTOM_PREFIX}{secrets.token_hex(3)}"
@@ -527,8 +538,12 @@ class HueLite:
             for device_id in (show or {}).get("dimmers", []):
                 settings = self.dimmer_settings.setdefault(device_id, {})
                 settings["scenes"] = _showing(settings.get("scenes", DIMMER_DEFAULT), scene_id)
-        elif lights := self.on(self.in_scene(scene_id)):
-            self.spawn(self.send_palette(scene_id, lights, 2))
+        else:
+            lights = self.in_scene(scene_id)
+            on = self.on(lights)
+            self._stale.update(light for light in lights if light not in on)
+            if on:
+                self.spawn(self.send_palette(scene_id, on, 2))
         self._shared_changed()
         return scene_id
 
@@ -604,12 +619,13 @@ class HueLite:
         return scene in PRESETS or scene in self.palettes
 
     def scene_named(self, scene: str) -> str:
-        """A scene's id: `scene` itself, or the id of your own scene with that
-        name (ignoring case and spaces at either end) if it isn't an id."""
-        if self.is_scene(scene):
-            return scene
+        """A scene's id from its id or, for one of your own, its name (either
+        ignoring case and spaces at either end; an id comes first), or
+        `scene` as it is when there's no such scene."""
         name = scene.strip().casefold()
-        return next((scene_id for scene_id, s in self.custom.items() if s["name"].strip().casefold() == name), scene)
+        if self.is_scene(name):
+            return name
+        return next((scene_id for scene_id, s in self.custom.items() if s["name"].casefold() == name), scene)
 
     def tile_scenes(self) -> set[str]:
         """Every scene with a tile: the built-in ones and your own."""
@@ -740,7 +756,9 @@ class HueLite:
         through the day, a colour scene as it drifts) until a scene is
         picked again. `step_pct` moves each light on from its own
         brightness (a dimmer's Up and Down). A light in a scene that's off
-        comes on in it at that level; others just get the brightness."""
+        comes on in it at that level; others just get the brightness. A
+        light in its wake-up stops brightening there."""
+        self.set_scene([light for light in lights if self.scenes.get(light) == WAKE_UP], "")
         brightness: dict[int, list[str]] = {}
         for light in lights:
             state = self.hass.states.get(light)
@@ -797,27 +815,27 @@ class HueLite:
         they drift; white bulbs get the scene's white."""
         palette = self.palettes[scene]
         colour = [light for light in lights if self.sender.has_colour(light)]
-        order = self._palette_order(scene, colour)
-        step = self._drift_step(palette)
-        by_colour: dict[int, list[str]] = {}
-        for light in colour:
-            by_colour.setdefault((order.index(light) + step) % len(palette.colours), []).append(light)
-        for index, group in sorted(by_colour.items()):
-            await self._send(group, palette.colour(index), transition, parent)
-        await self._send([light for light in lights if light not in colour], palette.white, transition, parent)
+        await self._spread(palette, lights, self._palette_order(scene, colour), self._drift_step(palette), transition, parent)
 
     async def async_preview(self, lights: list[str], palette: Palette, parent: Context | None = None) -> None:
         """Show colours being picked for a scene on these lights, spread
         across the colour bulbs as a colour scene's are (white bulbs get its
         white). The lights leave their scene and Auto, as if set by hand."""
         self.set_scene(lights, "", leave_auto=True)
-        colour = sorted(light for light in lights if self.sender.has_colour(light))
+        await self._spread(palette, lights, sorted(light for light in lights if self.sender.has_colour(light)), 0, 0.4, parent)
+
+    async def _spread(
+        self, palette: Palette, lights: list[str], order: list[str], step: int, transition: float, parent: Context | None
+    ) -> None:
+        """Send a colour scene's colours round the colour bulbs in `order`,
+        starting `step` colours on, and its white to the other lights."""
         by_colour: dict[int, list[str]] = {}
-        for i, light in enumerate(colour):
-            by_colour.setdefault(i % len(palette.colours), []).append(light)
+        for light in lights:
+            if light in order:
+                by_colour.setdefault((order.index(light) + step) % len(palette.colours), []).append(light)
         for index, group in sorted(by_colour.items()):
-            await self._send(group, palette.colour(index), 0.4, parent)
-        await self._send([light for light in lights if light not in colour], palette.white, 0.4, parent)
+            await self._send(group, palette.colour(index), transition, parent)
+        await self._send([light for light in lights if light not in order], palette.white, transition, parent)
 
     def _palette_order(self, scene: str, joining: list[str] | None = None) -> list[str]:
         """The colour bulbs in a colour scene (with those joining it), in the
@@ -859,16 +877,17 @@ class HueLite:
     @callback
     def _light_changed(self, event: Event[EventStateChangedData]) -> None:
         """A light in Natural light or the routine that's switched on picks
-        up its scene's current light (one in a colour scene comes back on in
-        its colour and drifts on from there, so it needs nothing). A light
-        changed by someone else (from the dashboard, a light dialog, an
-        automation) leaves its scene and Auto: one that's on and changed, or
-        one switched on at a brightness of their own (the slider). Bulbs
-        reporting their own state don't count, and nor does plain switching
-        on and off, and nor does a bulb's follow-up report a moment after a
-        command, which Home Assistant gives the command's context (so a
-        switch-on from the dashboard reports again as if by its user). A
-        wake-up light that's switched off is done with."""
+        up its scene's current light. One in another scene comes back on as
+        it was, so it needs nothing, unless it was unreachable (a bulb
+        switched off at the wall forgets its colour) or its scene has changed
+        since. A light changed by someone else (from the dashboard, a light
+        dialog, an automation) leaves its scene and Auto: one that's on and
+        changed, or one switched on at a brightness of their own (the
+        slider). Bulbs reporting their own state don't count, and nor does
+        plain switching on and off, and nor does a bulb's follow-up report a
+        moment after a command, which Home Assistant gives the command's
+        context (so a switch-on from the dashboard reports again as if by its
+        user). A wake-up light that's switched off is done with."""
         old, new = event.data["old_state"], event.data["new_state"]
         if old is None or new is None:
             return
@@ -884,8 +903,11 @@ class HueLite:
         follow_up = new.context.id == old.context.id
         if by_someone and not follow_up and (old.state == STATE_ON or self._own_brightness(new)):
             self.set_scene([light], "", leave_auto=True)
-        elif old.state != STATE_ON and (scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES)):
-            self.spawn(self.apply(scene, [light], 2))
+        elif old.state != STATE_ON:
+            stale = light in self._stale or old.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+            self._stale.discard(light)
+            if (stale or scene in (NATURAL, ROUTINE)) and (wanted := self._scene_light(light)) is not None:
+                self.spawn(self._send([light], wanted, 2))
 
     def _own_brightness(self, new: State) -> bool:
         """Whether a light was switched on at a brightness other than the one
@@ -912,8 +934,9 @@ class HueLite:
 
     @callback
     def _entity_registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
-        """A light keeps its scene, Auto and dimmers when its entity id
-        changes; one that's deleted, excluded or hidden is let go."""
+        """A light keeps its scene, Auto, dimmers and the scenes shown for it
+        when its entity id changes; one that's deleted, excluded or hidden is
+        let go."""
         data = event.data
         light = data["entity_id"]
         if not light.startswith(f"{LIGHT}."):
@@ -921,6 +944,7 @@ class HueLite:
         if data["action"] == "remove":
             self.set_scene([light], "", leave_auto=True)
             self._rename_in_dimmers(light, None)
+            self._rename_in_layouts(light, None)
         elif data["action"] == "update":
             if old := data.get("old_entity_id"):
                 if old in self.scenes or old in self.auto:
@@ -933,6 +957,7 @@ class HueLite:
                         self.auto.add(light)
                     self._changed()
                 self._rename_in_dimmers(old, light)
+                self._rename_in_layouts(old, light)
             self._release_excluded()
 
     def _rename_in_dimmers(self, old: str, new: str | None) -> None:
@@ -942,6 +967,16 @@ class HueLite:
             if old in (lights := settings.get("lights", [])):
                 renamed = [new if light == old else light for light in lights]
                 self.set_dimmer(device_id, lights=[light for light in renamed if light])
+
+    def _rename_in_layouts(self, old: str, new: str | None) -> None:
+        """A light shown on its own (in a room with several, whose scenes are
+        kept as `area|light`) has a new entity id, or with None is deleted."""
+        if keys := [key for key in self.layouts if key.endswith(f"|{old}")]:
+            for key in keys:
+                setup = self.layouts.pop(key)
+                if new:
+                    self.layouts[f"{key.rpartition('|')[0]}|{new}"] = setup
+            self._shared_changed()
 
     @callback
     def _device_registry_updated(self, event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:

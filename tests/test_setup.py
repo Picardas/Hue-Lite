@@ -103,10 +103,12 @@ async def test_damaged_saved_data_is_left_out(
             "auto": "light.bedroom",
             "dimmed": ["light.bedroom"],
             "last_wake_up": "2026-10-22T07:00:00",
+            "mimicked": "light.bedroom",
         },
     }
     hue_lite = await set_up(hass, entry)
     assert (hue_lite.scenes, hue_lite.auto, hue_lite.dimmed, hue_lite.last_wake_up) == ({}, set(), {}, None)
+    assert hue_lite.routines.mimicked == set()
     assert hue_lite.settings["evening_weeknights"] is True
 
 

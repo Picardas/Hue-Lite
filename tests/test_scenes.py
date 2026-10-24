@@ -59,6 +59,13 @@ async def test_colour_scene(hass: HomeAssistant, freezer: FrozenDateTimeFactory,
     assert home.turn_on == []
     assert hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"][lamp] == "golden_hour"
 
+    # Back after being unreachable (switched off at the wall, a bulb forgets
+    # its colour), it gets its colour again.
+    hass.states.async_set(lamp, "unavailable")
+    hass.states.async_set(lamp, "on")
+    await settle(hass)
+    assert [c.data["entity_id"] for c in home.turn_on] == [[lamp]]
+
 
 async def test_apply_preset(hass: HomeAssistant, home: Home, hue_lite: HueLite, hass_admin_user: MockUser) -> None:
     call = Context(user_id=hass_admin_user.id)

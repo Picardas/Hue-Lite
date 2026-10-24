@@ -8,8 +8,9 @@
 **Philips Hue's lighting behaviour for any lights in Home Assistant, without a
 Hue Bridge.** Hue-Lite gives you:
 - Hue's scenes, plus a **Natural light** scene that follows the sun.
-- Colour scenes that drift slowly.
-- An **evening routine**, **wake up**, and **coming and leaving home**.
+- Colour scenes that drift slowly, and **scenes of your own**.
+- An **evening routine**, **wake up**, **coming and leaving home**, and
+  **Away**.
 - **Hue dimmer switches**.
 - A **Lights dashboard** that builds itself.
 
@@ -199,9 +200,13 @@ on the Hue-Lite device page instead.
   and Down, keeps it there at that level. Natural light keeps following the
   sun and a colour scene keeps drifting, just dimmer or brighter, until you
   pick a scene again.
+- **Lights that drop out.** A light in a scene that comes back after being
+  unreachable (a bulb switched off at the wall forgets its colour) gets its
+  scene again. So does one that was off when you changed its scene.
 - **Wake up.** The Wake up lights that are off get a sunrise. They start at
   Nightlight's dim red and fade through orange and warm white, reaching
   Energize at your wake-up time. They can turn off again afterwards.
+  Dimming a light during its sunrise stops it there.
 - **Coming & going:**
   - When someone gets home (optionally only after dark), the Coming home
     lights that are off come on. So do the First one home lights, if the
@@ -230,7 +235,7 @@ on the Hue-Lite device page instead.
 
 The settings are switch, time and number entities on the **Hue-Lite** device,
 so automations can use them too. `sensor.hue_lite_light_scenes` shows which
-scene each light is in.
+scene each light is in, and lists your own scenes.
 
 ## Actions
 
@@ -263,9 +268,10 @@ only use it on lights they're allowed to control.
 
 - **Dimmers:** only Hue Dimmer Switches (RWL020, RWL021, RWL022) paired with
   ZHA.
-- **Restarts:** a wake-up or evening routine that was due while Home
-  Assistant was restarting starts once it's back, if that's within 15
-  minutes; after a longer outage it's skipped for that day.
+- **Restarts:** a wake-up, evening routine or bedtime that fell due while
+  Home Assistant was restarting happens once it's back, if that's within 15
+  minutes. After a longer outage it's skipped, and the routine's lights are
+  left as they are.
 - **Dimming from elsewhere:** dimming a light from Home Assistant's own
   light dialog or an automation still takes it out of its scene; only
   Hue-Lite's slider, dimmers and `set_brightness` keep it there.

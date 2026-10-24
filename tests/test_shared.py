@@ -177,15 +177,20 @@ async def test_a_dimmers_lights_and_scenes(hass: HomeAssistant, home: Home, hue_
 
 
 async def test_a_dimmer_keeps_up_with_its_lights(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
-    """Its lights keep up with new entity ids and are dropped when deleted;
-    a deleted dimmer is forgotten."""
+    """Its lights keep up with new entity ids and are dropped when deleted,
+    and so are the scenes shown for a light on its own; a deleted dimmer is
+    forgotten."""
     dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
     hue_lite.set_dimmer(dimmer.id, lights=["light.bedroom", "light.living_room"])
+    mine = {"order": ["relax"], "hidden": []}
+    hue_lite.set_layout("bedroom|light.bedroom", mine)
+    hue_lite.set_layout("living_room|light.living_room", mine)
     entities = er.async_get(hass)
     entities.async_update_entity("light.bedroom", new_entity_id="light.master")
     entities.async_remove("light.living_room")
     await hass.async_block_till_done()
     assert hue_lite.dimmer_settings == {dimmer.id: {"lights": ["light.master"]}}
+    assert hue_lite.layouts == {"bedroom|light.master": mine}
 
     dr.async_get(hass).async_remove_device(dimmer.id)
     await hass.async_block_till_done()
@@ -213,5 +218,8 @@ async def test_commands_need_hue_lite_and_a_limit(
         dashboard.websocket_subscribe,
         dashboard.websocket_set_scenes,
         dashboard.websocket_set_dimmer,
+        dashboard.websocket_save_scene,
+        dashboard.websocket_preview_scene,
+        dashboard.websocket_delete_scene,
     ):
         assert ws(hass, command, {}).send_error.call_args.args[1] == "not_loaded"

@@ -302,7 +302,7 @@
       "",
       `**Away**: while nobody's home in the evening (from the evening routine's start until bedtime), one of the *${label("evening")}* lights switches on or off every 10 to 30 minutes, so the house looks lived in. It stops when someone gets home and turns its lights off at bedtime.`,
       "",
-      "**Dimming** a light (its slider, or a dimmer's Up and Down) keeps it in its scene at that level: Natural light keeps following the sun, a colour scene keeps drifting, until you pick a scene again.",
+      "**Dimming** a light (its slider, or a dimmer's Up and Down) keeps it in its scene at that level: Natural light keeps following the sun, a colour scene keeps drifting, until you pick a scene again. Dimming a light during its wake-up stops its sunrise there.",
       "",
       "**Hue dimmer switches** control the lights in their area, or the ones chosen on the Dimmers card: On steps through their scenes (set on the same card), Off turns them off, Up and Down dim them.",
       "",
@@ -1225,9 +1225,10 @@
           <button class="reset"><ha-icon icon="mdi:restore"></ha-icon><span>Reset</span></button>
           ${edit ? `<button class="edit" title="Put the scenes in another order or hide some"><ha-icon></ha-icon><span></span></button>` : ""}
         </div>`);
-      this.grid.querySelector(".hint").textContent = hint || "Drag the scenes into the order you want; the eye shows or hides one.";
+      this.grid.querySelector(".hint").textContent = hint
+        || "Drag the scenes into the order you want; the eye shows or hides one, the pencil changes or copies one.";
       const reset = this.grid.querySelector(".reset");
-      reset.title = resetTitle || "Back to the usual order, with every scene shown";
+      reset.title = resetTitle || "Back to the usual order, with the built-in scenes shown and your own hidden";
       onActivate(reset, () => save(null));
       if (edit) onActivate(this.grid.querySelector(".edit"), edit);
       for (const config of configs) this._add(config);
@@ -1967,20 +1968,27 @@
       this._try();
     }
 
-    // While trying them on the lights, shows the colours there, once
-    // they've stopped changing for a moment (not at every step of a drag).
+    // While trying them on the lights, shows the colours there once they've
+    // stopped changing for a moment (not at every step of a drag), and only
+    // if they have changed.
     _try() {
       clearTimeout(this._trial);
-      if (!this._trying) return;
+      if (!this._trying) {
+        this._tried = null;
+        return;
+      }
       this._trial = setTimeout(() => {
+        const colours = JSON.stringify(this._colours);
+        if (colours === this._tried) return;
+        this._tried = colours;
         this._hass.callWS({ type: `${DOMAIN}/preview_scene`, lights: this._lights, colours: this._colours }).catch(() => {});
       }, 300);
     }
 
     _save() {
-      const name = String(this._value.name || "").trim().slice(0, 30);
-      if (!name) {
-        this.shadowRoot.querySelector(".error").textContent = "Give it a name.";
+      const name = String(this._value.name || "").trim();
+      if (!name || name.length > 30) {
+        this.shadowRoot.querySelector(".error").textContent = name ? "Keep the name to 30 characters." : "Give it a name.";
         return;
       }
       const message = {

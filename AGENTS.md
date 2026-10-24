@@ -13,7 +13,7 @@ one plain JavaScript file with no build step.
 | Path | What's there |
 | ---- | ------------ |
 | `custom_components/hue_lite/engine.py` | The core: settings, which scene each light is in, Auto, the clock, stored data (`_stored` checks everything loaded) |
-| `routines.py` | The evening routine, wake up, coming and going |
+| `routines.py` | The evening routine, wake up, coming and going, Away, and catching up after a restart |
 | `timeline.py` | Presets, colour scenes and the two timelines, as plain functions with no Home Assistant imports |
 | `lights.py` | `Sender`: every light command goes through it, so Hue-Lite knows its own changes and commands don't queue up behind a slow bulb |
 | `targets.py` | Which lights a target means, and which are excluded |

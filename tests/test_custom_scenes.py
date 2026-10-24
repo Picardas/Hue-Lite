@@ -107,13 +107,17 @@ async def test_making_changing_and_deleting_scenes(
     }
     assert hue_lite.dimmer_settings == {dimmer.id: {"scenes": {"order": [*DIMMER_DEFAULT["order"], sea], "hidden": DIMMER_DEFAULT["hidden"]}}}
 
-    # Changed, the lights in it that are on get it straight away.
-    await action(hass, "apply_preset", {"preset": sea, "entity_id": "light.living_room"})
+    # Changed, the lights in it that are on get it straight away, and the
+    # others when they're next switched on.
+    await action(hass, "apply_preset", {"preset": sea, "entity_id": ["light.living_room", "light.bedroom"]})
     on(hass, hue_lite, "light.living_room")
     home.turn_on.clear()
     save(scene=sea, name="Deep sea", colours=[{"rgb": [0, 0, 255], "brightness": 20}])
     await settle(hass)
-    assert (hue_lite.custom[sea]["name"], [c.data["brightness_pct"] for c in home.turn_on]) == ("Deep sea", [20])
+    assert (hue_lite.custom[sea]["name"], [c.data["entity_id"] for c in home.turn_on]) == ("Deep sea", [["light.living_room"]])
+    hass.states.async_set("light.bedroom", "on")
+    await settle(hass)
+    assert [c.data["brightness_pct"] for c in home.turn_on] == [20, 20]
 
     # The built-in scenes can't be changed or deleted, and there's a limit.
     assert save(scene="relax", name="Mine", colours=[{"rgb": [1, 2, 3], "brightness": 5}]).send_error.call_args.args[1] == "not_found"
