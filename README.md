@@ -51,7 +51,9 @@ bar for all its lights: tap its icon to switch them on or off, slide to dim,
 **Auto** at the end, and tap its name to show or hide each light's bar and
 the scenes. Icons and sliders take the colour the bulbs report; each
 scene shows the colour it gives (Natural light's as it is now), filled and
-ticked while the lights are in it.
+ticked while the lights are in it. Like Hue, each room has its own scenes:
+**Edit scenes** under them puts them in another order or hides some (saved
+per user, with the rooms' order).
 
 ## How it works
 

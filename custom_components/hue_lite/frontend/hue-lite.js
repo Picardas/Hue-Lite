@@ -27,7 +27,7 @@
   const PENDING_MS = 5000;
   // The scenes' names and icons (their colours come from Hue-Lite): the
   // presets, then Natural light and the colour scenes, which change over time.
-  const NATURAL = { id: "natural", name: "Natural", long: "Natural light", icon: "mdi:theme-light-dark" };
+  const NATURAL = { id: "natural", name: "Natural", icon: "mdi:theme-light-dark" };
   const PRESETS = [
     { id: "energize", name: "Energize", icon: "mdi:lightning-bolt" },
     { id: "cool_bright", name: "Cool bright", icon: "mdi:white-balance-sunny" },
@@ -85,8 +85,9 @@
     return { type: "custom:hue-lite-light-bar", entities, scenes_entity: setup.entities.light_scenes, ...extra };
   }
 
-  // The scenes: Natural light across the top (coloured as it is now), then
-  // three per row, the presets and the colour scenes (coloured by their
+  // The scenes, three per row, in their default order (each room can be set
+  // to its own; see the rooms card): the presets, then Natural light
+  // (coloured as it is now) and the colour scenes (coloured by their
   // lights). `target` is the action target: {area_id}, {label_id},
   // {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
@@ -96,8 +97,8 @@
     });
     const preset = (p) => tile({ preset: p.id, light: setup.presets?.[p.id] });
     return [
-      tile({ natural: true, natural_entity: setup.entities.natural_light, wide: true, grid_options: { columns: 12, rows: 1 } }),
       ...PRESETS.map(preset),
+      tile({ natural: true, natural_entity: setup.entities.natural_light }),
       ...COLOUR_SCENES.map(preset),
     ];
   }
@@ -650,8 +651,7 @@
   // tinted with the scene's colours. Tap to put the lights in that scene.
   // Filled with them and ticked while every light that's on is in it and not
   // on Auto (which shows on the Auto button instead), and straight away when
-  // tapped, until the lights report it (or PENDING_MS passes). With `wide`
-  // it's a row across instead (swatch beside the name), as Natural light is.
+  // tapped, until the lights report it (or PENDING_MS passes).
   //   {natural: true, natural_entity, entities, target, scenes_entity}   Natural light
   //   {preset: id, light, entities, target, scenes_entity}               a preset or colour scene
   // Natural light's tile takes its colour and phase from `natural_entity`, as
@@ -667,11 +667,22 @@
     }
 
     getCardSize() {
-      return this._config.wide ? 1 : 2;
+      return 2;
     }
 
     getGridOptions() {
-      return this._config.wide ? { columns: "full", rows: 1 } : { columns: 4, rows: 2, min_columns: 3 };
+      return { columns: 4, rows: 2, min_columns: 3 };
+    }
+
+    // The scene's id, name and icon.
+    get scene() {
+      return this._scene;
+    }
+
+    // The scene's colours (Natural light's as it is now), as sceneLook takes them.
+    sceneColours() {
+      if (!this._config.natural) return this._config.light?.rgb_colors;
+      return [this._hass?.states[this._config.natural_entity]?.attributes.rgb_color].filter(Array.isArray);
     }
 
     _watching() {
@@ -705,14 +716,10 @@
           ha-card.on .circle { background: rgba(255, 255, 255, 0.3); }
           ha-card.on :is(.name, .now, .check) { color: var(--ink); }
           ha-card.on .check { display: block; }
-          ha-card.wide { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 0 14px; text-align: left; }
-          ha-card.wide .name { font-size: 14px; line-height: 20px; }
-          ha-card.wide .now { font-size: 12px; line-height: 16px; }
-          ha-card.wide .check { top: 50%; right: 14px; transform: translateY(-50%); --mdc-icon-size: 20px; }
         </style>
-        <ha-card class="${this._config.wide ? "wide" : ""}" role="button" tabindex="0">
+        <ha-card role="button" tabindex="0">
           <div class="circle"><ha-icon icon="${this._scene.icon}"></ha-icon></div>
-          <div class="text"><div class="name">${this._config.wide ? this._scene.long || this._scene.name : this._scene.name}</div><div class="now"></div></div>
+          <div class="text"><div class="name">${this._scene.name}</div><div class="now"></div></div>
           <ha-icon class="check" icon="mdi:check-circle"></ha-icon>
         </ha-card>`;
       this._card = this._root.querySelector("ha-card");
@@ -747,8 +754,7 @@
       if (colours !== this._colours || !this._looked) {
         this._colours = colours;
         this._looked = true;
-        const look = sceneLook(now ? [colours].filter(Array.isArray) : colours);
-        for (const [name, value] of Object.entries(look)) this._card.style.setProperty(name, value);
+        for (const [name, value] of Object.entries(sceneLook(this.sceneColours()))) this._card.style.setProperty(name, value);
       }
       this._now.textContent = (now && PHASES[now.state]) || "";
       const actual = this._selected();
@@ -763,8 +769,9 @@
   // ---- Collapsible blocks (rooms and routines) -----------------------------
 
   // Saved per signed-in user in Home Assistant's frontend storage (so it
-  // follows you across devices), falling back to this browser.
-  // Lists of block ids only: anything else (a damaged layout) is dropped.
+  // follows you across devices), falling back to this browser: the blocks'
+  // order, which are collapsed, and each block's scenes ({order, hidden}, by
+  // block id). Lists of ids only: anything else (a damaged layout) is dropped.
   async function loadLayout(hass, key) {
     let saved;
     try {
@@ -774,7 +781,11 @@
       try { saved = JSON.parse(localStorage.getItem(key)); } catch (err) { /* none */ }
     }
     const ids = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === "string") : []);
-    return { order: ids(saved?.order), collapsed: ids(saved?.collapsed) };
+    const scenes = {};
+    if (saved?.scenes && typeof saved.scenes === "object") {
+      for (const [block, s] of Object.entries(saved.scenes)) scenes[block] = { order: ids(s?.order), hidden: ids(s?.hidden) };
+    }
+    return { order: ids(saved?.order), collapsed: ids(saved?.collapsed), scenes };
   }
 
   function saveLayout(hass, key, layout) {
@@ -799,7 +810,7 @@
       this._validate(config);
       this._config = config;
       this._seen = null;
-      this._layout = this._layout || { order: [], collapsed: [] };
+      this._layout = this._layout || { order: [], collapsed: [], scenes: {} };
       this._root = this._root || this.attachShadow({ mode: "open" });
       this._blocks = new Map();
       this._children = [];
@@ -878,13 +889,15 @@
   // room's own light bars and scenes (`cards`). Reorder moves rooms up or
   // down; new rooms join at the end. With `toolbar: false` there's no Rooms
   // heading, Collapse all or Reorder (the Whole home block uses that, with a
-  // `layout_key` of its own).
+  // `layout_key` of its own). Like Hue, each room has its own scenes: Edit
+  // scenes puts them in another order or hides some, saved with the layout.
   class HueLiteRooms extends CollapsibleBlocks {
     static layoutKey = "hue_lite_rooms";
 
     _validate(config) {
       if (!Array.isArray(config.rooms)) throw new Error("rooms is required");
       this._reordering = false;
+      this._editing = null;
     }
 
     getCardSize() {
@@ -915,7 +928,19 @@
           .body { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; margin-top: 8px; }
           .cell > * { display: block; height: 100%; }
           .body > .cell.tile { height: 88px; }
-          .body > .cell.tile.wide { height: 56px; }
+          .edit-row { grid-column: span 12; display: flex; justify-content: flex-end; }
+          .editor { grid-column: span 12; display: none; flex-direction: column; gap: 6px; }
+          .editing .editor { display: flex; }
+          .editing :is(.cell.tile, .edit-row) { display: none; }
+          .scene { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 4px 0 10px; border-radius: 12px;
+                   background: var(--ha-card-background, var(--card-background-color, #fff)); }
+          .scene.off :is(.swatch, .scene-name) { opacity: 0.4; }
+          .swatch { width: 30px; height: 30px; border-radius: 50%; flex: none; display: flex; align-items: center;
+                    justify-content: center; --mdc-icon-size: 18px; background: var(--swatch); color: var(--ink); }
+          .scene-name { flex: 1; min-width: 0; font-size: 14px; color: var(--primary-text-color);
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+          .scene button:disabled { opacity: 0.3; cursor: default; }
+          .editor-actions { display: flex; justify-content: flex-end; gap: 4px; }
         </style>
         ${this._config.toolbar === false ? "" : `
         <div class="toolbar">
@@ -926,6 +951,8 @@
         <div class="blocks"></div>`;
 
       const list = this._root.querySelector(".blocks");
+      // Each room's scene tiles: {id, cell, card}, in the default order.
+      this._tiles = new Map();
       for (const r of this._config.rooms) {
         const head = document.createElement("div");
         head.className = "head";
@@ -939,13 +966,30 @@
         head.prepend(bar);
         const el = this._block(r.id, head);
         const body = el.querySelector(".body");
+        const tiles = [];
         for (const cfg of r.cards) {
           const cell = document.createElement("div");
-          cell.className = `cell${cfg.type === "custom:hue-lite-scene-tile" ? " tile" : ""}${cfg.wide ? " wide" : ""}`;
+          const card = this._card(cfg);
+          cell.className = "cell";
           // Across the body's 12 columns: a tile is a third, a light bar the lot.
           cell.style.gridColumn = `span ${cfg.grid_options?.columns || 12}`;
-          cell.appendChild(this._card(cfg));
+          cell.appendChild(card);
           body.appendChild(cell);
+          if (card.scene) {
+            cell.classList.add("tile");
+            tiles.push({ id: card.scene.id, cell, card });
+          }
+        }
+        if (tiles.length) {
+          this._tiles.set(r.id, tiles);
+          body.insertAdjacentHTML("beforeend", `
+            <div class="edit-row"><button class="edit" title="Put the scenes in another order or hide some">
+              <ha-icon icon="mdi:pencil-outline"></ha-icon><span>Edit scenes</span></button></div>
+            <div class="editor"></div>`);
+          onActivate(body.querySelector(".edit"), () => {
+            this._editing = r.id;
+            this._arrange();
+          });
         }
         onActivate(el.querySelector(".up"), () => this._move(r.id, -1));
         onActivate(el.querySelector(".down"), () => this._move(r.id, 1));
@@ -990,7 +1034,78 @@
       this._arrange();
     }
 
-    // Puts the rooms in order, and applies the collapsed and reorder states.
+    // A room's scenes: all of them in its order (as saved, then any it hasn't
+    // seen yet, like a new scene, in the default order), and the hidden ones.
+    _scenesOf(id) {
+      const all = this._tiles.get(id).map((t) => t.id);
+      const saved = this._layout.scenes[id] || { order: [], hidden: [] };
+      const order = [...saved.order.filter((s) => all.includes(s)), ...all.filter((s) => !saved.order.includes(s))];
+      return { order, hidden: saved.hidden.filter((s) => all.includes(s)) };
+    }
+
+    // Save a room's scenes, or with none go back to the default.
+    _setScenes(id, scenes) {
+      const { [id]: _, ...others } = this._layout.scenes;
+      this._layout.scenes = scenes ? { ...others, [id]: scenes } : others;
+      this._save();
+      this._arrange();
+    }
+
+    // A room's scene editor: each scene, with its colours, moved earlier or
+    // later and shown or hidden; Reset goes back to the default order with
+    // everything shown, Done back to the tiles. Scene names and icons are
+    // Hue-Lite's own, set as text and attributes all the same.
+    _renderEditor(id) {
+      const editor = this._blocks.get(id).querySelector(".editor");
+      const cards = new Map(this._tiles.get(id).map((t) => [t.id, t.card]));
+      const { order, hidden } = this._scenesOf(id);
+      const save = (newOrder, newHidden) => this._setScenes(id, { order: newOrder, hidden: newHidden });
+      const swap = (i, j) => {
+        const moved = [...order];
+        [moved[i], moved[j]] = [moved[j], moved[i]];
+        save(moved, hidden);
+      };
+      editor.replaceChildren();
+      order.forEach((scene, i) => {
+        const card = cards.get(scene);
+        const off = hidden.includes(scene);
+        const row = document.createElement("div");
+        row.className = `scene${off ? " off" : ""}`;
+        row.innerHTML = `
+          <span class="swatch"><ha-icon></ha-icon></span><span class="scene-name"></span>
+          <button class="earlier" title="Move earlier"><ha-icon icon="mdi:arrow-up"></ha-icon></button>
+          <button class="later" title="Move later"><ha-icon icon="mdi:arrow-down"></ha-icon></button>
+          <button class="show"><ha-icon></ha-icon></button>`;
+        const swatch = row.querySelector(".swatch");
+        for (const [name, value] of Object.entries(sceneLook(card.sceneColours()))) swatch.style.setProperty(name, value);
+        swatch.querySelector("ha-icon").setAttribute("icon", card.scene.icon);
+        row.querySelector(".scene-name").textContent = card.scene.name;
+        const show = row.querySelector(".show");
+        show.title = off ? "Show" : "Hide";
+        show.setAttribute("aria-pressed", String(!off));
+        show.querySelector("ha-icon").setAttribute("icon", off ? "mdi:eye-off-outline" : "mdi:eye-outline");
+        row.querySelector(".earlier").disabled = i === 0;
+        row.querySelector(".later").disabled = i === order.length - 1;
+        onActivate(row.querySelector(".earlier"), () => swap(i, i - 1));
+        onActivate(row.querySelector(".later"), () => swap(i, i + 1));
+        onActivate(show, () => save(order, off ? hidden.filter((s) => s !== scene) : [...hidden, scene]));
+        editor.appendChild(row);
+      });
+      const actions = document.createElement("div");
+      actions.className = "editor-actions";
+      actions.innerHTML = `
+        <button class="reset" title="Back to the default order, with every scene shown"><ha-icon icon="mdi:restore"></ha-icon><span>Reset</span></button>
+        <button class="done active"><ha-icon icon="mdi:check"></ha-icon><span>Done</span></button>`;
+      onActivate(actions.querySelector(".reset"), () => this._setScenes(id, null));
+      onActivate(actions.querySelector(".done"), () => {
+        this._editing = null;
+        this._arrange();
+      });
+      editor.appendChild(actions);
+    }
+
+    // Puts the rooms in order, their scenes in each room's order (hidden ones
+    // left out), and applies the collapsed, reorder and editing states.
     _arrange() {
       const list = this._root.querySelector(".blocks");
       const order = this._orderedIds();
@@ -1000,6 +1115,18 @@
         el.querySelector(".up").disabled = i === 0;
         el.querySelector(".down").disabled = i === order.length - 1;
       });
+      for (const [id, tiles] of this._tiles) {
+        const el = this._blocks.get(id);
+        const { order: scenes, hidden } = this._scenesOf(id);
+        const cells = new Map(tiles.map((t) => [t.id, t.cell]));
+        const editRow = el.querySelector(".edit-row");
+        for (const scene of scenes) {
+          cells.get(scene).hidden = hidden.includes(scene);
+          editRow.before(cells.get(scene));
+        }
+        el.classList.toggle("editing", this._editing === id);
+        if (this._editing === id) this._renderEditor(id);
+      }
       list.classList.toggle("reordering", this._reordering);
       const reorder = this._root.querySelector(".reorder");
       const fold = this._root.querySelector(".fold");
