@@ -263,7 +263,7 @@ class HueLite:
                 self.hass, TrackStates(False, set(), {"scene"}), self._scene_activated
             ).async_remove,
             bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._entity_registry_updated),
-            bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._release_excluded),
+            bus.async_listen(dr.EVENT_DEVICE_REGISTRY_UPDATED, self._device_registry_updated),
             bus.async_listen(ar.EVENT_AREA_REGISTRY_UPDATED, self._release_excluded),
             bus.async_listen(lr.EVENT_LABEL_REGISTRY_UPDATED, self._check_labels),
             *self.routines.async_start(),
@@ -669,23 +669,42 @@ class HueLite:
 
     @callback
     def _entity_registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
-        """A light keeps its scene and Auto when its entity id changes; one
-        that's deleted, excluded or hidden is let go."""
+        """A light keeps its scene, Auto and dimmers when its entity id
+        changes; one that's deleted, excluded or hidden is let go."""
         data = event.data
         light = data["entity_id"]
         if not light.startswith(f"{LIGHT}."):
             return
         if data["action"] == "remove":
             self.set_scene([light], "", leave_auto=True)
+            self._rename_in_dimmers(light, None)
         elif data["action"] == "update":
-            if (old := data.get("old_entity_id")) and (old in self.scenes or old in self.auto):
-                if scene := self.scenes.pop(old, ""):
-                    self.scenes[light] = scene
-                if old in self.auto:
-                    self.auto.remove(old)
-                    self.auto.add(light)
-                self._changed()
+            if old := data.get("old_entity_id"):
+                if old in self.scenes or old in self.auto:
+                    if scene := self.scenes.pop(old, ""):
+                        self.scenes[light] = scene
+                    if old in self.auto:
+                        self.auto.remove(old)
+                        self.auto.add(light)
+                    self._changed()
+                self._rename_in_dimmers(old, light)
             self._release_excluded()
+
+    def _rename_in_dimmers(self, old: str, new: str | None) -> None:
+        """A light chosen for a dimmer has a new entity id, or with None is
+        deleted (a dimmer left with none controls its area again)."""
+        for device_id, settings in list(self.dimmer_settings.items()):
+            if old in (lights := settings.get("lights", [])):
+                renamed = [new if light == old else light for light in lights]
+                self.set_dimmer(device_id, lights=[light for light in renamed if light])
+
+    @callback
+    def _device_registry_updated(self, event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:
+        """A dimmer that's deleted is forgotten; a device's labels or area
+        changing can exclude its lights."""
+        if event.data["action"] == "remove" and event.data["device_id"] in self.dimmer_settings:
+            self.set_dimmer(event.data["device_id"], lights=None, scenes=None)
+        self._release_excluded()
 
     @callback
     def _release_excluded(self, _event: Event | None = None) -> None:

@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import NUMBERS
-from .engine import HueLiteConfigEntry
+from .engine import HueLite, HueLiteConfigEntry
 from .entity import SettingEntity
 
 
@@ -22,7 +22,7 @@ class SettingNumber(SettingEntity, NumberEntity):
     _attr_mode = NumberMode.SLIDER
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
 
-    def __init__(self, hue_lite, key: str) -> None:
+    def __init__(self, hue_lite: HueLite, key: str) -> None:
         super().__init__(hue_lite, key)
         _, self._attr_native_min_value, self._attr_native_max_value, self._attr_native_step = NUMBERS[key]
 

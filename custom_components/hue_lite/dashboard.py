@@ -7,6 +7,7 @@ they change."""
 from __future__ import annotations
 
 from collections.abc import Callable
+import functools
 import hashlib
 import logging
 from pathlib import Path
@@ -65,12 +66,27 @@ def async_add_script(hass: HomeAssistant) -> Callable[[], None]:
     return lambda: remove_extra_js_url(hass, url)
 
 
+type Handler = Callable[[HomeAssistant, websocket_api.ActiveConnection, dict[str, Any], HueLite], None]
+
+
+def _with_hue_lite(handler: Handler) -> websocket_api.WebSocketCommandHandler:
+    """A command for the running Hue-Lite, which it's handed; while Hue-Lite
+    isn't set up, the answer is an error."""
+
+    @callback
+    @functools.wraps(handler)
+    def command(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+        if (hue_lite := async_get_loaded(hass)) is None:
+            connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
+        else:
+            handler(hass, connection, msg, hue_lite)
+
+    return command
+
+
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/config"})
-@callback
-def websocket_config(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    if (hue_lite := async_get_loaded(hass)) is None:
-        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
-        return
+@_with_hue_lite
+def websocket_config(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
     connection.send_result(msg["id"], _config(hue_lite))
 
 
@@ -123,15 +139,14 @@ def _config(hue_lite: HueLite) -> dict[str, Any]:
     }
 )
 @websocket_api.require_admin
-@callback
-def websocket_claim_dashboard(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+@_with_hue_lite
+def websocket_claim_dashboard(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite
+) -> None:
     """The Lights dashboard is added by an admin's browser, with Home
     Assistant's own dashboard commands. The first to claim it adds it (or
     finds one already there); `release` gives the claim back if that failed,
     with the `error`, which goes in the log."""
-    if (hue_lite := async_get_loaded(hass)) is None:
-        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
-        return
     if error := msg.get("error"):
         _LOGGER.warning("Couldn't add the Lights dashboard (it'll be tried again): %s", error)
     connection.send_result(msg["id"], {"claimed": hue_lite.claim_dashboard(msg["release"])})
@@ -145,13 +160,10 @@ SCENES = vol.Any(None, {vol.Required("order"): SCENE_IDS, vol.Required("hidden")
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/subscribe"})
-@callback
-def websocket_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+@_with_hue_lite
+def websocket_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], _: HueLite) -> None:
     """The shared settings, now and whenever they change (from any dashboard,
     and after Hue-Lite reloads)."""
-    if async_get_loaded(hass) is None:
-        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
-        return
 
     @callback
     def send() -> None:
@@ -166,13 +178,10 @@ def websocket_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveCon
 @websocket_api.websocket_command(
     {vol.Required("type"): f"{DOMAIN}/set_scenes", vol.Required("key"): vol.All(str, vol.Length(1, 255)), vol.Required("scenes"): SCENES}
 )
-@callback
-def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+@_with_hue_lite
+def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
     """Set a room's or light's scenes for every dashboard, or with None put
     them back to the default. Anyone can: it's only which scenes show."""
-    if (hue_lite := async_get_loaded(hass)) is None:
-        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
-        return
     if msg["scenes"] is not None and msg["key"] not in hue_lite.layouts and len(hue_lite.layouts) >= MAX_LAYOUTS:
         connection.send_error(msg["id"], "too_many", "Too many rooms and lights with their own scenes")
         return
@@ -189,15 +198,12 @@ def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveCo
     }
 )
 @websocket_api.require_admin
-@callback
-def websocket_set_dimmer(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+@_with_hue_lite
+def websocket_set_dimmer(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
     """Choose the lights a Hue dimmer controls (none: its area) or the scenes
     its On button steps through (None: the default). Admins only: a dimmer
     controls lights for whoever presses it."""
-    if (hue_lite := async_get_loaded(hass)) is None:
-        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
-        return
-    device = dr.async_get(hass).async_get(msg["device_id"])
+    device =dr.async_get(hass).async_get(msg["device_id"])
     if device is None or not is_dimmer(device):
         connection.send_error(msg["id"], "not_found", "That isn't a Hue dimmer")
         return

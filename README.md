@@ -1,140 +1,230 @@
 # Hue-Lite
 
-Philips Hue's lighting behaviour for any lights in Home Assistant, without a
-Hue Bridge: Hue's scenes, a **Natural light** scene that follows the sun, an
-**evening routine**, **wake up**, **coming and leaving home**, **Hue dimmer
-switches**, and a **Lights dashboard** that builds itself.
+[![Validate](https://github.com/Picardas/Hue-Lite/actions/workflows/validate.yml/badge.svg)](https://github.com/Picardas/Hue-Lite/actions/workflows/validate.yml)
+[![HACS: custom](https://img.shields.io/badge/HACS-custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories/)
+[![Home Assistant 2026.10+](https://img.shields.io/badge/Home%20Assistant-2026.10%2B-18BCF2.svg)](https://www.home-assistant.io/)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-green.svg)](LICENSE)
 
-Lights take part by **area** and **label**, with no per-light YAML.
+**Philips Hue's lighting behaviour for any lights in Home Assistant, without a
+Hue Bridge.** Hue-Lite gives you:
+- Hue's scenes, plus a **Natural light** scene that follows the sun.
+- Colour scenes that drift slowly.
+- An **evening routine**, **wake up**, and **coming and leaving home**.
+- **Hue dimmer switches**.
+- A **Lights dashboard** that builds itself.
 
-## Install
+Lights join in by **area** and **label**, with no YAML for each light.
 
-Needs Home Assistant 2026.10 or later.
+![The Lights dashboard: Whole home, each room's lights with their scenes, and the routines](docs/images/dashboard.png)
 
-- **HACS:** HACS → ⋮ → Custom repositories → add
-  `https://github.com/Picardas/Hue-Lite` as an *Integration* → download
-  **Hue-Lite** → restart Home Assistant.
-- **By hand:** copy `custom_components/hue_lite` into your config's
-  `custom_components/` folder and restart.
+> [!NOTE]
+> **Hue-Lite is vibe-coded.** It was built by prompting an AI coding
+> assistant (Claude Code), not written by hand. It runs a real home every
+> day and has a test suite that runs on every change. Still, it's a hobby
+> project in beta: expect rough edges, and please
+> [report them](https://github.com/Picardas/Hue-Lite/issues).
 
-Then **Settings → Devices & services → Add integration → Hue-Lite**. It asks
-for your home zone, whether to use Hue dimmers and whether to add its Lights
-dashboard, and finds or creates its labels. **Configure** changes these
-later.
+## Features
 
-## Labels
+- **Hue's scenes on any bulb.** Energize, Cool bright, Read, Relax, Rest and
+  Nightlight, with Hue's own colours on colour bulbs and a matching colour
+  temperature on white ones.
+- **Natural light.** One scene that follows the sun: bright and cool in the
+  morning, warm in the evening, Rest at night.
+- **Colour scenes.** Golden hour, Nebula, Aurora, Ember, Forest and Moonlit.
+  Each spreads its colours across a room's bulbs and drifts slowly between
+  them.
+- **Routines:**
+  - The evening routine comes on before sunset and winds down to bedtime.
+  - Wake up fades your lights in.
+  - Lights come on when you get home and can go off when everyone leaves.
+- **Auto.** One button puts a light under the routines, with or without
+  their labels.
+- **Hue dimmer switches** (RWL02x on ZHA). On steps through scenes you
+  choose; Off, Up and Down work as on Hue.
+- **A dashboard that builds itself** from your areas and labels. It's shared
+  by every phone and browser, and a card puts any light or room on your other
+  dashboards.
 
-| Label | Effect |
-| ----- | ------ |
-| Evening | Taken by the evening routine: on before sunset, through the scenes, off at bedtime |
-| Wake up | Fades up to Energize at the wake-up time |
+| ![A room's scenes on a phone, in the dark theme](docs/images/phone.png) | ![Editing a room's scenes: drag to reorder, the eye hides one](docs/images/edit-scenes.png) | ![A dimmer's lights and the scenes its On button steps through](docs/images/dimmers.png) |
+| :---: | :---: | :---: |
+| Each light has its own scenes | Drag scenes into order; the eye hides one | Set up each Hue dimmer |
+
+<sub>The screenshots show the dashboard with sample lights.</sub>
+
+## Installation
+
+Hue-Lite needs Home Assistant 2026.10 or later.
+
+**With [HACS](https://hacs.xyz)** (recommended):
+1. In HACS, open ⋮ → **Custom repositories**.
+2. Add `https://github.com/Picardas/Hue-Lite` as an **Integration**.
+3. Download **Hue-Lite**, then restart Home Assistant.
+
+**By hand:** copy `custom_components/hue_lite` into your configuration's
+`custom_components/` folder, then restart Home Assistant.
+
+Then go to **Settings → Devices & services → Add integration → Hue-Lite**.
+- It asks three things: your home zone, whether to use Hue dimmers, and
+  whether to add its Lights dashboard.
+- It finds or creates its labels.
+- **Configure** changes any of this later.
+
+## Setting up your lights
+
+1. Give each light an **area**.
+2. Give it the labels of the routines it should join.
+
+A label counts on the light, its device or its area.
+
+| Label | What it does |
+| ----- | ------------ |
+| Evening | Joins the evening routine: on before sunset, through the scenes, off at bedtime |
+| Wake up | Fades up to Energize at your wake-up time |
 | Nightlight | Gets Nightlight instead of Rest overnight and before bed |
 | Coming home | Comes on whenever someone gets home |
-| First one home | Comes on only when the first person gets home (the house was empty): a bedroom, say |
+| First one home | Comes on only for the first person home (when the house was empty), e.g. a bedroom |
 | Exclude from lighting | Left out of everything |
 
-A label counts on the light, its device or its area. Hidden lights are left
-out too. Any other label becomes a group on the dashboard.
+Hidden lights and light groups are left out too. Any other label you give
+lights becomes a group on the dashboard.
 
-## Dashboard
+## The Lights dashboard
 
-Reload the browser after setting up Hue-Lite: it adds a **Lights** dashboard
-to the sidebar the first time an admin opens Home Assistant (or finds one of
-its own you've made). It's an ordinary dashboard, to rename, move or make
-your default; delete it and it stays deleted (turn **Lights dashboard** off
-and on in Configure to have it added again). To make one yourself instead,
-use a dashboard whose raw configuration is:
+Reload your browser after setting Hue-Lite up. The first time an admin opens
+Home Assistant, Hue-Lite adds a **Lights** dashboard to the sidebar, or uses
+one of its own you've already made.
+- It's an ordinary dashboard, so you can rename it, move it or make it your
+  default.
+- If you delete it, it stays deleted. To have it added again, turn **Lights
+  dashboard** off and on in Configure.
+
+To make one yourself, create a dashboard and set its raw configuration to:
 
 ```yaml
 strategy:
   type: custom:hue-lite
 ```
 
-It builds itself from your areas and labels on every load: the whole home,
-each room's lights, your label groups, and the routines with their settings.
-A room with one light is one block; a room with several gets a block for
-each light, with the room's icon, so each has its own scenes. Each block is
-a bar: tap its icon to switch on or off, slide to dim, **Auto** at the end,
-and tap its name to show or hide its scenes. Icons and
-sliders take the colour the bulbs report; each scene shows the colour it
-gives (Natural light's as it is now), filled and ticked while the lights are
-in it. Like Hue, each has its own scenes: **Edit scenes** under them lets
-you drag the tiles into another order and hide some with their eye. Hue-Lite
-keeps these, so every phone and browser shows the same. **Reorder** drags the rooms the same way (with a finger, hold a
-moment first; the arrow keys work too); the rooms' order, and which are
-folded, are each person's own.
+It rebuilds itself from your areas and labels every time it loads, in this
+order:
+1. **Whole home**.
+2. **Each room.** A room with one light is one block. A room with several
+   gets a block for each light, with the room's icon.
+3. **Your label groups**.
+4. **The routines**, with their settings.
+5. **Your dimmers**, if you use them.
 
-**On your other dashboards**, add the **Hue-Lite light** card (Add card →
-search "Hue-Lite"): pick a light, a room or a label group, and it shows that
-block as on the Lights dashboard, with the same scenes. Hue-Lite's settings
-are configuration entities, so Home Assistant's own Overview shows just
-what Natural light and the evening routine are doing; the settings are on
-the Hue-Lite device page and the Lights dashboard.
+**Each block** is a bar over its scenes:
+- Tap the icon to switch the light on or off.
+- Slide to dim.
+- **Auto** is at the end of the bar.
+- Tap the name to show or hide the scenes.
 
-With Hue dimmers, a **Dimmers** card sets each one up: the lights it
-controls (its area, or lights you pick) and the scenes its On button steps
-through, dragged and hidden like a room's. Only admins can change them.
+Icons and sliders take the colour the bulbs report. Each scene tile shows the
+colour it gives, and it's filled and ticked while the lights are in that
+scene.
+
+**Edit scenes:**
+- Drag a block's scene tiles into another order.
+- Hide scenes with their eye.
+
+Hue-Lite keeps these, so every phone and browser shows the same.
+
+**Reorder:**
+- Drag the rooms into another order. With a finger, hold a moment first; the
+  arrow keys work too.
+- The order, and which blocks are folded, are each person's own.
+
+**On your other dashboards:**
+- Add the **Hue-Lite light** card: Add card → search "Hue-Lite".
+- Pick a light, a room or a label group. The card shows that block as it is
+  on the Lights dashboard, with the same scenes.
+
+**Home Assistant's own Overview** shows what Natural light and the evening
+routine are doing. Hue-Lite's settings are configuration entities, so they're
+on the Hue-Lite device page instead.
 
 ## How it works
 
-- **Scenes:** Natural light, Energize, Cool bright, Read, Relax, Rest and
-  Nightlight. Colour bulbs get Hue's colours, white bulbs a colour
-  temperature, and dimmable bulbs the brightness.
-- **Colour scenes:** Golden hour, Nebula and Aurora (from colours in Hue's own
-  scenes), Ember (deep reds, like firelight), Forest (deep greens) and
-  Moonlit (dim whites with a touch of colour). Each room's colour bulbs get
-  different colours from the scene, drifting slowly from one to the next;
-  white bulbs get a matching white.
-- **Natural light** follows the sun: Energize from dawn, Cool bright by
-  midday, Relax at sunset, Rest at night. A light stays in it, on or off,
-  until you pick another scene, change the light yourself or from an
-  automation, or use one of your own Home Assistant scenes on it.
-- **Evening routine:** before sunset, if someone's home, the Evening lights
-  come on dim, brighten, wind down through Relax and Rest, and fade out at
-  bedtime. Sun–Thu and Fri & Sat nights each have their own switch and
-  bedtime, like wake up's days.
-- **Wake up:** the Wake up lights that are off fade from a warm glow to
-  Energize by your wake-up time, and can turn off again afterwards.
-- **Coming & Going:** when someone gets home (optionally only after dark),
-  the Coming home lights that are off come on, and so do the First one home
-  lights if the house was empty. Evening lights (and lights on Auto) join
-  the evening routine if it's on, except in its last half hour or so before
-  bed (its Nightlight stretch), so they don't go off again soon after; the
-  rest come on in Natural light. Every light can go off when everyone has
-  left.
-- **Auto:** the button at the end of each light's and room's bar. A light is
-  on Auto while wake up or the evening routine has it, or once you put it on
-  Auto: then it follows both routines whether or not it has their labels,
-  and stays on Auto (on or off) until you pick a scene for it or change it.
-  Putting a light on Auto matches it to them straight away: it joins
-  whichever routine is running, or goes off if neither is (the day, after
-  bedtime, or the evening with nobody home). Taking a light off Auto lets
-  the routine holding it go; its labels still count next time.
-- **Hue dimmers** (RWL02x on ZHA) control their area, or the lights chosen
-  on the Dimmers card: On steps through their scenes (Natural light and the
-  presets, unless set otherwise), Off turns the lights off, Up and Down dim.
+- **Scenes.** Colour bulbs get Hue's colours, white bulbs a colour
+  temperature, and dimmable bulbs just the brightness.
+- **Colour scenes.**
+  - Golden hour, Nebula and Aurora use colours from Hue's own scenes.
+  - Ember is deep reds, like firelight. Forest is deep greens. Moonlit is dim
+    whites with a touch of colour.
+  - A room's colour bulbs show different colours from the scene and drift to
+    the next every three minutes. White bulbs get a matching white.
+- **Natural light** follows the sun:
+  1. Energize from dawn.
+  2. Cool bright by midday.
+  3. Relax at sunset.
+  4. Rest at night.
 
-The settings are switch, time and number entities on the **Hue-Lite**
-device, so they work in automations too. `sensor.hue_lite_light_scenes` shows
-which scene each light is in.
+  A light stays in it, on or off, until you pick another scene, change the
+  light yourself or from an automation, or use one of your own Home Assistant
+  scenes on it.
+- **Evening routine:**
+  - Before sunset, if someone's home, the Evening lights come on dim and
+    brighten.
+  - They wind down through Relax and Rest, then fade out at bedtime.
+  - Sun–Thu and Fri & Sat nights each have their own switch and bedtime.
+- **Wake up.** The Wake up lights that are off fade from a warm glow to
+  Energize by your wake-up time. They can turn off again afterwards.
+- **Coming & going:**
+  - When someone gets home (optionally only after dark), the Coming home
+    lights that are off come on. So do the First one home lights, if the
+    house was empty.
+  - Evening lights, and lights on Auto, join the evening routine if it's on,
+    except in its last half hour or so before bed. The rest come on in
+    Natural light.
+  - Every light can go off when everyone has left.
+- **Auto** is the button at the end of each bar. A light is on Auto while
+  wake up or the evening routine has it, or once you put it on Auto.
+  - On Auto, it follows both routines whether or not it has their labels.
+  - It stays on Auto, on or off, until you pick a scene for it or change it.
+  - Putting a light on Auto matches it to the routines straight away. It
+    joins whichever routine is running, or goes off if neither is.
+- **Hue dimmers** control their area, or the lights chosen on the Dimmers
+  card.
+  - **On** steps through their scenes: by default Natural light and the
+    presets.
+  - **Off** turns the lights off.
+  - **Up** and **Down** dim.
+
+The settings are switch, time and number entities on the **Hue-Lite** device,
+so automations can use them too. `sensor.hue_lite_light_scenes` shows which
+scene each light is in.
 
 ## Actions
 
 ```yaml
 action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
 target: {area_id: living_room}  # nightlight, golden_hour, nebula, aurora,
-                                # ember, forest, moonlit
-data: {preset: relax}
+data: {preset: relax}           # ember, forest, moonlit
 ---
 action: hue_lite.natural_light  # follow: false takes the lights out instead
 target: {label_id: lamps}
 ---
 action: hue_lite.next_scene     # what a dimmer's On button does
 target: {area_id: bedroom}
+---
+action: hue_lite.set_auto       # auto: false takes them off Auto
+target: {entity_id: light.hall}
+data: {auto: true}
 ```
 
-With no target, they use every light. A non-admin user can only use lights
-they're allowed to control.
+With no target, an action uses every light. A user who isn't an admin can
+only use it on lights they're allowed to control.
+
+## Limitations
+
+- **Dimmers:** only Hue Dimmer Switches (RWL020, RWL021, RWL022) paired with
+  ZHA.
+- **Restarts:** a routine whose start falls while Home Assistant is
+  restarting is skipped for that day.
+- **Light groups** are left out, so their members aren't sent commands twice.
+  Use areas or labels instead.
 
 ## Development
 
@@ -143,10 +233,11 @@ pip install -r requirements_test.txt
 pytest
 ```
 
-`tests/harness/index.html` renders the dashboard with a mock Home Assistant:
-serve the repository root (e.g. `python3 -m http.server --bind 127.0.0.1`) and
-open `/tests/harness/`.
+`tests/harness/index.html` renders the dashboard with a mock Home Assistant.
+To use it, serve the repository root, e.g. with
+`python3 -m http.server --bind 127.0.0.1`, and open `/tests/harness/`.
 
 ## Licence
 
-[MIT](LICENSE)
+[MIT](LICENSE). Hue-Lite isn't affiliated with or endorsed by Signify or
+Philips Hue. Philips Hue is a trademark of Signify.

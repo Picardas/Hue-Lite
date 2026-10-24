@@ -13,6 +13,7 @@ import voluptuous as vol
 from homeassistant.components.lovelace.const import STORAGE_DASHBOARD_CREATE_FIELDS
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import Unauthorized
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from custom_components.hue_lite import dashboard
 from custom_components.hue_lite.const import DOMAIN, STORAGE_KEY
@@ -180,3 +181,44 @@ async def test_a_dimmers_lights_and_scenes(hass: HomeAssistant, home: Home, hue_
     other = add_device(hass, "remote", model="TRADFRI")
     assert set_dimmer(device_id=other.id, lights=["light.bedroom"]).send_error.call_args.args[1] == "not_found"
     assert hue_lite.dimmer_settings == {}
+
+
+async def test_a_dimmer_keeps_up_with_its_lights(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """Its lights keep up with new entity ids and are dropped when deleted;
+    a deleted dimmer is forgotten."""
+    dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
+    hue_lite.set_dimmer(dimmer.id, lights=["light.bedroom", "light.living_room"])
+    entities = er.async_get(hass)
+    entities.async_update_entity("light.bedroom", new_entity_id="light.master")
+    entities.async_remove("light.living_room")
+    await hass.async_block_till_done()
+    assert hue_lite.dimmer_settings == {dimmer.id: {"lights": ["light.master"]}}
+
+    dr.async_get(hass).async_remove_device(dimmer.id)
+    await hass.async_block_till_done()
+    assert hue_lite.dimmer_settings == {}
+
+
+async def test_commands_need_hue_lite_and_a_limit(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hue_lite: HueLite, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only so many rooms and lights keep scenes of their own (one, here)...
+    monkeypatch.setattr(dashboard, "MAX_LAYOUTS", 1)
+
+    def set_scenes(key: str) -> Mock:
+        return ws(hass, dashboard.websocket_set_scenes, {"type": f"{DOMAIN}/set_scenes", "key": key, "scenes": {"order": [], "hidden": []}})
+
+    set_scenes("living_room").send_result.assert_called_once()
+    assert set_scenes("bedroom").send_error.call_args.args[1] == "too_many"
+    set_scenes("living_room").send_result.assert_called_once()
+
+    # ...and none answer while Hue-Lite isn't set up.
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    for command in (
+        dashboard.websocket_config,
+        dashboard.websocket_claim_dashboard,
+        dashboard.websocket_subscribe,
+        dashboard.websocket_set_scenes,
+        dashboard.websocket_set_dimmer,
+    ):
+        assert ws(hass, command, {}).send_error.call_args.args[1] == "not_loaded"

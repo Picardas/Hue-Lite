@@ -39,8 +39,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> b
 
 async def async_migrate_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> bool:
     """Set up before a role existed (First one home, added in 1.2), find or
-    create its label."""
-    if entry.version == 1 and entry.minor_version < 2:
+    create its label. One from a later Hue-Lite isn't loaded."""
+    if entry.version > 1:
+        return False
+    if entry.minor_version < 2:
         missing = [role for role in ROLES if label_option(role) not in entry.options]
         hass.config_entries.async_update_entry(
             entry, options={**entry.options, **role_labels(hass, missing)}, minor_version=2

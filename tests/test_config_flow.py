@@ -16,7 +16,7 @@ from .conftest import Home
 
 async def test_user_flow_reuses_and_creates_labels(hass: HomeAssistant) -> None:
     labels = lr.async_get(hass)
-    # Existing labels are found by id (as the YAML setup's migrations made them)...
+    # Existing labels are found by id (as an earlier setup made them)...
     by_id = labels.async_create("Lighting exclude")
     labels.async_update(by_id.label_id, name="Keep out")
     # ...or by name, whatever the case.

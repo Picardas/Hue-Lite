@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
@@ -13,7 +12,22 @@ from homeassistant.core import HomeAssistant
 from custom_components.hue_lite.engine import HueLite
 from custom_components.hue_lite.timeline import PRESETS
 
-from .conftest import FRIDAY, Home, action, add_device, add_light, natural, on, ours, routine, set_up, settle, switch, tick
+from .conftest import (
+    FRIDAY,
+    Home,
+    action,
+    add_device,
+    add_light,
+    after_dark,
+    natural,
+    on,
+    ours,
+    routine,
+    set_up,
+    settle,
+    switch,
+    tick,
+)
 
 COOL_BRIGHT_XY = list(PRESETS["cool_bright"].xy_color)
 EVENING = "switch.hue_lite_evening_routine_sun_thu_nights"  # the tests' Thursday
@@ -278,12 +292,12 @@ async def test_coming_and_going(hass: HomeAssistant, freezer: FrozenDateTimeFact
 
     # Coming home, only after dark (the default): not in daylight...
     hass.states.async_set("light.living_room", "off")
-    with patch("custom_components.hue_lite.routines.is_up", return_value=True):
+    with after_dark(False):
         hass.states.async_set("zone.home", "1")
         await settle(hass)
     assert home.turn_on == []
 
-    with patch("custom_components.hue_lite.routines.is_up", return_value=False):
+    with after_dark():
         # ...nor when the zone comes back from unknown (zones reloading)...
         hass.states.async_set("zone.home", "unknown")
         hass.states.async_set("zone.home", "1")
@@ -311,7 +325,7 @@ async def test_coming_home_during_the_evening(
     await tick(hass, freezer, "16:30")  # nobody's home, so the routine takes nothing
     assert routine(hass) == []
 
-    with patch("custom_components.hue_lite.routines.is_up", return_value=False):
+    with after_dark():
         hass.states.async_set("zone.home", "1")
         await settle(hass)
         assert (routine(hass), natural(hass)) == (["light.living_room"], [office])
@@ -331,7 +345,7 @@ async def test_first_one_home(hass: HomeAssistant, home: Home, hue_lite: HueLite
     """A First one home light comes on only when the house was empty, not for
     everyone who gets home after (a Coming home light does)."""
     bedside = add_light(hass, "bedside", "bedroom", {home.labels["first_home"]})
-    with patch("custom_components.hue_lite.routines.is_up", return_value=False):
+    with after_dark():
         hass.states.async_set("zone.home", "0")
         hass.states.async_set("zone.home", "1")
         await settle(hass)

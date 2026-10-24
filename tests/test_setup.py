@@ -184,6 +184,20 @@ async def test_deleted_role_label_raises_a_repair(hass: HomeAssistant, home: Hom
     assert issues.async_get_issue(DOMAIN, "missing_label_evening") is None
 
 
+async def test_removing_hue_lite_forgets_it(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hue_lite: HueLite, hass_storage: dict[str, Any]
+) -> None:
+    """Its settings and scenes, and its Repairs issues; the labels stay."""
+    lr.async_get(hass).async_delete(home.labels["evening"])
+    await hass.async_block_till_done()
+    await hue_lite.async_save()
+    assert STORAGE_KEY in hass_storage
+    await hass.config_entries.async_remove(entry.entry_id)
+    assert STORAGE_KEY not in hass_storage
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "missing_label_evening") is None
+    assert lr.async_get(hass).async_get_label(home.labels["wake_up"])
+
+
 async def test_real_sun_times(hass: HomeAssistant, hue_lite: HueLite) -> None:
     """Without the fixed times the other tests use: London on midsummer's day."""
     hass.config.latitude, hass.config.longitude = 51.5, -0.13

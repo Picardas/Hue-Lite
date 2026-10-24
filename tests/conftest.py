@@ -4,6 +4,7 @@ Hue-Lite set up in it."""
 from __future__ import annotations
 
 from collections.abc import Generator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -158,6 +159,12 @@ async def tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, when: str) -
 
 async def settle(hass: HomeAssistant) -> None:
     await hass.async_block_till_done(wait_background_tasks=True)
+
+
+def after_dark(dark: bool = True) -> AbstractContextManager:
+    """The sun down (or up), for coming home, which by default only turns
+    lights on after dark."""
+    return patch("custom_components.hue_lite.routines.is_up", return_value=not dark)
 
 
 def on(hass: HomeAssistant, hue_lite: HueLite, *lights: str) -> None:

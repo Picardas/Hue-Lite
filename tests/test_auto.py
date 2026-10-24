@@ -4,8 +4,6 @@ or it's changed."""
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from freezegun.api import FrozenDateTimeFactory
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
@@ -17,7 +15,7 @@ from homeassistant.helpers import entity_registry as er
 from custom_components.hue_lite.engine import HueLite
 from custom_components.hue_lite.timeline import PRESETS
 
-from .conftest import FRIDAY, Home, action, add_light, routine, set_up, settle, switch, tick
+from .conftest import FRIDAY, Home, action, add_light, after_dark, routine, set_up, settle, switch, tick
 
 
 def auto(hass: HomeAssistant) -> list[str]:
@@ -191,7 +189,7 @@ async def test_a_bulb_reporting_again_after_a_switch_on_isnt_a_change(
 
 async def test_coming_home_keeps_auto(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
     await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
-    with patch("custom_components.hue_lite.routines.is_up", return_value=False):
+    with after_dark():
         hass.states.async_set("zone.home", "0")
         hass.states.async_set("zone.home", "1")
         await settle(hass)

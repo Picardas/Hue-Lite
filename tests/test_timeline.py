@@ -1,4 +1,5 @@
-"""The timelines, which match the YAML setup's Jinja macros, and the presets."""
+"""The timelines (Natural light and the evening routine), the presets and
+the dimmer's cycle."""
 
 from __future__ import annotations
 

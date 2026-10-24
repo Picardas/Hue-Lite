@@ -1,4 +1,5 @@
-"""Sending commands to the lights: they don't pile up behind a slow bulb."""
+"""Sending commands to the lights: they don't pile up behind a slow bulb,
+and one that doesn't answer doesn't stop the rest."""
 
 from __future__ import annotations
 
@@ -6,7 +7,10 @@ import asyncio
 from typing import Any
 from unittest.mock import patch
 
-from homeassistant.core import Context, HomeAssistant
+import pytest
+
+from homeassistant.core import Context, HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.hue_lite.engine import HueLite
 
@@ -48,3 +52,18 @@ async def test_commands_dont_pile_up_behind_a_slow_bulb(hass: HomeAssistant, hom
         answer.set()
         await asyncio.gather(first, third)
     assert sent == [([living_room], 10), ([bedroom], 30), ([living_room], 30)]
+
+
+async def test_a_bulb_that_doesnt_answer(hass: HomeAssistant, home: Home, hue_lite: HueLite, caplog: pytest.LogCaptureFixture) -> None:
+    """It's logged, and the next command for it still goes."""
+    tried: list[ServiceCall] = []
+
+    async def unreachable(call: ServiceCall) -> None:
+        tried.append(call)
+        raise HomeAssistantError("Failed to send request: device did not respond")
+
+    hass.services.async_register("light", "turn_off", unreachable)
+    for _ in range(2):
+        await hue_lite.sender.call("turn_off", ["light.bedroom"], transition=1)
+    assert len(tried) == 2
+    assert "Couldn't turn off light.bedroom: Failed to send request: device did not respond" in caplog.text

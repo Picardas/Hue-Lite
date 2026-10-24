@@ -5,13 +5,13 @@
 // Lights dashboard from the area and label registries every time it loads, so
 // new lights, rooms and labels appear without editing anything. The
 // integration tells it which labels drive the routines and its own entity ids
-// (websocket `hue_lite/config`). Also defines four cards:
+// (websocket `hue_lite/config`). Also defines its cards:
 //   custom:hue-lite-light-bar   a light or a room: tap to toggle, slide to dim,
 //                               Auto at the end, hold a single light for its colour dialog
 //   custom:hue-lite-scene-tile  a scene button (Natural light, a preset or a colour
 //                               scene) that lights up while its lights are in it
-//   custom:hue-lite-rooms       every room as a collapsible, reorderable block
-//                               headed by a bar for all its lights
+//   custom:hue-lite-rooms       the rooms' lights as collapsible, reorderable blocks,
+//                               each headed by a bar over its scenes
 //   custom:hue-lite-routines    Wake up, Evening and Coming & Going as collapsible blocks
 //   custom:hue-lite-dimmers     each Hue dimmer: the lights it controls and its scenes
 //   custom:hue-lite-light-card  one block of the Lights dashboard (a light, room or
@@ -22,10 +22,11 @@
 // the rest of the layout is each person's own.
 //
 // Layout: Whole home (fixed at the top, a block that collapses like a room),
-// then the rooms card with one block per area with
-// lights (ordered by floor unless you've reordered them) and one per label you
-// create yourself, then the routines card. The role labels drive the routines
-// and don't get blocks of their own.
+// then the rooms card with a block for each room with one light and each
+// light of a room with several (ordered by floor unless you've reordered
+// them) and one per label you create yourself, then the routines card and,
+// with Hue dimmers, the dimmers card. The role labels drive the routines and
+// don't get blocks of their own.
 
 (() => {
   const DOMAIN = "hue_lite";
@@ -103,8 +104,7 @@
   // {entity_id} or {} for every light.
   function sceneTiles(setup, lights, target) {
     const tile = (extra) => ({
-      type: "custom:hue-lite-scene-tile", entities: lights, target, scenes_entity: setup.entities.light_scenes,
-      grid_options: { columns: 4, rows: 2 }, ...extra,
+      type: "custom:hue-lite-scene-tile", entities: lights, target, scenes_entity: setup.entities.light_scenes, ...extra,
     });
     const preset = (p) => tile({ preset: p.id, light: setup.presets?.[p.id] });
     return [
@@ -849,7 +849,8 @@
   // `layout_key`, or the class's `layoutKey`. Subclasses render the blocks
   // (their headings calling `_toggleCollapsed`), show on a heading whether
   // its block is open (`_showOpen`), and can redraw from the states of the
-  // entities they're `_watching` (`_update`).
+  // entities they're `_watching` (`_update`). One with `_sharedChanged` is
+  // told whenever the shared settings change.
   class CollapsibleBlocks extends HTMLElement {
     setConfig(config) {
       this._validate(config);
@@ -865,15 +866,34 @@
     }
 
     set hass(hass) {
+      const first = !this._hass;
       this._hass = hass;
       if (!this._loaded) this._load();
+      if (first && this._sharedChanged) watchShared(hass, this);
       // The cards inside skip redrawing themselves when their own states haven't changed.
       for (const child of this._children) child.hass = hass;
       if (statesChanged(this, hass, this._watching())) this._update();
     }
 
+    connectedCallback() {
+      if (this._hass && this._sharedChanged) watchShared(this._hass, this);
+    }
+
+    disconnectedCallback() {
+      shared.cards.delete(this);
+    }
+
     getGridOptions() {
       return { columns: "full", rows: "auto" };
+    }
+
+    // One of the Hue-Lite cards inside, handed hass along with the rest.
+    _card(config) {
+      const card = document.createElement(config.type.replace(/^custom:/, ""));
+      card.setConfig(config);
+      if (this._hass) card.hass = this._hass;
+      this._children.push(card);
+      return card;
     }
 
     get _layoutKey() {
@@ -1299,15 +1319,6 @@
       });
     }
 
-    // One of the Hue-Lite cards inside, handed hass along with the rest.
-    _card(config) {
-      const card = document.createElement(config.type.replace(/^custom:/, ""));
-      card.setConfig(config);
-      if (this._hass) card.hass = this._hass;
-      this._children.push(card);
-      return card;
-    }
-
     // A block's scene tiles (shared by everyone under its id), added to `container`.
     _sceneSet(key, configs, container) {
       const set = new SceneSet((config) => this._card(config), configs, {
@@ -1320,19 +1331,6 @@
       set.key = key;
       container.appendChild(set.grid);
       this._sets.set(key, set);
-    }
-
-    connectedCallback() {
-      if (this._hass) watchShared(this._hass, this);
-    }
-
-    disconnectedCallback() {
-      shared.cards.delete(this);
-    }
-
-    set hass(hass) {
-      if (!this._hass) watchShared(hass, this);
-      super.hass = hass;
     }
 
     // Everyone's scenes changed. The first time, scenes this user arranged
@@ -1359,7 +1357,6 @@
     _showOpen(el, open) {
       el.querySelector(".head > hue-lite-light-bar").expanded = open;
     }
-
 
     // Puts the rooms in order and their scenes in each room's order (hidden
     // ones left out, or dimmed while editing), and applies the collapsed,
@@ -1611,15 +1608,6 @@
       this._sets.set(d.id, set);
     }
 
-    // One of the Hue-Lite cards inside (its scene tiles), handed hass along with the rest.
-    _card(config) {
-      const card = document.createElement(config.type.replace(/^custom:/, ""));
-      card.setConfig(config);
-      if (this._hass) card.hass = this._hass;
-      this._children.push(card);
-      return card;
-    }
-
     _summary(id) {
       const d = this._config.dimmers.find((x) => x.id === id);
       const lights = this._settings(id).lights;
@@ -1627,23 +1615,6 @@
       const scenes = set ? set.scenes.order.filter((s) => !set.scenes.hidden.includes(s)).length : 0;
       const controls = lights ? `${lights.length} light${lights.length === 1 ? "" : "s"}` : d?.area_name || "No area";
       return `${controls} · ${scenes} scene${scenes === 1 ? "" : "s"}`;
-    }
-
-    connectedCallback() {
-      if (this._hass) watchShared(this._hass, this);
-    }
-
-    disconnectedCallback() {
-      shared.cards.delete(this);
-    }
-
-    set hass(hass) {
-      const first = !this._hass;
-      super.hass = hass;
-      if (first) {
-        watchShared(hass, this);
-        this._arrange();
-      }
     }
 
     _sharedChanged() {
@@ -1765,8 +1736,10 @@
         this.replaceChildren(note);
         return;
       }
+      // Folded or not is kept for each block (two cards sharing one key
+      // would each save over the other's).
       this._inner = document.createElement("hue-lite-rooms");
-      this._inner.setConfig({ type: "custom:hue-lite-rooms", rooms: [block], toolbar: false, layout_key: "hue_lite_cards" });
+      this._inner.setConfig({ type: "custom:hue-lite-rooms", rooms: [block], toolbar: false, layout_key: `hue_lite_card:${block.id}` });
       this._inner.hass = this._hass;
       this.replaceChildren(this._inner);
     }
@@ -1834,12 +1807,14 @@
     if (!customElements.get(tag)) customElements.define(tag, cls);
   }
   window.customCards = window.customCards || [];
-  window.customCards.push({
-    type: "hue-lite-light-card",
-    name: "Hue-Lite light",
-    description: "A light, room or label group as on the Lights dashboard: switch, dim, Auto and its scenes.",
-    preview: true,
-  });
+  if (!window.customCards.some((c) => c.type === "hue-lite-light-card")) {
+    window.customCards.push({
+      type: "hue-lite-light-card",
+      name: "Hue-Lite light",
+      description: "A light, room or label group as on the Lights dashboard: switch, dim, Auto and its scenes.",
+      preview: true,
+    });
+  }
 
   // ---- Adding the dashboard ------------------------------------------------
 
