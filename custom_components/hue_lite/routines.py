@@ -84,10 +84,33 @@ class Routines:
             self._start_evening()
 
     @property
-    def evening_running(self) -> bool:
-        """Whether the evening routine is on tonight and it's the evening, so
-        lights put on Auto join it straight away."""
-        return self.evening_on and self.lite.evening.phase in EVENING_PHASES
+    def asking(self) -> str:
+        """What the routines ask of a light on Auto right now: the evening
+        routine (ROUTINE) on tonight's evening if someone's home, wake up
+        (WAKE_UP) from its fade-in until its lights would go off after it, or
+        nothing ('', so off)."""
+        lite = self.lite
+        if self.evening_on and lite.evening.phase in EVENING_PHASES and _people(lite.hass.states.get(lite.presence)):
+            return ROUTINE
+        if (woke := lite.last_wake_up) and lite.in_scene(WAKE_UP):
+            s = lite.settings
+            if dt_util.utcnow() < woke + timedelta(minutes=s["wake_up_fade_minutes"] + s["wake_up_off_after_minutes"]):
+                return WAKE_UP
+        return ""
+
+    async def match(self, scene: str, lights: list[str]) -> None:
+        """Set lights just put on Auto as the routines ask (see `asking`): the
+        evening routine's light, wake up's (Energize by the wake-up time), or
+        off."""
+        lite = self.lite
+        if scene == ROUTINE:
+            await lite.apply(ROUTINE, lights, 2)
+        elif scene == WAKE_UP:
+            woke = lite.last_wake_up or dt_util.utcnow()
+            left = woke + timedelta(minutes=lite.settings["wake_up_fade_minutes"]) - dt_util.utcnow()
+            await lite.sender.send(lights, PRESETS["energize"], max(left.total_seconds(), 2))
+        elif on := lite.on(lights):
+            await lite.sender.call("turn_off", on, transition=2)
 
     @callback
     def _start_evening(self) -> None:

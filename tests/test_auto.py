@@ -1,5 +1,6 @@
 """Auto: a light that does what the routines ask, whether or not it has their
-labels, until a scene is picked for it or it's changed."""
+labels (on with them, off when none wants it), until a scene is picked for it
+or it's changed."""
 
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import entity_registry as er
 
 from custom_components.hue_lite.engine import HueLite
+from custom_components.hue_lite.timeline import PRESETS
 
 from .conftest import FRIDAY, Home, action, add_light, routine, set_up, settle, switch, tick
 
@@ -61,18 +63,14 @@ async def test_auto_during_the_evening(
     hass.states.async_set(office, "on")
     home.turn_on.clear()
 
-    # On Auto during the evening: a light that's on takes the routine's light at once...
+    # Put on Auto during the evening, lights match the routine straight away:
+    # on at its light, whether they were on or off.
     await action(hass, "set_auto", {"auto": True, "entity_id": [office, desk]})
     await settle(hass)
     assert routine(hass) == ["light.bedroom", desk, "light.living_room", office]
-    assert [c.data["entity_id"] for c in home.turn_on] == [[office]]
+    assert [c.data["entity_id"] for c in home.turn_on] == [[desk, office]]
     assert home.turn_on[0].data["brightness_pct"] == hue_lite.evening.light.brightness_pct
-
-    # ...and one that's off picks it up when it's turned on.
-    home.turn_on.clear()
-    hass.states.async_set(desk, "on")
-    await settle(hass)
-    assert [c.data["entity_id"] for c in home.turn_on] == [[desk]]
+    assert home.turn_off == []
 
     # Off Auto, lights leave the routine, labelled or not...
     await action(hass, "set_auto", {"auto": False, "entity_id": [office, "light.bedroom"]})
@@ -87,6 +85,62 @@ async def test_auto_during_the_evening(
     await tick(hass, freezer, f"{FRIDAY} 12:00:00+01:00")
     await tick(hass, freezer, f"{FRIDAY} 16:30:00+01:00")
     assert routine(hass) == ["light.bedroom", desk, "light.living_room"]
+
+
+async def test_auto_turns_lights_off_when_no_routine_wants_them(
+    hass: HomeAssistant, home: Home, hue_lite: HueLite
+) -> None:
+    # The tests' Thursday lunchtime: no routine has its lights on.
+    hass.states.async_set("light.living_room", "on")
+    await action(hass, "apply_preset", {"preset": "relax", "entity_id": "light.living_room"})
+    await action(hass, "set_auto", {"auto": True, "entity_id": ["light.bedroom", "light.living_room"]})
+    await settle(hass)
+    # The light that's on goes off (leaving its scene); the one that's off stays off.
+    assert [c.data for c in home.turn_off] == [{"entity_id": ["light.living_room"], "transition": 2}]
+    assert (auto(hass), scenes(hass)) == (["light.bedroom", "light.living_room"], {})
+
+
+async def test_auto_turns_lights_off_with_nobody_home_or_after_bedtime(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    office, desk = add_light(hass, "office", "living_room"), add_light(hass, "desk")
+    await tick(hass, freezer, "17:00")
+    await set_up(hass, entry)
+    hass.states.async_set("zone.home", "0")
+
+    # The evening, but with nobody home the routine isn't on: off.
+    hass.states.async_set(office, "on")
+    await action(hass, "set_auto", {"auto": True, "entity_id": office})
+    await settle(hass)
+    assert [c.data["entity_id"] for c in home.turn_off] == [[office]]
+
+    # After bedtime, the routine's done for the night: off.
+    hass.states.async_set("zone.home", "1")
+    await tick(hass, freezer, "23:30")
+    home.turn_off.clear()
+    hass.states.async_set(desk, "on")
+    await action(hass, "set_auto", {"auto": True, "entity_id": desk})
+    await settle(hass)
+    assert [c.data["entity_id"] for c in home.turn_off] == [[desk]]
+
+
+async def test_auto_during_wake_up(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    office = add_light(hass, "office", "living_room")
+    await tick(hass, freezer, "06:00")
+    await set_up(hass, entry)
+    await switch(hass, "switch.hue_lite_wake_up_on_weekdays")
+    await tick(hass, freezer, "06:30")  # wake up (07:00) fades in the Wake up-labelled bedroom
+    await tick(hass, freezer, "06:40")
+    home.turn_on.clear()
+
+    # Put on Auto during the fade-in, a light joins it, reaching Energize by
+    # the wake-up time, twenty minutes on.
+    await action(hass, "set_auto", {"auto": True, "entity_id": office})
+    await settle(hass)
+    assert scenes(hass)[office] == "wake_up"
+    assert [c.data for c in home.turn_on] == [{"entity_id": [office], **PRESETS["energize"].colour_data(), "transition": 1200}]
 
 
 async def test_picking_a_scene_or_a_change_takes_a_light_off_auto(

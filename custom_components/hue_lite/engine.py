@@ -317,19 +317,20 @@ class HueLite:
 
     @callback
     def async_set_auto(self, lights: list[str], auto: bool) -> None:
-        """Put lights on Auto, or take them off it. Put on it, a light leaves
-        the scene it was in (it does what the routines ask, whether or not it
-        has their labels) and joins the evening routine if that's running,
-        taking its light now if it's on. Taken off, it leaves the routine or
-        wake up holding it, staying as it is; its labels still count next time."""
+        """Put lights on Auto, or take them off it. Put on it, a light does
+        what the routines ask, whether or not it has their labels: it leaves
+        the scene it was in and straight away matches them, joining the
+        evening routine or wake up if one's running and going off if not.
+        Taken off, it leaves the routine or wake up holding it, staying as it
+        is; its labels still count next time."""
         lights = [light for light in lights if not self.excluded(light)]
         held = [light for light in lights if self.scenes.get(light) in (ROUTINE, WAKE_UP)]
         if auto:
             joining = [light for light in lights if light not in self.auto and light not in held]
-            evening = self.routines.evening_running
-            changed = self._set_auto(lights, True) | self._put(joining, ROUTINE if evening else "")
-            if evening and (on := self.on(joining)):
-                self.spawn(self.apply(ROUTINE, on, 2))
+            asking = self.routines.asking
+            changed = self._set_auto(lights, True) | self._put(joining, asking)
+            if joining:
+                self.spawn(self.routines.match(asking, joining))
         else:
             changed = self._set_auto(lights, False) | self._put(held, "")
         if changed:

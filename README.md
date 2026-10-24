@@ -78,8 +78,10 @@ ticked while the lights are in it.
   on Auto while wake up or the evening routine has it, or once you put it on
   Auto: then it follows both routines whether or not it has their labels,
   and stays on Auto (on or off) until you pick a scene for it or change it.
-  Taking a light off Auto lets the routine holding it go; its labels still
-  count next time.
+  Putting a light on Auto matches it to them straight away: it joins
+  whichever routine is running, or goes off if neither is (the day, after
+  bedtime, or the evening with nobody home). Taking a light off Auto lets
+  the routine holding it go; its labels still count next time.
 - **Hue dimmers** (RWL02x on ZHA) control their area: On steps through the
   scenes, Off turns the lights off, Up and Down dim.
 
