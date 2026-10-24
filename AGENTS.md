@@ -74,8 +74,8 @@ pytest
   3. Put it on the dashboard: `routinesCard` or `settingsView` in
      `hue-lite.js`.
 - **A colour scene:**
-  1. Add it to `PALETTES` in `timeline.py`. Colours are xy values inside
-     Hue's gamut C.
+  1. Add it to `PALETTES` in `timeline.py`. Each colour is an xy value
+     inside Hue's gamut C and a brightness.
   2. Add it to `COLOUR_SCENES` and `howItWorks` in `hue-lite.js`.
   3. Add it to the options in `services.yaml`, and to the selector and the
      `apply_preset` description in `en.json`.

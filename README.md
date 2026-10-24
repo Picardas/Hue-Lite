@@ -153,8 +153,9 @@ on the Hue-Lite device page instead.
   - Golden hour, Nebula and Aurora use colours from Hue's own scenes.
   - Ember is deep reds, like firelight. Forest is deep greens. Moonlit is dim
     whites with a touch of colour.
-  - A room's colour bulbs show different colours from the scene and drift to
-    the next every three minutes. White bulbs get a matching white.
+  - A room's colour bulbs show different colours from the scene, each at its
+    own brightness, and drift to the next every three minutes. White bulbs
+    get a matching white.
 - **Natural light** follows the sun:
   1. Energize from dawn.
   2. Cool bright by midday.

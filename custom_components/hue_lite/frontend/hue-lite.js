@@ -263,7 +263,7 @@
     return [
       `**Natural light** is a scene that follows the sun: Energize from dawn, Energize to Cool bright through the morning, Cool bright from midday, Cool bright to Relax over the last 90 minutes before sunset, Relax to Rest after sunset, and Rest overnight (lights labelled *${label("nightlight")}*: Nightlight). Lights stay in it until you pick another scene, change them yourself or from an automation, or use one of your own scenes on them.`,
       "",
-      "**Colour scenes**: Golden hour, Nebula, Aurora, Ember, Forest and Moonlit spread their colours across a room's colour bulbs and drift slowly between them, a step every three minutes.",
+      "**Colour scenes**: Golden hour, Nebula, Aurora, Ember, Forest and Moonlit spread their colours across a room's colour bulbs, each at its own brightness, and drift slowly between them, a step every three minutes.",
       "",
       "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you pick a scene for it or change it. Put on Auto, it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
       "",

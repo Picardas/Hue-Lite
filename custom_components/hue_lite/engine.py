@@ -568,9 +568,9 @@ class HueLite:
 
     async def send_palette(self, scene: str, lights: list[str], transition: float, parent: Context | None = None) -> None:
         """Turn lights on in a colour scene. Each colour bulb gets the colour
-        for its place among the scene's colour bulbs, moved on one colour
-        every DRIFT_MINUTES, so a room shows several and they drift; white
-        bulbs get the scene's white."""
+        (with its brightness) for its place among the scene's colour bulbs,
+        moved on one colour every DRIFT_MINUTES, so a room shows several and
+        they drift; white bulbs get the scene's white."""
         palette, has_colour = PALETTES[scene], self.sender.has_colour
         colour = [light for light in lights if has_colour(light)]
         order = sorted({*colour, *(light for light in self.in_scene(scene) if has_colour(light))})

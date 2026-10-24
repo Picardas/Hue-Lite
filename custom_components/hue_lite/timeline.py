@@ -55,56 +55,53 @@ PRESETS: dict[str, Light] = {
 
 @dataclass(frozen=True)
 class Palette:
-    """A colour scene, like Hue's: its colours are spread across the colour
-    bulbs and drift from one to the next. White bulbs get `white`."""
+    """A colour scene, like Hue's: its colours, each an xy colour and a
+    brightness, are spread across the colour bulbs and drift from one to the
+    next, so the bulbs differ in brightness too and change it slowly. White
+    bulbs get `white`."""
 
-    brightness_pct: float
-    colours: tuple[tuple[float, float], ...]
+    colours: tuple[tuple[float, float, float], ...]
     white: Light
 
     def colour(self, index: int) -> Light:
         """The light for a colour bulb at `index` (round the palette)."""
-        return Light(self.brightness_pct, self.colours[index % len(self.colours)], self.white.kelvin)
+        x, y, brightness = self.colours[index % len(self.colours)]
+        return Light(brightness, (x, y), self.white.kelvin)
 
 
 # Hue-Lite's colour scenes, from colours in Hue's scene library: Golden hour's
 # from Savanna sunset, Golden pond and Amber bloom; Nebula's from Nebula,
 # Tropical twilight and Moonlight; Aurora's greens from Arctic aurora, Blue
-# Planet and Forest adventure.
+# Planet and Forest adventure. Each colour is (x, y, brightness %).
 PALETTES: dict[str, Palette] = {
     "golden_hour": Palette(
-        70,
-        ((0.4801, 0.4309), (0.5246, 0.3864), (0.5862, 0.3575), (0.5063, 0.4474), (0.4934, 0.3675)),
+        ((0.4801, 0.4309, 75), (0.5246, 0.3864, 65), (0.5862, 0.3575, 55), (0.5063, 0.4474, 80), (0.4934, 0.3675, 65)),
         Light(70, (0.4801, 0.4309), 2500),
     ),
     "nebula": Palette(
-        20,
-        ((0.1911, 0.0673), (0.2712, 0.1723), (0.2412, 0.1171), (0.3161, 0.2306), (0.1725, 0.1532)),
+        ((0.1911, 0.0673, 16), (0.2712, 0.1723, 24), (0.2412, 0.1171, 20), (0.3161, 0.2306, 26), (0.1725, 0.1532, 14)),
         Light(15, (0.561, 0.4042), 2000),
     ),
     "aurora": Palette(
-        50,
-        ((0.1672, 0.593), (0.2072, 0.4525), (0.1868, 0.3328), (0.3095, 0.5913), (0.1915, 0.3638)),
+        ((0.1672, 0.593, 55), (0.2072, 0.4525, 45), (0.1868, 0.3328, 40), (0.3095, 0.5913, 60), (0.1915, 0.3638, 45)),
         Light(50, (0.3812, 0.3794), 4000),
     ),
     # Firelight: deep reds and crimson, with a little orange; redder and
-    # darker than Golden hour.
+    # darker than Golden hour. The reds glow low, the oranges flare brighter.
     "ember": Palette(
-        45,
-        ((0.6726, 0.3218), (0.6450, 0.3390), (0.6600, 0.3100), (0.6150, 0.3650), (0.5900, 0.3800)),
+        ((0.6726, 0.3218, 35), (0.6450, 0.3390, 45), (0.6600, 0.3100, 30), (0.6150, 0.3650, 55), (0.5900, 0.3800, 50)),
         Light(35, (0.6150, 0.3650), 2000),
     ),
     # Deep greens, emerald to moss, with a hint of yellow-green; darker than
     # Aurora's teals.
     "forest": Palette(
-        40,
-        ((0.2100, 0.6600), (0.2500, 0.6200), (0.1900, 0.5500), (0.3000, 0.5900), (0.3500, 0.5500)),
+        ((0.2100, 0.6600, 35), (0.2500, 0.6200, 45), (0.1900, 0.5500, 30), (0.3000, 0.5900, 50), (0.3500, 0.5500, 40)),
         Light(30, (0.4599, 0.4106), 2700),
     ),
-    # Mostly dim whites, warm and soft, with blush and lavender drifting through.
+    # Mostly dim whites, warm and soft, with blush and lavender drifting
+    # through, dimmer than the whites.
     "moonlit": Palette(
-        25,
-        ((0.4599, 0.4106), (0.3812, 0.3794), (0.4000, 0.3000), (0.4300, 0.3950), (0.3200, 0.2600)),
+        ((0.4599, 0.4106, 30), (0.3812, 0.3794, 28), (0.4000, 0.3000, 18), (0.4300, 0.3950, 30), (0.3200, 0.2600, 15)),
         Light(25, (0.4599, 0.4106), 2700),
     ),
 }

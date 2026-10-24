@@ -44,7 +44,7 @@ DATA_URL = f"{DOMAIN}_dashboard_url"
 # Each preset's and colour scene's colours as a colour bulb reports them, for their tiles.
 SCENE_COLOURS = {
     **{preset: {"rgb_colors": [rgb_color(light.xy_color)]} for preset, light in PRESETS.items()},
-    **{scene: {"rgb_colors": [rgb_color(xy) for xy in palette.colours]} for scene, palette in PALETTES.items()},
+    **{scene: {"rgb_colors": [rgb_color((x, y)) for x, y, _ in palette.colours]} for scene, palette in PALETTES.items()},
 }
 
 

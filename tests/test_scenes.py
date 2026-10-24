@@ -21,20 +21,21 @@ async def test_colour_scene(hass: HomeAssistant, freezer: FrozenDateTimeFactory,
     lamp = add_light(hass, "lamp", "living_room")
     desk = add_light(hass, "desk", "living_room")
     hass.states.async_set(desk, "off", {"supported_color_modes": ["color_temp"]})
-    colours = list(PALETTES["golden_hour"].colours)
+    colours = PALETTES["golden_hour"].colours
 
     def sent() -> dict[str, dict]:
         return {c.data["entity_id"][0]: c.data for c in home.turn_on}
 
     def colour(data: dict) -> int:
-        return colours.index(tuple(data["xy_color"]))
+        """Which of the palette's colours was sent: its xy colour and brightness."""
+        return colours.index((*data["xy_color"], data["brightness_pct"]))
 
-    # The colour bulbs get the palette's colours, one after another; white
-    # bulbs get its white.
+    # The colour bulbs get the palette's colours, one after another, each at
+    # its own brightness; white bulbs get its white.
     await action(hass, "apply_preset", {"preset": "golden_hour", "area_id": "living_room"})
     first = sent()
     assert colour(first["light.living_room"]) == (colour(first[lamp]) + 1) % len(colours)
-    assert first[lamp]["brightness_pct"] == 70
+    assert first[lamp]["brightness_pct"] != first["light.living_room"]["brightness_pct"]
     assert first[desk] == {"entity_id": [desk], "brightness_pct": 70, "color_temp_kelvin": 2500, "transition": 0.4}
     assert set(hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"].values()) == {"golden_hour"}
 
