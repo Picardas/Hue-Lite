@@ -23,11 +23,11 @@ from .conftest import FRIDAY, Home, add_device, add_light, set_up
 REAL_SUN_TIMES = HueLite.__dict__["_sun_times"]
 
 
-def stored(hass_storage: dict[str, Any], settings: dict | None = None, scenes: dict | None = None) -> None:
+def stored(hass_storage: dict[str, Any], settings: dict | None = None, scenes: dict | None = None, **data: Any) -> None:
     hass_storage[STORAGE_KEY] = {
         "version": 1,
         "key": STORAGE_KEY,
-        "data": {"settings": settings or {}, "scenes": scenes or {}},
+        "data": {"settings": settings or {}, "scenes": scenes or {}, **data},
     }
 
 
@@ -127,14 +127,19 @@ async def test_bad_or_stale_saved_data_is_dropped(
             "light.garden": "natural",
             "light.broken": 3,
             "light.desk": "sleep",
+            "light.lamp": "moonlit",
         },
+        layouts={"kitchen": {"order": ["moonlit", "relax"], "hidden": ["movie"]}},
+        dimmers={"dimmer": {"scenes": {"order": ["moonlit"], "hidden": []}}},
     )
     hue_lite = await set_up(hass, entry)
     assert hue_lite.settings["bedtime_weeknight"] == "23:00"
     assert hue_lite.settings["bedtime_fade_minutes"] == 15
     assert hue_lite.settings["wake_up_weekdays"] is True
-    # Movie is called Nebula now.
-    assert hue_lite.scenes == {"light.bedroom": "relax", "light.living_room": "nebula"}
+    # Movie is called Nebula now, and Moonlit Moonlight, in rooms and dimmers too.
+    assert hue_lite.scenes == {"light.bedroom": "relax", "light.living_room": "nebula", "light.lamp": "moonlight"}
+    assert hue_lite.layouts == {"kitchen": {"order": ["moonlight", "relax"], "hidden": ["nebula"]}}
+    assert hue_lite.dimmer_settings == {"dimmer": {"scenes": {"order": ["moonlight"], "hidden": []}}}
 
 
 async def test_routine_lights_let_go_when_bedtime_passed_while_down(

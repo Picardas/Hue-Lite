@@ -29,7 +29,7 @@ def events(connection: Mock) -> list[dict[str, Any]]:
 async def test_scenes_are_shared_and_kept(hass: HomeAssistant, home: Home, entry: MockConfigEntry, hue_lite: HueLite) -> None:
     open_dashboard = ws(hass, dashboard.websocket_subscribe, {"type": f"{DOMAIN}/subscribe"})
     assert events(open_dashboard)[0]["layouts"] == {}
-    assert events(open_dashboard)[0]["dimmer_default"]["hidden"] == ["golden_hour", "nebula", "aurora", "ember", "forest", "moonlit"]
+    assert events(open_dashboard)[0]["dimmer_default"]["hidden"] == ["golden_hour", "nebula", "aurora", "ember", "forest", "moonlight"]
 
     # A room's scenes, set from one dashboard, go to every one open...
     living = {"order": ["relax", "natural"], "hidden": ["nebula"]}

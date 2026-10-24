@@ -36,7 +36,7 @@ Lights join in by **area** and **label**, with no YAML for each light.
   temperature on white ones.
 - **Natural light.** One scene that follows the sun: bright and cool in the
   morning, warm in the evening, Rest at night.
-- **Colour scenes.** Golden hour, Nebula, Aurora, Ember, Forest and Moonlit.
+- **Colour scenes.** Golden hour, Nebula, Aurora, Ember, Forest and Moonlight.
   Each spreads its colours across a room's bulbs and drifts between them at
   its own pace.
 - **Your own scenes.** One colour, or up to eight that drift at their own
@@ -184,7 +184,7 @@ on the Hue-Lite device page instead.
   | Aurora | Green, teal and cyan, with a violet fringe | 2 minutes |
   | Ember | Firelight: deep reds glowing low, orange flaring brighter | minute |
   | Forest | Emerald, leaf green and lime, with golden sunlight | 3 minutes |
-  | Moonlit | Dim whites, with pale blue, blush and lavender | 4 minutes |
+  | Moonlight | Dim whites, with pale blue, blush and lavender | 4 minutes |
 
   - Golden hour, Nebula and Aurora started from colours in Hue's own scenes.
   - A room's colour bulbs show different colours from the scene, each at its
@@ -251,7 +251,7 @@ scene each light is in, and lists your own scenes.
 ```yaml
 action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
 target: {area_id: living_room}  # nightlight, golden_hour, nebula, aurora,
-data: {preset: relax}           # ember, forest, moonlit, or one of your own
+data: {preset: relax}           # ember, forest, moonlight, or one of your own
                                 # scenes by name or id (the Light scenes
                                 # sensor lists them)
 ---

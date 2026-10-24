@@ -142,7 +142,7 @@ PALETTES: dict[str, Palette] = {
     ),
     # Night: dim warm and cool whites, a pale moon blue, blush and lavender,
     # slow and calm.
-    "moonlit": Palette(
+    "moonlight": Palette(
         ((0.4599, 0.4106, 30), (0.3500, 0.3600, 35), (0.2700, 0.2800, 22), (0.4200, 0.3150, 25), (0.3000, 0.2300, 18)),
         Light(25, (0.4599, 0.4106), 2700),
         drift_minutes=4,

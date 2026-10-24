@@ -108,16 +108,25 @@ MAX_CUSTOM = 50
 # The built-in tiles' usual order, as the dashboard shows them (sceneTiles).
 DEFAULT_ORDER = [*PRESETS, NATURAL, *PALETTES]
 
+# Scenes that have been renamed, by their old ids: saved data and actions
+# using an old id get the new one.
+RENAMED = {"movie": "nebula", "moonlit": "moonlight"}
+
+
+def _renamed(scene: Any) -> Any:
+    return RENAMED.get(scene, scene) if isinstance(scene, str) else scene
+
 
 def _setup(value: Any, tiles: frozenset[str] | set[str] = TILE_SCENES) -> dict[str, list[str]] | None:
     """A stored set of scenes ({order, hidden}), or None if it isn't one;
-    scenes not among `tiles` are left out."""
+    renamed scenes get their new ids, and scenes not among `tiles` are left
+    out."""
     if not isinstance(value, dict):
         return None
 
     def ids(key: str) -> list[str]:
         found = value.get(key)
-        return [s for s in found if s in tiles] if isinstance(found, list) else []
+        return [s for s in map(_renamed, found) if s in tiles] if isinstance(found, list) else []
 
     return {"order": ids("order"), "hidden": ids("hidden")}
 
@@ -176,7 +185,7 @@ def _is_time(value: str) -> bool:
 def _stored(data: Any) -> dict[str, Any]:
     """The stored data, brought up to date from earlier versions (the evening
     routine's one switch is now one for Sun–Thu nights and one for Fri & Sat
-    nights, both starting as it was; the Movie scene is now Nebula), with
+    nights, both starting as it was; renamed scenes get their new ids), with
     anything of the wrong kind left out: a damaged file, a scene there isn't
     any more, or a setting of the wrong type, which keeps its default (a bad
     time would break every minute's tick)."""
@@ -189,7 +198,6 @@ def _stored(data: Any) -> dict[str, Any]:
     layouts, dimmer_settings, dimmed = part("layouts", dict), part("dimmers", dict), part("dimmed", dict)
     if isinstance(was := settings.get("evening_routine_enabled"), bool):
         settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
-    renamed = {"movie": "nebula"}
     # Your own scenes first: lights, rooms and dimmers can be in them.
     custom = {
         scene_id: scene
@@ -208,7 +216,7 @@ def _stored(data: Any) -> dict[str, Any]:
         "scenes": {
             light: scene
             for light, was in scenes.items()
-            if isinstance(was, str) and ((scene := renamed.get(was, was)) in SCENES or scene in custom)
+            if isinstance(was, str) and ((scene := _renamed(was)) in SCENES or scene in custom)
         },
         "custom_scenes": custom,
         "auto": [light for light in auto if isinstance(light, str)],
@@ -623,7 +631,7 @@ class HueLite:
         """A scene's id from its id or, for one of your own, its name (either
         ignoring case and spaces at either end; an id comes first), or
         `scene` as it is when there's no such scene."""
-        name = scene.strip().casefold()
+        name = _renamed(scene.strip().casefold())
         if self.is_scene(name):
             return name
         return next((scene_id for scene_id, s in self.custom.items() if s["name"].casefold() == name), scene)

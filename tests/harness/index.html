@@ -163,7 +163,7 @@
         aurora: { rgb_colors: [[45, 255, 93], [61, 255, 192], [84, 241, 255], [166, 87, 255], [159, 255, 84]], brightness: [65, 55, 50, 40, 70] },
         ember: { rgb_colors: [[255, 60, 11], [255, 66, 63], [255, 109, 31], [255, 139, 39], [255, 165, 53]], brightness: [25, 30, 45, 75, 60] },
         forest: { rgb_colors: [[77, 255, 102], [129, 255, 83], [177, 255, 97], [215, 255, 78], [255, 225, 82]], brightness: [35, 50, 40, 60, 70] },
-        moonlit: { rgb_colors: [[255, 206, 118], [255, 249, 219], [193, 213, 255], [255, 180, 186], [209, 170, 255]], brightness: [30, 35, 22, 25, 18] },
+        moonlight: { rgb_colors: [[255, 206, 118], [255, 249, 219], [193, 213, 255], [255, 180, 186], [209, 170, 255]], brightness: [30, 35, 22, 25, 18] },
         nebula: { rgb_colors: [[80, 59, 255], [103, 130, 255], [153, 59, 255], [233, 87, 255], [255, 85, 200]], brightness: [25, 35, 30, 40, 45] },
       },
       dimmers: [{ id: "dimmer_living", name: "Living room dimmer", area_id: "living_room" }],
@@ -181,7 +181,7 @@
     // subscriber. One scene of your own, Disco, is shown in the bedroom.
     // ?unshared starts with scenes saved the old way, per user, to see them
     // handed over.
-    const DEFAULT_ORDER = ["energize", "cool_bright", "read", "relax", "rest", "nightlight", "natural", "golden_hour", "nebula", "aurora", "ember", "forest", "moonlit"];
+    const DEFAULT_ORDER = ["energize", "cool_bright", "read", "relax", "rest", "nightlight", "natural", "golden_hour", "nebula", "aurora", "ember", "forest", "moonlight"];
     window.sharedData = {
       layouts: { bedroom: { order: [...DEFAULT_ORDER, "custom_disco"], hidden: [] } }, dimmers: {},
       custom: {
@@ -191,8 +191,8 @@
         },
       },
       dimmer_default: {
-        order: ["natural", "energize", "cool_bright", "read", "relax", "rest", "nightlight", "golden_hour", "nebula", "aurora", "ember", "forest", "moonlit"],
-        hidden: ["golden_hour", "nebula", "aurora", "ember", "forest", "moonlit"],
+        order: ["natural", "energize", "cool_bright", "read", "relax", "rest", "nightlight", "golden_hour", "nebula", "aurora", "ember", "forest", "moonlight"],
+        hidden: ["golden_hour", "nebula", "aurora", "ember", "forest", "moonlight"],
       },
     };
     const subscribers = new Set();

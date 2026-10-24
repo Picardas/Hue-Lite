@@ -73,6 +73,9 @@ async def test_your_own_scenes(
     assert scenes == {"custom_disco": "Disco", "custom_teal": "Teal"}
     await action(hass, "apply_preset", {"preset": " teal ", "entity_id": lamp})
     assert entry.runtime_data.scenes[lamp] == "custom_teal"
+    # A built-in scene's old id still works (Moonlit is called Moonlight now).
+    await action(hass, "apply_preset", {"preset": "moonlit", "entity_id": lamp})
+    assert entry.runtime_data.scenes[lamp] == "moonlight"
 
 
 async def test_making_changing_and_deleting_scenes(
