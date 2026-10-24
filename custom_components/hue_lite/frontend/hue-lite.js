@@ -290,7 +290,7 @@
       "",
       "**Colour scenes**: Golden hour, Nebula, Aurora, Ember, Forest and Moonlit spread their colours across a room's colour bulbs, each at its own brightness, and drift slowly between them, a step every three minutes.",
       "",
-      "**Your own scenes**: Edit scenes under any room's scenes, then the + tile at the end, makes one: one colour (static) or up to eight, each at its own brightness, drifting at their own speed. The pencil on a tile changes one of yours, or starts a copy of a built-in scene. A new scene shows in the room it was made in and on its dimmers; elsewhere Edit scenes shows it.",
+      "**Your own scenes**: Edit scenes under any room's scenes, then the + tile at the end, makes one: one colour (static) or up to eight, each at its own brightness, drifting at their own speed. Try on the lights shows the colours on the room's lights as you pick them. The pencil on a tile changes one of yours, or starts a copy of a built-in scene. A new scene shows in the room it was made in and on its dimmers; elsewhere Edit scenes shows it.",
       "",
       "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you pick a scene for it or change it. Put on Auto, it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
       "",
@@ -1437,7 +1437,7 @@
           this._editing = this._editing === key ? null : key;
           this._arrange();
         },
-        editor: (config) => openSceneEditor(this._hass, config, show),
+        editor: (config) => openSceneEditor(this._hass, config, show, configs[0]?.entities),
       });
       set.key = key;
       container.appendChild(set.grid);
@@ -1781,8 +1781,9 @@
 
   // Opens the scene editor for a tile's config: one of your own scenes to
   // change, a copy of a built-in one, or (null) a new one, which is shown
-  // where `show` says ({layouts, dimmers}: where it was made).
-  function openSceneEditor(hass, config, show) {
+  // where `show` says ({layouts, dimmers}: where it was made). Opened from
+  // a block's scenes, its `lights` can try the colours (not a dimmer's).
+  function openSceneEditor(hass, config, show, lights = null) {
     const id = config && isCustom(config.preset) ? config.preset : null;
     const mine = id && shared.data?.custom?.[id];
     const builtIn = config && BUILT_IN.find((p) => p.id === config.preset);
@@ -1801,19 +1802,24 @@
     if (config && !mine && !builtIn) return;
     const editor = document.createElement("hue-lite-scene-editor");
     document.body.appendChild(editor);
-    editor.open(hass, id, scene, id ? null : show);
+    editor.open(hass, id, scene, id ? null : show, lights);
   }
 
   // A dialog for one of your own scenes: its name and icon, then one to
   // eight colours, each with its brightness (one colour: a static scene;
   // more: a dynamic one, drifting between them at its own speed), with a
-  // swatch of how its tile looks. Save sends it to Hue-Lite, which tells
-  // every dashboard; Delete (tapped twice, to be sure) deletes it.
+  // swatch of how its tile looks. With `lights`, Try on the lights shows
+  // the colours on them as they're picked (taking them out of their
+  // scene), and Save then puts them in the scene. Save sends it to
+  // Hue-Lite, which tells every dashboard; Delete (tapped twice, to be
+  // sure) deletes it.
   class HueLiteSceneEditor extends HTMLElement {
-    open(hass, id, scene, show) {
+    open(hass, id, scene, show, lights) {
       this._hass = hass;
       this._id = id;
       this._show = show;
+      this._lights = lights?.length ? lights : null;
+      this._trying = false;
       this._value = { name: scene.name, icon: scene.icon };
       this._drift = scene.drift_minutes || 3;
       this._colours = scene.colours.slice(0, 8).map((c) => ({ rgb: [...c.rgb], brightness: c.brightness }));
@@ -1838,7 +1844,10 @@
           button { border: none; background: none; font: inherit; font-size: 14px; cursor: pointer; color: var(--primary-color);
                    display: inline-flex; align-items: center; gap: 4px; padding: 8px 12px; border-radius: 18px; --mdc-icon-size: 20px; }
           button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
-          button[hidden], .drift[hidden] { display: none; }
+          button[hidden], .drift[hidden], .try[hidden] { display: none; }
+          .try { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 14px; cursor: pointer; }
+          .try input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary-color); }
+          .try span { font-size: 12px; color: var(--secondary-text-color); }
           .remove { padding: 6px; color: var(--secondary-text-color); }
           .error { color: var(--error-color, #db4437); font-size: 13px; min-height: 18px; margin-top: 8px; }
           .actions { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
@@ -1857,6 +1866,7 @@
             <div class="label">Drift between them</div>
             <div class="row"><input type="range" min="1" max="60" step="1" aria-label="Minutes per step"><span class="value"></span></div>
           </div>
+          <label class="try"><input type="checkbox">Try on the lights<span>· they leave their scene</span></label>
           <div class="error" role="alert"></div>
           <div class="actions">
             <button class="delete"></button><span class="space"></span>
@@ -1896,9 +1906,18 @@
         if (remove.textContent === "Delete") remove.textContent = "Tap again to delete";
         else this._send({ type: `${DOMAIN}/delete_scene`, scene: id });
       });
+      const trying = $(".try");
+      trying.hidden = !this._lights;
+      trying.querySelector("input").addEventListener("change", (ev) => {
+        this._trying = ev.target.checked;
+        this._try();
+      });
       onActivate($(".cancel"), () => this._dialog.close());
       onActivate($(".save"), () => this._save());
-      this._dialog.addEventListener("close", () => this.remove());
+      this._dialog.addEventListener("close", () => {
+        clearTimeout(this._trial);
+        this.remove();
+      });
       this._rows();
       this._dialog.showModal();
     }
@@ -1945,6 +1964,17 @@
       root.querySelectorAll(".colours .value").forEach((el, i) => { el.textContent = `${this._colours[i].brightness}%`; });
       root.querySelector(".drift").hidden = this._colours.length === 1;
       root.querySelector(".drift .value").textContent = `${this._drift} min`;
+      this._try();
+    }
+
+    // While trying them on the lights, shows the colours there, once
+    // they've stopped changing for a moment (not at every step of a drag).
+    _try() {
+      clearTimeout(this._trial);
+      if (!this._trying) return;
+      this._trial = setTimeout(() => {
+        this._hass.callWS({ type: `${DOMAIN}/preview_scene`, lights: this._lights, colours: this._colours }).catch(() => {});
+      }, 300);
     }
 
     _save() {
@@ -1961,10 +1991,16 @@
       this._send(message);
     }
 
-    // Sends it to Hue-Lite; closes once it's done, or says why not.
+    // Sends it to Hue-Lite; closes once it's done, or says why not. Saved
+    // after trying it on the lights, they're put in the scene.
     async _send(message) {
       try {
-        await this._hass.callWS(message);
+        const result = await this._hass.callWS(message);
+        clearTimeout(this._trial);
+        const id = result?.id || this._id;
+        if (this._trying && message.type === `${DOMAIN}/save_scene` && id) {
+          this._hass.callService(DOMAIN, "apply_preset", { preset: id }, { entity_id: this._lights });
+        }
         this._dialog.close();
       } catch (err) {
         this.shadowRoot.querySelector(".error").textContent = err?.code === "too_many"

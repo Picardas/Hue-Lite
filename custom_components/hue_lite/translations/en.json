@@ -151,7 +151,7 @@
       "name": "Apply preset",
       "description": "Sets lights to a Hue-style preset or colour scene (Golden hour, Nebula, Aurora, Ember, Forest, Moonlit: their colours are spread across the colour bulbs and drift slowly), taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
       "fields": {
-        "preset": { "name": "Preset", "description": "The preset or colour scene to apply." }
+        "preset": { "name": "Preset", "description": "The preset or colour scene to apply, or the name or id of one of your own scenes (listed on the Light scenes sensor)." }
       }
     },
     "natural_light": {

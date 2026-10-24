@@ -145,6 +145,8 @@ Hue-Lite keeps these, so every phone and browser shows the same.
   brightness. One colour makes a static scene. More make a dynamic one,
   which drifts between them every 1 to 60 minutes (3 by default).
 - White bulbs get the first colour's nearest white.
+- **Try on the lights** shows the colours on that block's lights as you pick
+  them. They leave their scene while you do; Save puts them in the new one.
 - A new scene shows where you made it: in that room (each of its lights,
   when it has several) and on its dimmers. Elsewhere it starts hidden, and
   Edit scenes shows it.
@@ -235,8 +237,10 @@ scene each light is in.
 ```yaml
 action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
 target: {area_id: living_room}  # nightlight, golden_hour, nebula, aurora,
-data: {preset: relax}           # ember, forest, moonlit,
----                             # or one of your own scenes' ids (custom_…)
+data: {preset: relax}           # ember, forest, moonlit, or one of your own
+                                # scenes by name or id (the Light scenes
+                                # sensor lists them)
+---
 action: hue_lite.natural_light  # follow: false takes the lights out instead
 target: {label_id: lamps}
 ---
@@ -259,8 +263,9 @@ only use it on lights they're allowed to control.
 
 - **Dimmers:** only Hue Dimmer Switches (RWL020, RWL021, RWL022) paired with
   ZHA.
-- **Restarts:** a routine whose start falls while Home Assistant is
-  restarting is skipped for that day.
+- **Restarts:** a wake-up or evening routine that was due while Home
+  Assistant was restarting starts once it's back, if that's within 15
+  minutes; after a longer outage it's skipped for that day.
 - **Dimming from elsewhere:** dimming a light from Home Assistant's own
   light dialog or an automation still takes it out of its scene; only
   Hue-Lite's slider, dimmers and `set_brightness` keep it there.

@@ -8,12 +8,13 @@ import random
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, State, callback
+from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, HomeAssistant, State, callback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.sun import is_up
 from homeassistant.util import dt as dt_util
 
-from .const import EVENING_PHASES, LEAVING_DELAY, MIMIC_MINUTES, NATURAL, ROUTINE, SUNRISE, WAKE_UP
+from .const import CATCH_UP, EVENING_PHASES, LEAVING_DELAY, MIMIC_MINUTES, NATURAL, ROUTINE, SUNRISE, WAKE_UP
 from .timeline import PRESETS, Evening
 
 if TYPE_CHECKING:
@@ -42,7 +43,24 @@ class Routines:
     @callback
     def async_start(self) -> list[CALLBACK_TYPE]:
         self._checked = dt_util.now()
-        return [async_track_state_change_event(self.lite.hass, [self.lite.presence], self._presence_changed)]
+        return [
+            async_track_state_change_event(self.lite.hass, [self.lite.presence], self._presence_changed),
+            async_at_started(self.lite.hass, self._catch_up),
+        ]
+
+    @callback
+    def _catch_up(self, _hass: HomeAssistant) -> None:
+        """Once Home Assistant has started (so the lights can be reached),
+        start a wake-up or an evening routine that was due in the last
+        CATCH_UP, which a restart would otherwise skip for the day. A late
+        wake-up fades in faster, still reaching Energize at the wake-up time.
+        One already started (before a reload of Hue-Lite) isn't started again."""
+        lite, now = self.lite, dt_util.now()
+        start = self._at(now.date(), lite.evening.start, now)
+        if lite.evening.phase in EVENING_PHASES and now - CATCH_UP < start <= now and not lite.in_scene(ROUTINE):
+            self._start_evening()
+        self._checked = min(self._checked, now - CATCH_UP)
+        self.tick(now)
 
     @callback
     def async_stop(self) -> None:
@@ -164,8 +182,10 @@ class Routines:
         while day <= now.date() + timedelta(days=1):
             weekend = day.isoweekday() in (6, 7)
             wake = self._at(day, s["wake_up_weekend" if weekend else "wake_up_weekday"], now)
-            if since < wake - fade <= now and s["wake_up_weekends" if weekend else "wake_up_weekdays"]:
-                self._start_wake_up()
+            woke = self.lite.last_wake_up
+            started = woke is not None and woke >= wake - fade - timedelta(minutes=1)
+            if since < wake - fade <= now and s["wake_up_weekends" if weekend else "wake_up_weekdays"] and not started:
+                self._start_wake_up(wake)
             if since < wake + off_after <= now and s["wake_up_auto_off"]:
                 self._wake_up_over()
             day += timedelta(days=1)
@@ -177,17 +197,18 @@ class Routines:
         return dt_util.as_utc(datetime.combine(day, time.fromisoformat(clock), tzinfo=now.tzinfo))
 
     @callback
-    def _start_wake_up(self) -> None:
+    def _start_wake_up(self, wake: datetime) -> None:
         """Wake up takes its lights that are off: one that's on already is in
         use (and with Auto, one light left on mustn't stop the rest)."""
         lights = self.lite.routine_lights("wake_up")
         on = self.lite.on(lights)
         if off := [light for light in lights if light not in on]:
-            self.lite.spawn(self._wake_up(off))
+            self.lite.spawn(self._wake_up(off, wake))
 
-    async def _wake_up(self, lights: list[str]) -> None:
+    async def _wake_up(self, lights: list[str], wake: datetime) -> None:
         """A sunrise: from Nightlight's dim deep red through Rest's orange and
-        Relax's warm white up to Energize, reaching it at the wake-up time.
+        Relax's warm white up to Energize, reaching it at the `wake` time
+        (over the fade-in, or what's left of it after a restart).
         The lights are marked as wake-up's (which takes them out of Natural
         light and the routine, so neither moves them during the fade) until
         they're changed or turned off; one that is stays as it is."""
@@ -196,7 +217,7 @@ class Routines:
         lite.set_scene(lights, WAKE_UP)
         await lite.sender.send(lights, PRESETS["nightlight"], 0)
         await asyncio.sleep(2)
-        fade = lite.settings["wake_up_fade_minutes"] * 60
+        fade = max((wake - dt_util.utcnow()).total_seconds(), 60)
         for i, (preset, share) in enumerate(SUNRISE):
             if not (lights := [light for light in lights if lite.scenes.get(light) == WAKE_UP]):
                 return

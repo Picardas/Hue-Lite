@@ -603,6 +603,14 @@ class HueLite:
         """Whether a preset, a colour scene or one of your own has this id."""
         return scene in PRESETS or scene in self.palettes
 
+    def scene_named(self, scene: str) -> str:
+        """A scene's id: `scene` itself, or the id of your own scene with that
+        name (ignoring case and spaces at either end) if it isn't an id."""
+        if self.is_scene(scene):
+            return scene
+        name = scene.strip().casefold()
+        return next((scene_id for scene_id, s in self.custom.items() if s["name"].strip().casefold() == name), scene)
+
     def tile_scenes(self) -> set[str]:
         """Every scene with a tile: the built-in ones and your own."""
         return TILE_SCENES | self.custom.keys()
@@ -610,9 +618,10 @@ class HueLite:
     @callback
     def _custom_changed(self) -> None:
         """Your own scenes changed: work out the colour scenes again (a new
-        one drifts from its next step)."""
+        one drifts from its next step), and update the sensors, which list them."""
         self.palettes = {**PALETTES, **{scene_id: palette_from_stored(scene) for scene_id, scene in self.custom.items()}}
         self._drifted = {scene: self._drifted.get(scene, self._drift_step(p)) for scene, p in self.palettes.items()}
+        self._notify()
 
     def in_scene(self, scene: str) -> list[str]:
         """The lights in a scene (NATURAL, ROUTINE, WAKE_UP, a preset or a colour scene)."""
@@ -796,6 +805,19 @@ class HueLite:
         for index, group in sorted(by_colour.items()):
             await self._send(group, palette.colour(index), transition, parent)
         await self._send([light for light in lights if light not in colour], palette.white, transition, parent)
+
+    async def async_preview(self, lights: list[str], palette: Palette, parent: Context | None = None) -> None:
+        """Show colours being picked for a scene on these lights, spread
+        across the colour bulbs as a colour scene's are (white bulbs get its
+        white). The lights leave their scene and Auto, as if set by hand."""
+        self.set_scene(lights, "", leave_auto=True)
+        colour = sorted(light for light in lights if self.sender.has_colour(light))
+        by_colour: dict[int, list[str]] = {}
+        for i, light in enumerate(colour):
+            by_colour.setdefault(i % len(palette.colours), []).append(light)
+        for index, group in sorted(by_colour.items()):
+            await self._send(group, palette.colour(index), 0.4, parent)
+        await self._send([light for light in lights if light not in colour], palette.white, 0.4, parent)
 
     def _palette_order(self, scene: str, joining: list[str] | None = None) -> list[str]:
         """The colour bulbs in a colour scene (with those joining it), in the

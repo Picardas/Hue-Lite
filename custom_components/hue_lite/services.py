@@ -45,7 +45,9 @@ def async_register(hass: HomeAssistant) -> None:
 
     async def apply_preset(call: ServiceCall) -> None:
         running, lights = await targeted(call)
-        if not running.is_scene(preset := call.data["preset"]):
+        # One of your own scenes can be named rather than given by its id.
+        preset = running.scene_named(call.data["preset"])
+        if not running.is_scene(preset):
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="unknown_scene", translation_placeholders={"scene": preset}
             )

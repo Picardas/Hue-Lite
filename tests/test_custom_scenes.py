@@ -68,6 +68,12 @@ async def test_your_own_scenes(
     with pytest.raises(ServiceValidationError):
         await action(hass, "apply_preset", {"preset": "custom_gone"})
 
+    # For automations, the scenes sensor lists them, and they can be named.
+    scenes = hass.states.get("sensor.hue_lite_light_scenes").attributes["custom_scenes"]
+    assert scenes == {"custom_disco": "Disco", "custom_teal": "Teal"}
+    await action(hass, "apply_preset", {"preset": " teal ", "entity_id": lamp})
+    assert entry.runtime_data.scenes[lamp] == "custom_teal"
+
 
 async def test_making_changing_and_deleting_scenes(
     hass: HomeAssistant, home: Home, hue_lite: HueLite, monkeypatch: pytest.MonkeyPatch
@@ -127,6 +133,22 @@ async def test_making_changing_and_deleting_scenes(
     mine = save(admin=False, name="Mine", colours=[{"rgb": [1, 2, 3], "brightness": 5}], show={"layouts": ["bedroom"], "dimmers": [dimmer.id]})
     assert mine.send_result.call_args.args[1]["id"] in hue_lite.layouts["bedroom"]["order"]
     assert hue_lite.dimmer_settings == {}
+
+
+async def test_trying_colours_on_the_lights(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    # The living room's in Natural light; the editor shows two colours on
+    # it and the bedroom (not the excluded garden light): they leave their scene.
+    await action(hass, "natural_light", {"entity_id": "light.living_room"})
+    home.turn_on.clear()
+    msg = {
+        "type": f"{DOMAIN}/preview_scene",
+        "lights": ["light.living_room", "light.bedroom", "light.garden"],
+        "colours": [{"rgb": [255, 0, 0], "brightness": 80}, {"rgb": [0, 0, 255], "brightness": 20}],
+    }
+    ws(hass, dashboard.websocket_preview_scene, msg)
+    await settle(hass)
+    assert {c.data["entity_id"][0]: c.data["brightness_pct"] for c in home.turn_on} == {"light.bedroom": 80, "light.living_room": 20}
+    assert hue_lite.scenes == {}
 
 
 async def test_damaged_scenes_are_left_out(hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]) -> None:

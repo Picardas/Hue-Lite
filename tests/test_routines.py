@@ -198,6 +198,49 @@ async def test_wake_up(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home
     assert [c.data for c in home.turn_off] == [{"entity_id": ["light.bedroom"], "transition": 60}]
 
 
+async def test_routines_missed_during_a_restart(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    await tick(hass, freezer, "06:00")
+    await set_up(hass, entry)
+    await switch(hass, "switch.hue_lite_wake_up_on_weekdays")
+
+    async def restart(when: str) -> None:
+        """Home Assistant's down (Hue-Lite unloaded, so no ticks) until `when`."""
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        freezer.move_to(f"2026-10-22 {when}:00+01:00")
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await settle(hass)
+
+    # Down over the 06:30 start of a 07:00 wake-up: back at 06:40, the
+    # sunrise starts then, faster, still reaching Energize at 07:00.
+    await restart("06:40")
+    assert [c.data["transition"] for c in home.turn_on] == [0, 8 * 60, 6 * 60, 6 * 60]
+
+    # Started, it isn't started again by another restart.
+    home.turn_on.clear()
+    await restart("06:42")
+    assert home.turn_on == []
+
+    # Down over the evening's 16:30 start until 16:50, more than 15 minutes
+    # after it: it stays missed (the lights may well be on by hand by then).
+    await restart("16:50")
+    assert routine(hass) == []
+
+
+async def test_an_evening_missed_during_a_restart(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    # Down from 16:20 over the evening's 16:30 start: back at 16:40, it starts then.
+    await tick(hass, freezer, "16:20")
+    await set_up(hass, entry)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    freezer.move_to("2026-10-22 16:40:00+01:00")
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await settle(hass)
+    assert routine(hass) == ["light.bedroom", "light.living_room"]
+
+
 async def test_wake_up_leaves_lights_youve_changed_on(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
 ) -> None:

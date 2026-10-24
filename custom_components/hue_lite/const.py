@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "hue_lite"
@@ -98,3 +99,7 @@ SUNRISE: Final = (("rest", 40), ("relax", 30), ("energize", 30))
 
 # Mimicking presence switches a light on or off every this many minutes (at random).
 MIMIC_MINUTES: Final = (10, 30)
+
+# A wake-up or evening routine due this long before Home Assistant finished
+# starting still starts (a restart would otherwise skip it for the day).
+CATCH_UP: Final = timedelta(minutes=15)

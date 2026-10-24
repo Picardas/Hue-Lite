@@ -15,9 +15,11 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url, remove_extra_js_url
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import (
     area_registry as ar,
@@ -27,7 +29,6 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-
 from homeassistant.util import color as color_util
 
 from .const import DOMAIN, SIGNAL_SHARED
@@ -35,7 +36,7 @@ from .dimmers import is_dimmer
 from .engine import MAX_CUSTOM, TILE_SCENES, HueLite, async_get_loaded, custom_scene
 from .lights import rgb_color
 from .targets import LIGHT
-from .timeline import PALETTES, PRESETS, kelvin_for
+from .timeline import PALETTES, PRESETS, kelvin_for, palette_from_stored
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ async def async_register(hass: HomeAssistant) -> None:
         websocket_set_scenes,
         websocket_set_dimmer,
         websocket_save_scene,
+        websocket_preview_scene,
         websocket_delete_scene,
     ):
         websocket_api.async_register_command(hass, command)
@@ -251,6 +253,29 @@ HUE_GAMUT = color_util.GamutType(
     color_util.XYPoint(0.6915, 0.3083), color_util.XYPoint(0.17, 0.7), color_util.XYPoint(0.1532, 0.0475)
 )
 PERCENT = vol.All(int, vol.Range(1, 100))
+# A scene's colours as the editor sends them: RGB with a brightness each, and
+# optionally the white for white bulbs.
+COLOURS = {
+    vol.Required("colours"): vol.All(
+        [{vol.Required("rgb"): vol.All([vol.All(int, vol.Range(0, 255))], vol.Length(3, 3)), vol.Required("brightness"): PERCENT}],
+        vol.Length(1, 8),
+    ),
+    vol.Optional("white"): {vol.Required("brightness"): PERCENT, vol.Required("kelvin"): vol.All(int, vol.Range(2000, 6500))},
+}
+
+
+def _colours(msg: dict[str, Any]) -> dict[str, list]:
+    """The editor's colours as stored: each as [x, y, brightness] inside Hue's
+    gamut, and `white` as [brightness, kelvin] (by default the first colour's
+    nearest white, at the colours' average brightness)."""
+    colours = [
+        [*(round(v, 4) for v in color_util.color_RGB_to_xy(*c["rgb"], HUE_GAMUT)), c["brightness"]] for c in msg["colours"]
+    ]
+    white = msg.get("white") or {
+        "brightness": round(sum(c["brightness"] for c in msg["colours"]) / len(colours)),
+        "kelvin": kelvin_for(tuple(colours[0][:2])),
+    }
+    return {"colours": colours, "white": [white["brightness"], white["kelvin"]]}
 
 
 @websocket_api.websocket_command(
@@ -259,11 +284,7 @@ PERCENT = vol.All(int, vol.Range(1, 100))
         vol.Optional("scene"): str,
         vol.Required("name"): vol.All(str, vol.Length(1, 30)),
         vol.Required("icon"): vol.All(str, vol.Length(max=64)),
-        vol.Required("colours"): vol.All(
-            [{vol.Required("rgb"): vol.All([vol.All(int, vol.Range(0, 255))], vol.Length(3, 3)), vol.Required("brightness"): PERCENT}],
-            vol.Length(1, 8),
-        ),
-        vol.Optional("white"): {vol.Required("brightness"): PERCENT, vol.Required("kelvin"): vol.All(int, vol.Range(2000, 6500))},
+        **COLOURS,
         vol.Optional("drift_minutes", default=3): vol.All(int, vol.Range(1, 60)),
         vol.Optional("show"): {
             vol.Optional("layouts", default=list): vol.All([vol.All(str, vol.Length(1, 255))], vol.Length(max=100)),
@@ -287,22 +308,7 @@ def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveCo
     if scene_id is None and len(hue_lite.custom) >= MAX_CUSTOM:
         connection.send_error(msg["id"], "too_many", "Too many scenes of your own")
         return
-    colours = [
-        [*(round(v, 4) for v in color_util.color_RGB_to_xy(*c["rgb"], HUE_GAMUT)), c["brightness"]] for c in msg["colours"]
-    ]
-    white = msg.get("white") or {
-        "brightness": round(sum(c["brightness"] for c in msg["colours"]) / len(colours)),
-        "kelvin": kelvin_for(tuple(colours[0][:2])),
-    }
-    scene = custom_scene(
-        {
-            "name": msg["name"],
-            "icon": msg["icon"],
-            "colours": colours,
-            "white": [white["brightness"], white["kelvin"]],
-            "drift_minutes": msg["drift_minutes"],
-        }
-    )
+    scene = custom_scene({"name": msg["name"], "icon": msg["icon"], **_colours(msg), "drift_minutes": msg["drift_minutes"]})
     if scene is None:
         connection.send_error(msg["id"], "invalid", "That isn't a scene")
         return
@@ -316,6 +322,28 @@ def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveCo
         ],
     }
     connection.send_result(msg["id"], {"id": hue_lite.save_custom_scene(scene_id, scene, show)})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/preview_scene", vol.Required("lights"): vol.All(cv.entity_ids, vol.Length(1, 100)), **COLOURS}
+)
+@websocket_api.async_response
+async def websocket_preview_scene(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Show colours being picked in the scene editor on the lights it was
+    opened for, as a colour scene spreads them. The lights leave their scene,
+    as if set by hand. Only lights the user may control (as with the
+    actions), and not excluded ones (which the dashboard doesn't show)."""
+    if (hue_lite := async_get_loaded(hass)) is None:
+        connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
+        return
+    user = connection.user
+    lights = [
+        light
+        for light in hue_lite.lights({ATTR_ENTITY_ID: msg["lights"]})
+        if not hue_lite.excluded(light) and (user.is_admin or user.permissions.check_entity(light, POLICY_CONTROL))
+    ]
+    await hue_lite.async_preview(lights, palette_from_stored({**_colours(msg), "drift_minutes": 3}), connection.context(msg))
+    connection.send_result(msg["id"])
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/delete_scene", vol.Required("scene"): str})

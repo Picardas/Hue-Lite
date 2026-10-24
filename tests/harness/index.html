@@ -263,6 +263,7 @@
           setTimeout(publish, 0);
           return { id };
         }
+        if (msg.type === "hue_lite/preview_scene") return null;
         if (msg.type === "hue_lite/delete_scene") {
           const data = window.sharedData;
           delete data.custom[msg.scene];
