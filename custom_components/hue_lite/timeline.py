@@ -87,6 +87,26 @@ PALETTES: dict[str, Palette] = {
         ((0.1672, 0.593), (0.2072, 0.4525), (0.1868, 0.3328), (0.3095, 0.5913), (0.1915, 0.3638)),
         Light(50, (0.3812, 0.3794), 4000),
     ),
+    # Firelight: deep reds and crimson, with a little orange; redder and
+    # darker than Golden hour.
+    "ember": Palette(
+        45,
+        ((0.6726, 0.3218), (0.6450, 0.3390), (0.6600, 0.3100), (0.6150, 0.3650), (0.5900, 0.3800)),
+        Light(35, (0.6150, 0.3650), 2000),
+    ),
+    # Deep greens, emerald to moss, with a hint of yellow-green; darker than
+    # Aurora's teals.
+    "forest": Palette(
+        40,
+        ((0.2100, 0.6600), (0.2500, 0.6200), (0.1900, 0.5500), (0.3000, 0.5900), (0.3500, 0.5500)),
+        Light(30, (0.4599, 0.4106), 2700),
+    ),
+    # Mostly dim whites, warm and soft, with blush and lavender drifting through.
+    "moonlit": Palette(
+        25,
+        ((0.4599, 0.4106), (0.3812, 0.3794), (0.4000, 0.3000), (0.4300, 0.3950), (0.3200, 0.2600)),
+        Light(25, (0.4599, 0.4106), 2700),
+    ),
 }
 
 # What a Hue dimmer's On button steps through, and round again.

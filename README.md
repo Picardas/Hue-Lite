@@ -80,9 +80,11 @@ through, dragged and hidden like a room's. Only admins can change them.
 - **Scenes:** Natural light, Energize, Cool bright, Read, Relax, Rest and
   Nightlight. Colour bulbs get Hue's colours, white bulbs a colour
   temperature, and dimmable bulbs the brightness.
-- **Colour scenes:** Golden hour, Nebula and Aurora, from colours in Hue's own
-  scenes. Each room's colour bulbs get different colours from the scene,
-  drifting slowly from one to the next; white bulbs get a warm white.
+- **Colour scenes:** Golden hour, Nebula and Aurora (from colours in Hue's own
+  scenes), Ember (deep reds, like firelight), Forest (deep greens) and
+  Moonlit (dim whites with a touch of colour). Each room's colour bulbs get
+  different colours from the scene, drifting slowly from one to the next;
+  white bulbs get a matching white.
 - **Natural light** follows the sun: Energize from dawn, Cool bright by
   midday, Relax at sunset, Rest at night. A light stays in it, on or off,
   until you pick another scene, change the light yourself or from an
@@ -120,7 +122,8 @@ which scene each light is in.
 
 ```yaml
 action: hue_lite.apply_preset   # energize, cool_bright, read, relax, rest,
-target: {area_id: living_room}  # nightlight, golden_hour, nebula, aurora
+target: {area_id: living_room}  # nightlight, golden_hour, nebula, aurora,
+                                # ember, forest, moonlit
 data: {preset: relax}
 ---
 action: hue_lite.natural_light  # follow: false takes the lights out instead

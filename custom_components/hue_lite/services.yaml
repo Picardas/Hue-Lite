@@ -18,6 +18,9 @@ apply_preset:
             - golden_hour
             - nebula
             - aurora
+            - ember
+            - forest
+            - moonlit
 
 natural_light:
   target:

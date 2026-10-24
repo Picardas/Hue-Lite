@@ -138,14 +138,17 @@
         "nightlight": "Nightlight",
         "golden_hour": "Golden hour",
         "nebula": "Nebula",
-        "aurora": "Aurora"
+        "aurora": "Aurora",
+        "ember": "Ember",
+        "forest": "Forest",
+        "moonlit": "Moonlit"
       }
     }
   },
   "services": {
     "apply_preset": {
       "name": "Apply preset",
-      "description": "Sets lights to a Hue-style preset or colour scene (Golden hour, Nebula, Aurora: their colours are spread across the colour bulbs and drift slowly), taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
+      "description": "Sets lights to a Hue-style preset or colour scene (Golden hour, Nebula, Aurora, Ember, Forest, Moonlit: their colours are spread across the colour bulbs and drift slowly), taking them out of the Natural light scene, the evening routine and Auto. With no target, every light.",
       "fields": {
         "preset": { "name": "Preset", "description": "The preset or colour scene to apply." }
       }
