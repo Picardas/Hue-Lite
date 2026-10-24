@@ -50,20 +50,17 @@ strategy:
   type: custom:hue-lite
 ```
 
-It builds itself from your areas and labels on every load: the whole home and
-each room, and the routines with their settings. Each room is a bar for all
-its lights: tap its icon to switch them on or off, slide to dim, **Auto** at
-the end, and tap its name to show or hide the room's scenes. When a room has
-several lights, each comes after it as a block of its own, the same way: its
-bar, and its own scenes when you tap its name, so lights in one room can be
-in different scenes. Icons and
+It builds itself from your areas and labels on every load: the whole home,
+each room's lights, your label groups, and the routines with their settings.
+A room with one light is one block; a room with several gets a block for
+each light, with the room's icon, so each has its own scenes. Each block is
+a bar: tap its icon to switch on or off, slide to dim, **Auto** at the end,
+and tap its name to show or hide its scenes. Icons and
 sliders take the colour the bulbs report; each scene shows the colour it
 gives (Natural light's as it is now), filled and ticked while the lights are
-in it. Like Hue, each room has its own scenes, and so does each light:
-**Edit scenes** under them lets you drag the tiles into another order and
-hide some with their eye (a light has its room's until you edit its own;
-Reset takes it back). Hue-Lite keeps these, so every phone and browser shows
-the same. **Reorder** drags the rooms the same way (with a finger, hold a
+in it. Like Hue, each has its own scenes: **Edit scenes** under them lets
+you drag the tiles into another order and hide some with their eye. Hue-Lite
+keeps these, so every phone and browser shows the same. **Reorder** drags the rooms the same way (with a finger, hold a
 moment first; the arrow keys work too); the rooms' order, and which are
 folded, are each person's own.
 

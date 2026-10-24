@@ -109,22 +109,22 @@
     ];
   }
 
-  // A room (or label group, or the whole home) for the rooms card: a bar for
-  // all its lights, with its icon, heading the block, over the room's
-  // scenes. When it has several lights (and `eachLight`: rooms, not label
-  // groups or the whole home, so no light shows twice), each light has a
-  // block of its own after it, like a room: its bar over its own scenes.
-  function room(setup, id, name, icon, lights, target, eachLight = false) {
-    const light = (l) => ({
-      id: l, bar: lightBar(setup, [l], { expandable: true, heading: true }), scenes: sceneTiles(setup, [l], { entity_id: [l] }),
-    });
+  // A block for the rooms card: a bar for its lights, with its icon (and
+  // name, or the light's own), heading the block, over their scenes.
+  function room(setup, id, name, icon, lights, target) {
     return {
       id,
-      name,
       head: lightBar(setup, lights, { name, icon, expandable: true, heading: true }),
       scenes: sceneTiles(setup, lights, target),
-      lights: eachLight && lights.length > 1 ? lights.map(light) : [],
     };
+  }
+
+  // An area's blocks: one for the room when it has a single light (the room
+  // is that light); with several, one per light, each with the room's icon
+  // and its own name and scenes, rather than one for them all.
+  function areaBlocks(setup, id, name, icon, lights, target) {
+    if (lights.length === 1) return [room(setup, id, name, icon, lights, target)];
+    return lights.map((light) => room(setup, `${id}|${light}`, undefined, icon, [light], { entity_id: [light] }));
   }
 
   function whenOn(toggle, row) {
@@ -150,17 +150,17 @@
       }],
     }] : [];
 
-    // Rooms (and your own labels) go in one collapsible, reorderable card;
-    // Whole home above stays put.
+    // Rooms (each light of their own when they have several) and your own
+    // labels go in one collapsible, reorderable card; Whole home above stays put.
     const rooms = [];
     for (const area of sortedAreas(hass)) {
       const inArea = ids(lights.filter((x) => areaOf(hass, x) === area.area_id));
-      if (inArea.length) rooms.push(room(setup, area.area_id, area.name, area.icon || "mdi:texture-box", inArea, { area_id: area.area_id }, true));
+      if (inArea.length) rooms.push(...areaBlocks(setup, area.area_id, area.name, area.icon || "mdi:texture-box", inArea, { area_id: area.area_id }));
     }
 
     // Not "other": an area called Other would have that id too.
     const noArea = ids(lights.filter((x) => !areaOf(hass, x)));
-    if (noArea.length) rooms.push(room(setup, "no-area", "Other", "mdi:lightbulb-question-outline", noArea, { entity_id: noArea }, true));
+    if (noArea.length) rooms.push(...areaBlocks(setup, "no-area", "Other", "mdi:lightbulb-question-outline", noArea, { entity_id: noArea }));
 
     const labels = setup.labels
       .filter((l) => !roleLabels.includes(l.label_id))
@@ -807,8 +807,7 @@
 
   // How each person has their dashboard, saved per signed-in user in Home
   // Assistant's frontend storage (so it follows you across devices),
-  // falling back to this browser: the blocks' order, which are collapsed,
-  // and which lights inside them have their scenes open (by block id|light).
+  // falling back to this browser: the blocks' order and which are collapsed.
   // Scenes ({order, hidden} by block id) were kept here before Hue-Lite
   // shared them, and are only read to hand them over. Lists of ids only:
   // anything else (a damaged layout) is dropped.
@@ -825,7 +824,7 @@
     if (saved?.scenes && typeof saved.scenes === "object") {
       for (const [block, s] of Object.entries(saved.scenes)) scenes[block] = { order: ids(s?.order), hidden: ids(s?.hidden) };
     }
-    const layout = { order: ids(saved?.order), collapsed: ids(saved?.collapsed), open: ids(saved?.open) };
+    const layout = { order: ids(saved?.order), collapsed: ids(saved?.collapsed) };
     return Object.keys(scenes).length ? { ...layout, scenes } : layout;
   }
 
@@ -851,7 +850,7 @@
       this._validate(config);
       this._config = config;
       this._seen = null;
-      this._layout = this._layout || { order: [], collapsed: [], open: [] };
+      this._layout = this._layout || { order: [], collapsed: [] };
       this._root = this._root || this.attachShadow({ mode: "open" });
       this._blocks = new Map();
       this._children = [];
@@ -1198,19 +1197,16 @@
 
   // ---- Rooms card ----------------------------------------------------------
 
-  // Every room (and label group) as a block headed by a light bar for all its
-  // lights (`head`): its icon switches them on or off, the slider dims them,
-  // Auto puts them on Auto, and tapping the rest of it shows or hides the
-  // room's scenes (`scenes`). Each of its lights (`lights`: {id, bar,
-  // scenes}) gets a block of its own after it, the same: its bar over its
-  // own scenes (folded until opened, and only built then). Reorder shows
-  // just the bars, to drag into another order; new blocks join after the
-  // one before them. With `toolbar: false` there's no Rooms heading,
+  // Each block (a room with one light, each light of a room with several, a
+  // label group) headed by a light bar for its lights (`head`): its icon
+  // switches them on or off, the slider dims them, Auto puts them on Auto,
+  // and tapping the rest of it shows or hides its scenes (`scenes`). Reorder
+  // shows just the bars, to drag into another order; new blocks join after
+  // the one before them. With `toolbar: false` there's no Rooms heading,
   // Collapse all or Reorder (the Whole home block uses that, with a
-  // `layout_key` of its own). Like Hue, each room has its own scenes, and so
-  // does each light: Edit scenes under them lets you drag the tiles into
-  // another order and hide some with their eye. A light has its room's
-  // until you edit its own.
+  // `layout_key` of its own). Like Hue, each has its own scenes: Edit scenes
+  // under them lets you drag the tiles into another order and hide some
+  // with their eye.
   class HueLiteRooms extends CollapsibleBlocks {
     static layoutKey = "hue_lite_rooms";
 
@@ -1224,20 +1220,15 @@
       return 10;
     }
 
-    // The saved order, with any blocks it doesn't know yet (a new room, or
-    // a light's) after the block before them in the usual order.
+    // The saved order, with any blocks it doesn't know yet (a new room or
+    // light) after the block before them in the usual order.
     _orderedIds() {
-      const usual = this._config.rooms.flatMap((r) => [r.id, ...(r.lights || []).map((l) => `${r.id}|${l.id}`)]);
+      const usual = this._config.rooms.map((r) => r.id);
       const order = this._layout.order.filter((id) => usual.includes(id));
       usual.forEach((id, i) => {
         if (!order.includes(id)) order.splice(i ? order.indexOf(usual[i - 1]) + 1 : 0, 0, id);
       });
       return order;
-    }
-
-    // A room starts open; a light's block starts folded.
-    _isCollapsed(id) {
-      return this._lights.has(id) ? !this._layout.open.includes(id) : super._isCollapsed(id);
     }
 
     _render() {
@@ -1273,38 +1264,24 @@
         this._save();
         this._arrange();
       });
-      // The sets of scene tiles, each with its own Edit scenes (by key: a
-      // room's id, or room id|light for one of its lights, which is also its
-      // block's id), and the lights' blocks (by the same key), whose scenes
-      // are built when first opened.
+      // Each block's scene tiles, with their own Edit scenes, by its id.
       this._sets = new Map();
-      this._lights = new Map();
-      const block = (id, barConfig, onExpand) => {
+      for (const r of this._config.rooms) {
         const head = document.createElement("div");
         head.className = "head";
-        const bar = this._card(barConfig);
-        bar.addEventListener("hue-lite-expand", onExpand);
+        const bar = this._card(r.head);
+        bar.addEventListener("hue-lite-expand", () => this._toggleCollapsed(r.id));
         head.appendChild(bar);
-        const el = this._block(id, head);
+        const el = this._block(r.id, head);
         list.appendChild(el);
-        return el;
-      };
-      for (const r of this._config.rooms) {
-        const el = block(r.id, r.head, () => this._toggleCollapsed(r.id));
-        if (r.scenes?.length) this._sceneSet(r.id, null, r.scenes, el.querySelector(".body"));
-        for (const l of r.lights || []) {
-          const key = `${r.id}|${l.id}`;
-          const lightEl = block(key, l.bar, () => this._toggleLight(key));
-          this._lights.set(key, { key, room: r.id, el: lightEl, scenes: l.scenes });
-        }
+        if (r.scenes?.length) this._sceneSet(r.id, r.scenes, el.querySelector(".body"));
       }
 
       if (this._config.toolbar === false) return;
       onActivate(this._root.querySelector(".fold"), () => {
-        const rooms = this._config.rooms.map((r) => r.id);
-        const allCollapsed = [...this._blocks.keys()].every((id) => this._isCollapsed(id));
-        this._layout.collapsed = allCollapsed ? [] : rooms;
-        if (!allCollapsed) this._layout.open = [];
+        const ids = this._config.rooms.map((r) => r.id);
+        const allCollapsed = ids.every((id) => this._isCollapsed(id));
+        this._layout.collapsed = allCollapsed ? [] : ids;
         this._save();
         this._arrange();
       });
@@ -1324,18 +1301,16 @@
       return card;
     }
 
-    // The scene tiles of a room (key: its id) or of one of its lights (key:
-    // room id|light, `room` its room), added to `container`.
-    _sceneSet(key, room, configs, container) {
+    // A block's scene tiles (shared by everyone under its id), added to `container`.
+    _sceneSet(key, configs, container) {
       const set = new SceneSet((config) => this._card(config), configs, {
         save: (scenes) => setScenes(this._hass, key, scenes),
         edit: () => {
           this._editing = this._editing === key ? null : key;
           this._arrange();
         },
-        resetTitle: room ? "Back to the room's scenes" : undefined,
       });
-      Object.assign(set, { key, room });
+      set.key = key;
       container.appendChild(set.grid);
       this._sets.set(key, set);
     }
@@ -1378,21 +1353,6 @@
       el.querySelector(".head > hue-lite-light-bar").expanded = open;
     }
 
-    // Open or fold a light's block (by its key, room id|light).
-    _toggleLight(key) {
-      if (this._reordering) return;
-      const open = this._layout.open;
-      this._layout.open = open.includes(key) ? open.filter((x) => x !== key) : [...open, key];
-      this._save();
-      this._arrange();
-    }
-
-    // A room's or light's scenes, shared by everyone; a light that's never
-    // been edited has its room's.
-    _scenesOf(key) {
-      const set = this._sets.get(key);
-      return sceneOrder(set.ids, shared.data?.layouts[key], set.room ? this._scenesOf(set.room) : undefined);
-    }
 
     // Puts the rooms in order and their scenes in each room's order (hidden
     // ones left out, or dimmed while editing), and applies the collapsed,
@@ -1412,13 +1372,9 @@
         else el.removeAttribute("tabindex");
       }
       this._sorter.sync();
-      // A light's scenes are built the first time its block's opened.
-      for (const light of this._lights.values()) {
-        if (!this._isCollapsed(light.key) && !this._sets.has(light.key)) {
-          this._sceneSet(light.key, light.room, light.scenes, light.el.querySelector(".body"));
-        }
+      for (const set of this._sets.values()) {
+        set.arrange(sceneOrder(set.ids, shared.data?.layouts[set.key]), this._editing === set.key);
       }
-      for (const set of this._sets.values()) set.arrange(this._scenesOf(set.key), this._editing === set.key);
       this._root.querySelector(".rooms").classList.toggle("reordering", this._reordering);
       const reorder = this._root.querySelector(".reorder");
       const fold = this._root.querySelector(".fold");
