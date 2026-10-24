@@ -8,7 +8,9 @@ from unittest.mock import Mock
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+import voluptuous as vol
 
+from homeassistant.components.lovelace.const import STORAGE_DASHBOARD_CREATE_FIELDS
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import Unauthorized
 
@@ -112,6 +114,33 @@ async def test_the_lights_dashboard_is_added_once(hass: HomeAssistant, home: Hom
     hass.config_entries.async_update_entry(entry, options={**entry.options, "dashboard": True})
     await hass.async_block_till_done()
     assert config()["add_dashboard"]
+
+
+def test_the_dashboard_is_one_home_assistant_takes() -> None:
+    """What the script asks Home Assistant for (as in addDashboard in
+    hue-lite.js) passes its own check for a new dashboard."""
+    schema = vol.Schema(STORAGE_DASHBOARD_CREATE_FIELDS)
+    schema(
+        {
+            "url_path": "lights",
+            "allow_single_word": True,
+            "mode": "storage",
+            "title": "Lights",
+            "icon": "mdi:lightbulb-group",
+            "show_in_sidebar": True,
+            "require_admin": False,
+        }
+    )
+
+
+async def test_a_failure_to_add_the_dashboard_is_logged(
+    hass: HomeAssistant, home: Home, hue_lite: HueLite, caplog: pytest.LogCaptureFixture
+) -> None:
+    claim = {"type": f"{DOMAIN}/claim_dashboard", "release": False}
+    ws(hass, dashboard.websocket_claim_dashboard, claim)
+    ws(hass, dashboard.websocket_claim_dashboard, {**claim, "release": True, "error": "Url path needs to contain a hyphen (-)"})
+    assert "Couldn't add the Lights dashboard (it'll be tried again): Url path needs to contain a hyphen (-)" in caplog.text
+    assert not hue_lite.dashboard_added
 
 
 async def test_a_dimmers_lights_and_scenes(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,8 @@ from .engine import TILE_SCENES, HueLite, async_get_loaded
 from .lights import rgb_color
 from .targets import LIGHT
 from .timeline import PALETTES, PRESETS
+
+_LOGGER = logging.getLogger(__name__)
 
 SCRIPT = Path(__file__).parent / "frontend" / "hue-lite.js"
 URL = f"/{DOMAIN}/hue-lite.js"
@@ -112,16 +115,25 @@ def _config(hue_lite: HueLite) -> dict[str, Any]:
     }
 
 
-@websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/claim_dashboard", vol.Optional("release", default=False): bool})
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/claim_dashboard",
+        vol.Optional("release", default=False): bool,
+        vol.Optional("error"): vol.All(str, vol.Length(max=300)),
+    }
+)
 @websocket_api.require_admin
 @callback
 def websocket_claim_dashboard(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """The Lights dashboard is added by an admin's browser, with Home
     Assistant's own dashboard commands. The first to claim it adds it (or
-    finds one already there); `release` gives the claim back if that failed."""
+    finds one already there); `release` gives the claim back if that failed,
+    with the `error`, which goes in the log."""
     if (hue_lite := async_get_loaded(hass)) is None:
         connection.send_error(msg["id"], "not_loaded", "Hue-Lite isn't set up")
         return
+    if error := msg.get("error"):
+        _LOGGER.warning("Couldn't add the Lights dashboard (it'll be tried again): %s", error)
     connection.send_result(msg["id"], {"claimed": hue_lite.claim_dashboard(msg["release"])})
 
 

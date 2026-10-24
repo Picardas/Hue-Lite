@@ -1764,7 +1764,13 @@
   async function addDashboard() {
     const hass = await pageHass();
     if (!hass?.user.is_admin) return;
-    const setup = await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null);
+    // A page opened while Home Assistant's starting can get here before
+    // Hue-Lite's set up: keep asking for a while.
+    let setup = null;
+    for (let i = 0; i < 20 && !setup; i++) {
+      setup = await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null);
+      if (!setup) await new Promise((r) => setTimeout(r, 15000));
+    }
     if (!setup?.add_dashboard) return;
     const { claimed } = await hass.callWS({ type: `${DOMAIN}/claim_dashboard` }).catch(() => ({}));
     if (!claimed) return;
@@ -1782,8 +1788,10 @@
       });
       await hass.callWS({ type: "lovelace/config/save", url_path: urlPath, config: { strategy: { type: STRATEGY } } });
     } catch (err) {
-      // Give the claim back, so the next admin page load tries again.
-      hass.callWS({ type: `${DOMAIN}/claim_dashboard`, release: true }).catch(() => {});
+      // Give the claim back, so the next admin page load tries again, and
+      // say why in Home Assistant's log.
+      const error = String(err?.message || err?.code || err).slice(0, 300);
+      hass.callWS({ type: `${DOMAIN}/claim_dashboard`, release: true, error }).catch(() => {});
     }
   }
 
