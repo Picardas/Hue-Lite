@@ -20,6 +20,7 @@
       "coming_home_enabled": { "default": "mdi:home-import-outline" },
       "coming_home_only_dark": { "default": "mdi:weather-night" },
       "leaving_home_enabled": { "default": "mdi:home-export-outline" },
+      "mimic_presence": { "default": "mdi:shield-home-outline" },
       "wake_up_weekdays": { "default": "mdi:calendar-week" },
       "wake_up_weekends": { "default": "mdi:calendar-weekend" },
       "wake_up_auto_off": { "default": "mdi:lightbulb-auto-outline" }
@@ -35,6 +36,7 @@
     "apply_preset": { "service": "mdi:palette" },
     "natural_light": { "service": "mdi:theme-light-dark" },
     "next_scene": { "service": "mdi:palette-swatch-variant" },
-    "set_auto": { "service": "mdi:brightness-auto" }
+    "set_auto": { "service": "mdi:brightness-auto" },
+    "set_brightness": { "service": "mdi:brightness-6" }
   }
 }

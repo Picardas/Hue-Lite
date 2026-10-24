@@ -58,6 +58,7 @@ SWITCHES: Final = {
     "coming_home_enabled": True,
     "coming_home_only_dark": True,
     "leaving_home_enabled": False,
+    "mimic_presence": False,
     "wake_up_weekdays": False,
     "wake_up_weekends": False,
     "wake_up_auto_off": False,
@@ -94,3 +95,10 @@ SIGNAL_SHARED: Final = f"{DOMAIN}_shared"
 
 # Everyone gone for this long turns the lights off.
 LEAVING_DELAY: Final = 120
+
+# Wake up's sunrise, from Nightlight's dim deep red: each preset it fades to,
+# taking this % of the fade-in.
+SUNRISE: Final = (("rest", 40), ("relax", 30), ("energize", 30))
+
+# Mimicking presence switches a light on or off every this many minutes (at random).
+MIMIC_MINUTES: Final = (10, 30)

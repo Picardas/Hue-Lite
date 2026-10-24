@@ -116,6 +116,7 @@
       "coming_home_enabled": { "name": "Coming home" },
       "coming_home_only_dark": { "name": "Coming home only after dark" },
       "leaving_home_enabled": { "name": "Lights off when everyone leaves" },
+      "mimic_presence": { "name": "Mimic presence" },
       "wake_up_weekdays": { "name": "Wake up on weekdays" },
       "wake_up_weekends": { "name": "Wake up on weekends" },
       "wake_up_auto_off": { "name": "Wake-up lights turn off" }
@@ -163,6 +164,13 @@
     "next_scene": {
       "name": "Next scene",
       "description": "Moves lights to the next scene, like pressing a Hue dimmer's On button again: Natural light, Energize, Cool bright, Read, Relax, Rest, Nightlight, and round. Lights that are off come on in Natural light."
+    },
+    "set_brightness": {
+      "name": "Set brightness",
+      "description": "Dims or brightens lights, keeping them in their scene at that level: Natural light keeps following the sun and a colour scene keeps drifting, until a scene is picked again. Lights in a scene that are off come on in it. With no target, every light.",
+      "fields": {
+        "brightness_pct": { "name": "Brightness", "description": "The brightness, in %." }
+      }
     },
     "set_auto": {
       "name": "Set Auto",

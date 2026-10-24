@@ -39,7 +39,7 @@ async def test_entities(hass: HomeAssistant, hue_lite: HueLite) -> None:
     assert ids["evening_weekends"] == "switch.hue_lite_evening_routine_fri_sat_nights"
     assert ids["wake_up_weekday"] == "time.hue_lite_wake_up_mon_fri"
     assert ids["bedtime_fade_minutes"] == "number.hue_lite_bedtime_fade_out"
-    assert len(ids) == 3 + 8 + 4 + 7
+    assert len(ids) == 3 + 9 + 4 + 7
 
     assert hass.states.get("switch.hue_lite_evening_routine_sun_thu_nights").state == "on"
     assert hass.states.get("switch.hue_lite_evening_routine_fri_sat_nights").state == "on"
@@ -97,10 +97,16 @@ async def test_damaged_saved_data_is_left_out(
     hass_storage[STORAGE_KEY] = {
         "version": 1,
         "key": STORAGE_KEY,
-        "data": {"settings": ["off"], "scenes": "light.bedroom", "auto": "light.bedroom", "last_wake_up": "2026-10-22T07:00:00"},
+        "data": {
+            "settings": ["off"],
+            "scenes": "light.bedroom",
+            "auto": "light.bedroom",
+            "dimmed": ["light.bedroom"],
+            "last_wake_up": "2026-10-22T07:00:00",
+        },
     }
     hue_lite = await set_up(hass, entry)
-    assert (hue_lite.scenes, hue_lite.auto, hue_lite.last_wake_up) == ({}, set(), None)
+    assert (hue_lite.scenes, hue_lite.auto, hue_lite.dimmed, hue_lite.last_wake_up) == ({}, set(), {}, None)
     assert hue_lite.settings["evening_weeknights"] is True
 
 

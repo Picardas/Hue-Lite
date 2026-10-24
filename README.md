@@ -40,8 +40,11 @@ Lights join in by **area** and **label**, with no YAML for each light.
   them.
 - **Routines:**
   - The evening routine comes on before sunset and winds down to bedtime.
-  - Wake up fades your lights in.
+  - Wake up brings your lights up like a sunrise.
   - Lights come on when you get home and can go off when everyone leaves.
+  - Away switches lights on and off in the evening while nobody's home.
+- **Dimming that keeps the scene.** Dim a light and it stays in Natural
+  light, or its colour scene keeps drifting, at that level.
 - **Auto.** One button puts a light under the routines, with or without
   their labels.
 - **Hue dimmer switches** (RWL02x on ZHA). On steps through scenes you
@@ -116,8 +119,9 @@ order:
 **Each block** is a bar over its scenes:
 - Tap the icon to switch the light on or off (all of them, for Whole home or
   a label group).
-- Slide to dim a single light. Whole home and label groups have no slider:
-  one brightness for lights in different scenes would flatten them.
+- Slide to dim a single light; it stays in its scene at that level. Whole
+  home and label groups have no slider: one brightness for lights in
+  different scenes would flatten them.
 - **Auto** is at the end of the bar.
 - Tap the name to show or hide the scenes.
 
@@ -170,8 +174,13 @@ on the Hue-Lite device page instead.
     brighten.
   - They wind down through Relax and Rest, then fade out at bedtime.
   - Sun–Thu and Fri & Sat nights each have their own switch and bedtime.
-- **Wake up.** The Wake up lights that are off fade from a warm glow to
-  Energize by your wake-up time. They can turn off again afterwards.
+- **Dimming.** Dimming a light in a scene, with its slider or a dimmer's Up
+  and Down, keeps it there at that level. Natural light keeps following the
+  sun and a colour scene keeps drifting, just dimmer or brighter, until you
+  pick a scene again.
+- **Wake up.** The Wake up lights that are off get a sunrise. They start at
+  Nightlight's dim red and fade through orange and warm white, reaching
+  Energize at your wake-up time. They can turn off again afterwards.
 - **Coming & going:**
   - When someone gets home (optionally only after dark), the Coming home
     lights that are off come on. So do the First one home lights, if the
@@ -180,6 +189,11 @@ on the Hue-Lite device page instead.
     except in its last half hour or so before bed. The rest come on in
     Natural light.
   - Every light can go off when everyone has left.
+- **Away** (off by default). While nobody's home in the evening, from the
+  evening routine's start until bedtime, one of the Evening lights switches
+  on or off every 10 to 30 minutes, so the house looks lived in.
+  - It stops when someone gets home, leaving the lights as they are.
+  - At bedtime, it turns off the lights it switched on.
 - **Auto** is the button at the end of each bar. A light is on Auto while
   wake up or the evening routine has it, or once you put it on Auto.
   - On Auto, it follows both routines whether or not it has their labels.
@@ -191,7 +205,7 @@ on the Hue-Lite device page instead.
   - **On** steps through their scenes: by default Natural light and the
     presets.
   - **Off** turns the lights off.
-  - **Up** and **Down** dim.
+  - **Up** and **Down** dim, keeping the lights in their scene.
 
 The settings are switch, time and number entities on the **Hue-Lite** device,
 so automations can use them too. `sensor.hue_lite_light_scenes` shows which
@@ -213,6 +227,10 @@ target: {area_id: bedroom}
 action: hue_lite.set_auto       # auto: false takes them off Auto
 target: {entity_id: light.hall}
 data: {auto: true}
+---
+action: hue_lite.set_brightness # dims, keeping the lights in their scene
+target: {area_id: kitchen}
+data: {brightness_pct: 40}
 ```
 
 With no target, an action uses every light. A user who isn't an admin can
@@ -224,6 +242,9 @@ only use it on lights they're allowed to control.
   ZHA.
 - **Restarts:** a routine whose start falls while Home Assistant is
   restarting is skipped for that day.
+- **Dimming from elsewhere:** dimming a light from Home Assistant's own
+  light dialog or an automation still takes it out of its scene; only
+  Hue-Lite's slider, dimmers and `set_brightness` keep it there.
 - **Light groups** are left out, so their members aren't sent commands twice.
   Use areas or labels instead.
 

@@ -8,7 +8,9 @@ light, the evening routine, a preset, a colour scene (whose colours drift),
 or the wake-up fade-in. Picking another scene replaces it; changing the light
 yourself or from an automation, or activating one of Home Assistant's own
 scenes with it, forgets it. Turning a light off keeps its scene, so a light in
-Natural light or the routine picks it up again when it comes back on.
+Natural light or the routine picks it up again when it comes back on. Dimming
+a light in a scene keeps it there, at that level (`dimmed`), until a scene is
+picked again.
 
 A light is on Auto while the evening routine or wake up has it, or while it's
 in `auto` (put there from its Auto button); those the routines take as if
@@ -69,6 +71,7 @@ from .timeline import (
     SCENE_CYCLE,
     Evening,
     EveningSettings,
+    Light,
     SunTimes,
     Target,
     evening_routine,
@@ -130,7 +133,7 @@ def _stored(data: Any) -> dict[str, Any]:
         return data[key] if isinstance(data.get(key), kind) else kind()
 
     settings, scenes, auto = part("settings", dict), part("scenes", dict), part("auto", list)
-    layouts, dimmer_settings = part("layouts", dict), part("dimmers", dict)
+    layouts, dimmer_settings, dimmed = part("layouts", dict), part("dimmers", dict), part("dimmed", dict)
     if isinstance(was := settings.get("evening_routine_enabled"), bool):
         settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
     renamed = {"movie": "nebula"}
@@ -148,6 +151,11 @@ def _stored(data: Any) -> dict[str, Any]:
             if isinstance(was, str) and (scene := renamed.get(was, was)) in SCENES
         },
         "auto": [light for light in auto if isinstance(light, str)],
+        "dimmed": {
+            light: float(level)
+            for light, level in dimmed.items()
+            if type(level) in (int, float) and 0 < level <= 100
+        },
         "last_wake_up": _instant(data.get("last_wake_up")),
         "dashboard_added": data.get("dashboard_added") is True,
         "layouts": {key: setup for key, value in layouts.items() if (setup := _setup(value))},
@@ -198,6 +206,9 @@ class HueLite:
         # Lights put on Auto: the routines take them as if they had the
         # routines' labels (see async_set_auto).
         self.auto: set[str] = set()
+        # Lights dimmed in their scene -> the share of the scene's brightness
+        # they get (see async_set_brightness).
+        self.dimmed: dict[str, float] = {}
         # Hue-Lite's entity ids by key, for the dashboard (filled in as they're added).
         self.entity_ids: dict[str, str] = {}
         self.device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name=NAME, entry_type=DeviceEntryType.SERVICE)
@@ -251,6 +262,7 @@ class HueLite:
             if not self.excluded(light) and not (routine_over and scene == ROUTINE)
         }
         self.auto = {light for light in data["auto"] if not self.excluded(light)}
+        self.dimmed = {light: level for light, level in data["dimmed"].items() if light in self.scenes}
 
     @callback
     def async_start(self) -> None:
@@ -288,6 +300,7 @@ class HueLite:
             "settings": self.settings,
             "scenes": dict(sorted(self.scenes.items())),
             "auto": sorted(self.auto),
+            "dimmed": dict(sorted(self.dimmed.items())),
             "last_wake_up": self.last_wake_up.isoformat() if self.last_wake_up else None,
             "layouts": self.layouts,
             "dimmers": self.dimmer_settings,
@@ -493,12 +506,14 @@ class HueLite:
             self._changed()
 
     def _put(self, lights: list[str], scene: str) -> bool:
-        """Put lights in `scene` ('' for none); whether any changed."""
+        """Put lights in `scene` ('' for none), at its full brightness;
+        whether any changed."""
         changed = False
         for light in lights:
             if self.scenes.get(light, "") == scene or (scene and self.excluded(light)):
                 continue
             changed = True
+            self.dimmed.pop(light, None)
             if scene:
                 self.scenes[light] = scene
             else:
@@ -525,6 +540,7 @@ class HueLite:
         if not lights:
             return
         self.set_scene(lights, preset, leave_auto=True)
+        self._undim(lights)
         if preset in PALETTES:
             await self.send_palette(preset, lights, 0.4, parent)
         else:
@@ -538,6 +554,7 @@ class HueLite:
             self.set_scene([light for light in lights if self.scenes.get(light) == NATURAL], "")
         elif lights:
             self.set_scene(lights, NATURAL, leave_auto=True)
+            self._undim(lights)
             await self.apply(NATURAL, lights, 2, parent)
 
     async def async_next_scene(
@@ -558,11 +575,83 @@ class HueLite:
         """Send Natural light's or the routine's current light to the lights,
         turning them on. Nightlight-labelled lights get Nightlight during
         Natural light's night and the routine's nightlight phase."""
-        target = self.target(scene)
-        night = target.phase == ("night" if scene == NATURAL else "nightlight")
-        nightlights = set(self.labelled("nightlight")) if night else set()
-        await self.sender.send([light for light in lights if light in nightlights], PRESETS["nightlight"], transition, parent)
-        await self.sender.send([light for light in lights if light not in nightlights], target.light, transition, parent)
+        nightlights = self._nightlights(scene)
+        await self._send(
+            [light for light in lights if light in nightlights], PRESETS["nightlight"], transition, parent
+        )
+        await self._send(
+            [light for light in lights if light not in nightlights], self.target(scene).light, transition, parent
+        )
+
+    def _nightlights(self, scene: str) -> set[str]:
+        """The lights Natural light or the routine gives Nightlight now: the
+        Nightlight-labelled ones, in Natural light's night or the routine's
+        nightlight phase."""
+        night = self.target(scene).phase == ("night" if scene == NATURAL else "nightlight")
+        return set(self.labelled("nightlight")) if night else set()
+
+    # ---- Dimming -------------------------------------------------------------
+
+    async def async_set_brightness(
+        self,
+        lights: list[str],
+        brightness_pct: int | None = None,
+        step_pct: int | None = None,
+        parent: Context | None = None,
+    ) -> None:
+        """Dim or brighten lights, keeping them in their scenes, like Hue: a
+        light in one goes on following it at that level (Natural light
+        through the day, a colour scene as it drifts) until a scene is
+        picked again. `step_pct` moves each light on from its own
+        brightness (a dimmer's Up and Down). A light in a scene that's off
+        comes on in it at that level; others just get the brightness."""
+        brightness: dict[int, list[str]] = {}
+        for light in lights:
+            state = self.hass.states.get(light)
+            on = state is not None and state.state == STATE_ON
+            if brightness_pct is None:
+                now = round((state.attributes.get("brightness") or 0) / 2.55) if on else 0
+                pct = min(max(now + (step_pct or 0), 1), 100)
+            else:
+                pct = min(max(round(brightness_pct), 1), 100)
+            scene_light = self._scene_light(light)
+            if scene_light is not None:
+                self.dimmed[light] = pct / scene_light.brightness_pct
+            if on or scene_light is None:
+                brightness.setdefault(pct, []).append(light)
+            else:
+                await self._send([light], scene_light, 0.4, parent)
+        self.save()
+        for pct, group in brightness.items():
+            await self.sender.call("turn_on", group, parent=parent, brightness_pct=pct, transition=0.4)
+
+    def _scene_light(self, light: str) -> Light | None:
+        """The light a light's scene wants for it now, before dimming; None
+        when it's in none (or in wake up, which is fading it already)."""
+        scene = self.scenes.get(light, "")
+        if scene in PRESETS:
+            return PRESETS[scene]
+        if scene in PALETTES:
+            palette = PALETTES[scene]
+            if not self.sender.has_colour(light):
+                return palette.white
+            return palette.colour(self._palette_order(scene).index(light) + self._drift_step())
+        if scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES):
+            return PRESETS["nightlight"] if light in self._nightlights(scene) else self.target(scene).light
+        return None
+
+    def _undim(self, lights: list[str]) -> None:
+        """Lights picked for a scene again get its full brightness."""
+        for light in lights:
+            self.dimmed.pop(light, None)
+
+    async def _send(self, lights: list[str], light: Light, transition: float, parent: Context | None = None) -> None:
+        """Send `light` to lights in a scene, each at its own level."""
+        by_level: dict[float, list[str]] = {}
+        for entity_id in lights:
+            by_level.setdefault(self.dimmed.get(entity_id, 1), []).append(entity_id)
+        for level, group in by_level.items():
+            await self.sender.send(group, light.scaled(level), transition, parent)
 
     # ---- Colour scenes -------------------------------------------------------
 
@@ -571,16 +660,21 @@ class HueLite:
         (with its brightness) for its place among the scene's colour bulbs,
         moved on one colour every DRIFT_MINUTES, so a room shows several and
         they drift; white bulbs get the scene's white."""
-        palette, has_colour = PALETTES[scene], self.sender.has_colour
-        colour = [light for light in lights if has_colour(light)]
-        order = sorted({*colour, *(light for light in self.in_scene(scene) if has_colour(light))})
+        palette = PALETTES[scene]
+        colour = [light for light in lights if self.sender.has_colour(light)]
+        order = self._palette_order(scene, colour)
         step = self._drift_step()
         by_colour: dict[int, list[str]] = {}
         for light in colour:
             by_colour.setdefault((order.index(light) + step) % len(palette.colours), []).append(light)
         for index, group in sorted(by_colour.items()):
-            await self.sender.send(group, palette.colour(index), transition, parent)
-        await self.sender.send([light for light in lights if light not in colour], palette.white, transition, parent)
+            await self._send(group, palette.colour(index), transition, parent)
+        await self._send([light for light in lights if light not in colour], palette.white, transition, parent)
+
+    def _palette_order(self, scene: str, joining: list[str] | None = None) -> list[str]:
+        """The colour bulbs in a colour scene (with those joining it), in the
+        order its colours go round them."""
+        return sorted({*(joining or []), *(light for light in self.in_scene(scene) if self.sender.has_colour(light))})
 
     @staticmethod
     def _drift_step() -> int:
@@ -683,6 +777,8 @@ class HueLite:
                 if old in self.scenes or old in self.auto:
                     if scene := self.scenes.pop(old, ""):
                         self.scenes[light] = scene
+                    if (level := self.dimmed.pop(old, None)) is not None:
+                        self.dimmed[light] = level
                     if old in self.auto:
                         self.auto.remove(old)
                         self.auto.add(light)

@@ -2,8 +2,7 @@
 its area, or the ones chosen for it on the dashboard. On: the next of its
 scenes (as chosen on the dashboard; by default Natural light and the
 presets). Off: off. Up and Down: 10% brighter or dimmer, for the lights that
-are on (Down stops at about 10%), which counts as a change by hand (taking
-them out of their scene and off Auto)."""
+are on (Down stops at about 10%), keeping them in their scene at that level."""
 
 from __future__ import annotations
 
@@ -51,5 +50,4 @@ async def _press(lite: HueLite, button: str, lights: list[str], parent: Context,
             if up or ((state := lite.hass.states.get(light)) and (state.attributes.get("brightness") or 0) > 26)
         ]
         if dimming:
-            lite.set_scene(dimming, "", leave_auto=True)
-            await lite.sender.call("turn_on", dimming, parent=parent, brightness_step_pct=10 if up else -10, transition=0.4)
+            await lite.async_set_brightness(dimming, step_pct=10 if up else -10, parent=parent)

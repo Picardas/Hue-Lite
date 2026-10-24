@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
@@ -177,13 +178,16 @@ async def test_wake_up(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home
     await action(hass, "natural_light", {"entity_id": "light.bedroom"})
     home.turn_on.clear()
 
-    # Wake up at 07:00 with a 30-minute fade: it starts at 06:30.
+    # Wake up at 07:00 with a 30-minute fade: a sunrise from 06:30, from
+    # Nightlight's red through Rest and Relax to Energize.
     await tick(hass, freezer, "06:29")
     assert home.turn_on == []
     await tick(hass, freezer, "06:30")
     assert [c.data for c in home.turn_on] == [
-        {"entity_id": ["light.bedroom"], "brightness": 1, "color_temp_kelvin": 2200},
-        {"entity_id": ["light.bedroom"], **PRESETS["energize"].colour_data(), "transition": 30 * 60},
+        {"entity_id": ["light.bedroom"], **PRESETS["nightlight"].colour_data(), "transition": 0},
+        {"entity_id": ["light.bedroom"], **PRESETS["rest"].colour_data(), "transition": 12 * 60},
+        {"entity_id": ["light.bedroom"], **PRESETS["relax"].colour_data(), "transition": 9 * 60},
+        {"entity_id": ["light.bedroom"], **PRESETS["energize"].colour_data(), "transition": 9 * 60},
     ]
     # Out of Natural light, so it doesn't move the bedroom during the fade.
     assert natural(hass) == []
@@ -232,7 +236,7 @@ async def test_wake_up_leaves_lights_that_are_on_alone(
     await switch(hass, "switch.hue_lite_wake_up_on_weekdays")
     hass.states.async_set(hall, "on")
     await tick(hass, freezer, "06:30")
-    assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom"], ["light.bedroom"]]
+    assert {tuple(c.data["entity_id"]) for c in home.turn_on} == {("light.bedroom",)}
 
 
 async def test_wake_up_just_after_midnight(
@@ -247,7 +251,7 @@ async def test_wake_up_just_after_midnight(
     await hass.services.async_call("time", "set_value", {"entity_id": "time.hue_lite_wake_up_sat_sun", "time": "00:15"}, blocking=True)
 
     await tick(hass, freezer, f"{FRIDAY} 23:45:00+01:00")
-    assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom"], ["light.bedroom"]]
+    assert len(home.turn_on) == 4
     on(hass, hue_lite, "light.bedroom")
     await tick(hass, freezer, "2026-10-24 01:15:00+01:00")
     assert [c.data for c in home.turn_off] == [{"entity_id": ["light.bedroom"], "transition": 60}]
@@ -265,7 +269,7 @@ async def test_wake_up_when_the_clocks_go_forward(
     await tick(hass, freezer, "2027-03-28 01:09:00+00:00")  # 02:09 BST
     assert home.turn_on == []
     await tick(hass, freezer, "2027-03-28 01:10:00+00:00")  # 02:10 BST
-    assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom"], ["light.bedroom"]]
+    assert len(home.turn_on) == 4
 
 
 async def test_coming_and_going(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, hue_lite: HueLite) -> None:
@@ -358,6 +362,58 @@ async def test_first_one_home(hass: HomeAssistant, home: Home, hue_lite: HueLite
     assert [c.data["entity_id"] for c in home.turn_on] == [["light.living_room"]]
 
 
+async def test_away(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry) -> None:
+    """While nobody's home in the evening, an Evening light switches on or
+    off every so often (here: the bedroom, every ten minutes). At bedtime
+    its lights go off; when someone gets home it stops, leaving them."""
+    await tick(hass, freezer, "16:00")
+    hue_lite = await set_up(hass, entry)
+    await switch(hass, "switch.hue_lite_mimic_presence")
+    hass.states.async_set("zone.home", "0")
+    with patch("custom_components.hue_lite.routines.random") as chance:
+        chance.randint.return_value = 10
+        chance.choice.side_effect = lambda lights: lights[0]
+
+        # Not in the day; from the evening's start, the bedroom comes on at
+        # the evening routine's light...
+        await tick(hass, freezer, "16:01")
+        assert home.turn_on == []
+        await tick(hass, freezer, "16:30")
+        assert [c.data for c in home.turn_on] == [
+            {"entity_id": ["light.bedroom"], **hue_lite.evening.light.colour_data(), "transition": 2}
+        ]
+        on(hass, hue_lite, "light.bedroom")
+
+        # ...and goes off ten minutes later, and on again ten after that.
+        await tick(hass, freezer, "16:35")
+        assert home.turn_off == []
+        await tick(hass, freezer, "16:40")
+        assert [c.data for c in home.turn_off] == [{"entity_id": ["light.bedroom"], "transition": 2}]
+        hass.states.async_set("light.bedroom", "off", context=ours(hue_lite))
+        await tick(hass, freezer, "16:50")
+        on(hass, hue_lite, "light.bedroom")
+
+        # At bedtime, it's turned off.
+        home.turn_off.clear()
+        await tick(hass, freezer, "23:00")
+        assert [c.data for c in home.turn_off] == [{"entity_id": ["light.bedroom"], "transition": 60}]
+        hass.states.async_set("light.bedroom", "off", context=ours(hue_lite))
+
+        # Friday: on at the evening's start, then someone gets home, so it
+        # stops and the bedroom stays on, at bedtime too.
+        await tick(hass, freezer, f"{FRIDAY} 12:00:00+01:00")
+        await tick(hass, freezer, f"{FRIDAY} 16:30:00+01:00")
+        on(hass, hue_lite, "light.bedroom")
+        with after_dark(False):
+            hass.states.async_set("zone.home", "1")
+            await settle(hass)
+        home.turn_on.clear()
+        home.turn_off.clear()
+        await tick(hass, freezer, f"{FRIDAY} 16:40:00+01:00")
+        await tick(hass, freezer, "2026-10-24 00:00:00+01:00")
+    assert home.turn_on == home.turn_off == []
+
+
 async def test_hue_dimmer(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
     dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
     remote = add_device(hass, "remote", model="TRADFRI", area="living_room")
@@ -375,11 +431,11 @@ async def test_hue_dimmer(hass: HomeAssistant, home: Home, hue_lite: HueLite) ->
     assert natural(hass) == ["light.living_room"]
     assert home.turn_on[-1].context.parent_id is not None  # linked to the press
 
-    # Down dims and counts as a change by hand.
+    # Down dims by 10% (from 78%), keeping the room in Natural light.
     hass.states.async_set("light.living_room", "on", {"brightness": 200}, context=ours(hue_lite))
     await press("down_press")
-    assert home.turn_on[-1].data == {"entity_id": ["light.living_room"], "brightness_step_pct": -10, "transition": 0.4}
-    assert natural(hass) == []
+    assert home.turn_on[-1].data == {"entity_id": ["light.living_room"], "brightness_pct": 68, "transition": 0.4}
+    assert natural(hass) == ["light.living_room"]
 
     # Down stops at about 10%.
     calls = len(home.turn_on)

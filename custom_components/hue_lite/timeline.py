@@ -26,6 +26,12 @@ class Light:
             round(self.brightness_pct), (round(self.xy_color[0], 4), round(self.xy_color[1], 4)), round(self.kelvin)
         )
 
+    def scaled(self, level: float) -> Light:
+        """This at `level` times the brightness (between 1% and 100%)."""
+        if level == 1:
+            return self
+        return Light(min(max(round(self.brightness_pct * level), 1), 100), self.xy_color, self.kelvin)
+
     def colour_data(self) -> dict[str, Any]:
         """light.turn_on data for bulbs with colour."""
         return {"brightness_pct": self.brightness_pct, "xy_color": list(self.xy_color)}

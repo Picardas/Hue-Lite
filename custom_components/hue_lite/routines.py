@@ -1,18 +1,19 @@
-"""The routines: the evening routine, wake up, and Coming & Going."""
+"""The routines: the evening routine, wake up, Coming & Going, and Away."""
 
 from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, time, timedelta
+import random
 from typing import TYPE_CHECKING
 
-from homeassistant.const import STATE_OFF
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import CALLBACK_TYPE, Context, Event, EventStateChangedData, State, callback
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.sun import is_up
 from homeassistant.util import dt as dt_util
 
-from .const import EVENING_PHASES, LEAVING_DELAY, NATURAL, ROUTINE, WAKE_UP
+from .const import EVENING_PHASES, LEAVING_DELAY, MIMIC_MINUTES, NATURAL, ROUTINE, SUNRISE, WAKE_UP
 from .timeline import PRESETS, Evening
 
 if TYPE_CHECKING:
@@ -34,6 +35,9 @@ class Routines:
         self._leaving: CALLBACK_TYPE | None = None
         # The end of the last wake-up check: each check covers the time since.
         self._checked = dt_util.now()
+        # Away: the lights it's switched on, and when it next switches one.
+        self._mimicked: set[str] = set()
+        self._next_mimic: datetime | None = None
 
     @callback
     def async_start(self) -> list[CALLBACK_TYPE]:
@@ -62,6 +66,7 @@ class Routines:
             lite.follow(ROUTINE)
         elif was.phase in EVENING_PHASES:
             lite.spawn(self._bedtime())
+            self._stop_mimicking(turn_off=True)
 
     @property
     def _tonight(self) -> str:
@@ -77,7 +82,10 @@ class Routines:
     def setting_changed(self, key: str, value: object) -> None:
         """Switching tonight's evening routine off lets its lights go (they
         stay as they are); switching it on during the evening starts it. The
-        other nights' switch doesn't change tonight."""
+        other nights' switch doesn't change tonight. Switching Away off turns
+        off the lights it switched on."""
+        if key == "mimic_presence" and not value:
+            self._stop_mimicking(turn_off=True)
         if key != self._tonight:
             return
         if not value:
@@ -161,6 +169,7 @@ class Routines:
             if since < wake + off_after <= now and s["wake_up_auto_off"]:
                 self._wake_up_over()
             day += timedelta(days=1)
+        self._mimic(now)
 
     @staticmethod
     def _at(day: date, clock: str, now: datetime) -> datetime:
@@ -177,16 +186,23 @@ class Routines:
             self.lite.spawn(self._wake_up(off))
 
     async def _wake_up(self, lights: list[str]) -> None:
-        """Fade from a dim warm glow up to Energize, reaching it at the wake-up
-        time. The lights are marked as wake-up's (which takes them out of
-        Natural light and the routine, so neither moves them during the fade)
-        until they're changed or turned off."""
+        """A sunrise: from Nightlight's dim deep red through Rest's orange and
+        Relax's warm white up to Energize, reaching it at the wake-up time.
+        The lights are marked as wake-up's (which takes them out of Natural
+        light and the routine, so neither moves them during the fade) until
+        they're changed or turned off; one that is stays as it is."""
         lite = self.lite
         lite.last_wake_up = dt_util.utcnow()
         lite.set_scene(lights, WAKE_UP)
-        await lite.sender.call("turn_on", lights, brightness=1, color_temp_kelvin=2200)
+        await lite.sender.send(lights, PRESETS["nightlight"], 0)
         await asyncio.sleep(2)
-        await lite.sender.send(lights, PRESETS["energize"], lite.settings["wake_up_fade_minutes"] * 60)
+        fade = lite.settings["wake_up_fade_minutes"] * 60
+        for i, (preset, share) in enumerate(SUNRISE):
+            if not (lights := [light for light in lights if lite.scenes.get(light) == WAKE_UP]):
+                return
+            await lite.sender.send(lights, PRESETS[preset], fade * share / 100)
+            if i < len(SUNRISE) - 1:
+                await asyncio.sleep(fade * share / 100)
 
     @callback
     def _wake_up_over(self) -> None:
@@ -217,6 +233,8 @@ class Routines:
         # Only a real count going up: not the zone coming back from unknown.
         before, after = _people(old), _people(new)
         if before is not None and after is not None and after > before:
+            # Someone's home: Away stops, leaving its lights as they are.
+            self._stop_mimicking(turn_off=False)
             self._someone_arrived(new.context, first=before == 0)
 
     @callback
@@ -249,3 +267,39 @@ class Routines:
         lite = self.lite
         if lite.settings["leaving_home_enabled"] and (on := lite.on(lite.lights())):
             lite.spawn(lite.sender.call("turn_off", on, transition=2))
+
+    # ---- Away ----------------------------------------------------------------
+
+    @callback
+    def _mimic(self, now: datetime) -> None:
+        """While nobody's home in the evening (from the evening routine's
+        start until bedtime, whether or not it's on tonight), now and then
+        switch one of its lights on, at its light, or off, so the house looks
+        lived in."""
+        lite = self.lite
+        if not (
+            lite.settings["mimic_presence"]
+            and _people(lite.hass.states.get(lite.presence)) == 0
+            and lite.evening.phase in EVENING_PHASES
+        ):
+            return
+        if self._next_mimic is not None and now < self._next_mimic:
+            return
+        self._next_mimic = now + timedelta(minutes=random.randint(*MIMIC_MINUTES))
+        if not (lights := lite.routine_lights("evening")):
+            return
+        light = random.choice(lights)
+        if lite.hass.states.is_state(light, STATE_ON):
+            self._mimicked.discard(light)
+            lite.spawn(lite.sender.call("turn_off", [light], transition=2))
+        else:
+            self._mimicked.add(light)
+            lite.spawn(lite.sender.send([light], lite.evening.light, 2))
+
+    @callback
+    def _stop_mimicking(self, turn_off: bool) -> None:
+        """Stop Away, turning off the lights it switched on (at bedtime, or
+        when it's switched off) or leaving them (when someone's home)."""
+        lights, self._mimicked, self._next_mimic = sorted(self._mimicked), set(), None
+        if turn_off and (on := self.lite.on(lights)):
+            self.lite.spawn(self.lite.sender.call("turn_off", on, transition=60))

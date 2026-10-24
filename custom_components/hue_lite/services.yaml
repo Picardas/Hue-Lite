@@ -37,6 +37,19 @@ next_scene:
     entity:
       domain: light
 
+set_brightness:
+  target:
+    entity:
+      domain: light
+  fields:
+    brightness_pct:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+
 set_auto:
   target:
     entity:

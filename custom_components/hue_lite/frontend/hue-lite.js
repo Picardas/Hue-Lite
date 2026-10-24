@@ -244,6 +244,14 @@
         title: "Going",
         entities: [{ entity: e.leaving_home_enabled, name: "Lights off when everyone leaves" }],
       }],
+    }, {
+      id: "away",
+      name: "Away",
+      icon: "mdi:shield-home-outline",
+      cards: [{
+        type: "entities",
+        entities: [{ entity: e.mimic_presence, name: "Lights on and off in the evening while nobody's home" }],
+      }],
     }];
     const footer = [{
       type: "heading",
@@ -267,11 +275,15 @@
       "",
       "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you pick a scene for it or change it. Put on Auto, it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
       "",
-      `**Wake up**: on the days it's on (Mon–Fri and Sat & Sun each have a switch and a time), lights labelled *${label("wake_up")}* that are off fade from a dim warm glow to Energize, reaching full brightness *at* your wake-up time.`,
+      `**Wake up**: on the days it's on (Mon–Fri and Sat & Sun each have a switch and a time), lights labelled *${label("wake_up")}* that are off get a sunrise: from Nightlight's dim red through orange and warm white to Energize, reaching full brightness *at* your wake-up time.`,
       "",
       `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
       `**Coming & Going**: when someone gets home (optionally only after dark), lights labelled *${label("coming_home")}* that are off come on, and so do lights labelled *${label("first_home")}* if the house was empty. Evening lights join the evening routine if it's on, except in its last half hour or so before bed, so they don't go off again soon after; the rest come on in Natural light. When the last person leaves, every light can go off.`,
+      "",
+      `**Away**: while nobody's home in the evening (from the evening routine's start until bedtime), one of the *${label("evening")}* lights switches on or off every 10 to 30 minutes, so the house looks lived in. It stops when someone gets home and turns its lights off at bedtime.`,
+      "",
+      "**Dimming** a light (its slider, or a dimmer's Up and Down) keeps it in its scene at that level: Natural light keeps following the sun, a colour scene keeps drifting, until you pick a scene again.",
       "",
       "**Hue dimmer switches** control the lights in their area, or the ones chosen on the Dimmers card: On steps through their scenes (set on the same card), Off turns them off, Up and Down dim them.",
       "",
@@ -598,12 +610,15 @@
         onActivate(card, toggle);
       }
 
-      // A single light's slider dims it (turning it on), and handles its own input.
+      // A single light's slider dims it (turning it on), keeping it in its
+      // scene at that level; it handles its own input.
       if (slider) {
         slider.addEventListener("pointerdown", (ev) => ev.stopPropagation());
         slider.addEventListener("click", (ev) => ev.stopPropagation());
         slider.addEventListener("input", () => slider.style.setProperty("--pct", `${slider.value}%`));
-        slider.addEventListener("change", () => this._call("turn_on", { brightness_pct: Number(slider.value) }));
+        slider.addEventListener("change", () => {
+          this._hass.callService(DOMAIN, "set_brightness", { brightness_pct: Number(slider.value) }, { entity_id: this._config.entities });
+        });
       }
     }
 
@@ -1420,6 +1435,7 @@
       const arrive = !isOn(hass, e.coming_home_enabled) ? "nothing" : isOn(hass, e.coming_home_only_dark) ? "lights on after dark" : "lights on";
       return `Coming: ${arrive} · Going: ${isOn(hass, e.leaving_home_enabled) ? "lights off" : "nothing"}`;
     },
+    away: (hass, e) => (isOn(hass, e.mimic_presence) ? "Mimicking presence in the evening" : "Off"),
   };
   // Home Assistant's own cards come from its card helpers, loaded once.
   let cardHelpers;

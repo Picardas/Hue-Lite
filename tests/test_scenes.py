@@ -162,6 +162,42 @@ async def test_natural_light_moves_in_visible_steps(
     assert len(home.turn_on) == 1
 
 
+async def test_dimming_keeps_a_light_in_its_scene(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, hue_lite: HueLite
+) -> None:
+    """Dimmed, a light stays in its scene at that level, like Hue: Natural
+    light goes on following the sun at half brightness, until it's picked
+    again. (A lamp with no labels, so the evening routine leaves it be.)"""
+    lamp = add_light(hass, "lamp", "living_room")
+    await action(hass, "natural_light", {"entity_id": lamp})
+    on(hass, hue_lite, lamp)
+
+    def sent() -> list[dict]:
+        return [c.data for c in home.turn_on if c.data["entity_id"] == [lamp]]
+
+    home.turn_on.clear()
+    await action(hass, "set_brightness", {"entity_id": lamp, "brightness_pct": 50})
+    assert sent() == [{"entity_id": [lamp], "brightness_pct": 50, "transition": 0.4}]
+    assert natural(hass) == [lamp]
+
+    # Halfway through the sunset blend (78%), it's sent Natural light at half that.
+    home.turn_on.clear()
+    await tick(hass, freezer, "17:15")
+    assert sent() == [{"entity_id": [lamp], **hue_lite.natural.light.scaled(0.5).colour_data(), "transition": 60}]
+    assert sent()[0]["brightness_pct"] == 39
+
+    # Picking Natural light again brings it back to full.
+    await action(hass, "natural_light", {"entity_id": lamp})
+    assert sent()[-1]["brightness_pct"] == 78
+
+    # A light in a scene that's off comes on in it, at that level.
+    hass.states.async_set(lamp, "off")
+    await action(hass, "apply_preset", {"preset": "relax", "entity_id": lamp})
+    await action(hass, "set_brightness", {"entity_id": lamp, "brightness_pct": 28})
+    assert sent()[-1] == {"entity_id": [lamp], **RELAX, "brightness_pct": 28, "transition": 0.4}
+    assert hue_lite.scenes[lamp] == "relax"
+
+
 async def test_next_scene_cycles(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
     async def press() -> dict:
         home.turn_on.clear()
