@@ -8,6 +8,7 @@ apply_preset:
       selector:
         select:
           translation_key: preset
+          custom_value: true
           options:
             - energize
             - cool_bright

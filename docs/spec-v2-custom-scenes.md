@@ -84,7 +84,8 @@ Also fixed today: `services.yaml` (the preset options), `services.py` (the
 ### `timeline.py`
 - `Palette` gains `drift_minutes`, which defaults to 3, so the built-ins are
   unchanged.
-- Add `scene_from_stored(data) -> Light | Palette`.
+- Add `palette_from_stored(data) -> Palette`. A static scene is a
+  one-colour palette, which doesn't drift (`Palette.drifts`).
 - Add `kelvin_for(xy)`, a McCamy approximation clamped to 2000–6500 K,
   for the default `white` the editor offers.
 
@@ -95,8 +96,8 @@ Also fixed today: `services.yaml` (the preset options), `services.py` (the
   - These read the library instead of `PRESETS[...]` and `PALETTES[...]`
     directly: `async_preset`, `send_palette`, `_scene_light`, `_drift`,
     and `TILE_SCENES` and `SCENES`.
-  - A custom static scene behaves like a preset, and a dynamic one like a
-    palette.
+  - Custom scenes all go through the palette path: `self.palettes` holds
+    the built-in palettes plus yours.
 - **Drift per scene:** `_drift_step(palette)` uses the palette's
   `drift_minutes`. `_drifted` becomes a dict from scene to step, and each
   drift's transition is that scene's step length.

@@ -181,7 +181,8 @@
     }
   },
   "exceptions": {
-    "not_loaded": { "message": "Hue-Lite isn't set up." }
+    "not_loaded": { "message": "Hue-Lite isn't set up." },
+    "unknown_scene": { "message": "There's no scene called {scene}." }
   },
   "issues": {
     "missing_label": {

@@ -41,10 +41,6 @@ NATURAL: Final = "natural"
 ROUTINE: Final = "routine"
 WAKE_UP: Final = "wake_up"
 
-# Colour scenes move each colour bulb on to the next colour this often, over
-# the whole time, so they drift slowly.
-DRIFT_MINUTES: Final = 3
-
 # The evening routine's phases in which it has lights.
 EVENING_PHASES: Final = ("evening", "wind_down", "nightlight")
 

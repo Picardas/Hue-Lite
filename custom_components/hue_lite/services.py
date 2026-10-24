@@ -14,7 +14,6 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .engine import HueLite, async_get_loaded
-from .timeline import PALETTES, PRESETS
 
 _IDS = vol.All(cv.ensure_list, [cv.string])
 
@@ -46,7 +45,11 @@ def async_register(hass: HomeAssistant) -> None:
 
     async def apply_preset(call: ServiceCall) -> None:
         running, lights = await targeted(call)
-        await running.async_preset(lights, call.data["preset"], parent=call.context)
+        if not running.is_scene(preset := call.data["preset"]):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="unknown_scene", translation_placeholders={"scene": preset}
+            )
+        await running.async_preset(lights, preset, parent=call.context)
 
     async def natural_light(call: ServiceCall) -> None:
         running, lights = await targeted(call)
@@ -68,7 +71,8 @@ def async_register(hass: HomeAssistant) -> None:
         DOMAIN,
         "apply_preset",
         apply_preset,
-        vol.Schema({vol.Required("preset"): vol.In([*PRESETS, *PALETTES]), **TARGET}),
+        # Your own scenes too, so they're checked when called.
+        vol.Schema({vol.Required("preset"): cv.string, **TARGET}),
     )
     hass.services.async_register(
         DOMAIN, "natural_light", natural_light, vol.Schema({vol.Optional("follow", default=True): cv.boolean, **TARGET})

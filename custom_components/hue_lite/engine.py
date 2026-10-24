@@ -49,7 +49,6 @@ from .const import (
     DEFAULT_PRESENCE,
     DEFAULT_SETTINGS,
     DOMAIN,
-    DRIFT_MINUTES,
     EVENING_PHASES,
     NAME,
     NATURAL,
@@ -72,12 +71,14 @@ from .timeline import (
     Evening,
     EveningSettings,
     Light,
+    Palette,
     SunTimes,
     Target,
     evening_routine,
     minutes,
     natural_light,
     next_scene,
+    palette_from_stored,
 )
 
 type HueLiteConfigEntry = ConfigEntry[HueLite]
@@ -90,17 +91,56 @@ SCENES = TILE_SCENES | {ROUTINE, WAKE_UP}
 # edits them): Natural light and the presets, as Hue's On button cycles.
 DIMMER_DEFAULT = {"order": [*SCENE_CYCLE, *PALETTES], "hidden": list(PALETTES)}
 
+# Your own scenes: their ids start with this, and there are at most this many.
+CUSTOM_PREFIX = "custom_"
+MAX_CUSTOM = 50
 
-def _setup(value: Any) -> dict[str, list[str]] | None:
-    """A stored set of scenes ({order, hidden}), or None if it isn't one."""
+
+def _setup(value: Any, tiles: frozenset[str] | set[str] = TILE_SCENES) -> dict[str, list[str]] | None:
+    """A stored set of scenes ({order, hidden}), or None if it isn't one;
+    scenes not among `tiles` are left out."""
     if not isinstance(value, dict):
         return None
 
     def ids(key: str) -> list[str]:
         found = value.get(key)
-        return [s for s in found if s in TILE_SCENES] if isinstance(found, list) else []
+        return [s for s in found if s in tiles] if isinstance(found, list) else []
 
     return {"order": ids("order"), "hidden": ids("hidden")}
+
+
+def custom_scene(value: Any) -> dict[str, Any] | None:
+    """One of your own scenes, checked, or None if it isn't one: a name, an
+    icon, 1-8 colours as [x, y, brightness %] (one: static), `white` as
+    [brightness %, kelvin] for bulbs without colour, and minutes per drift."""
+    if not isinstance(value, dict):
+        return None
+    name, icon, colours, white = value.get("name"), value.get("icon"), value.get("colours"), value.get("white")
+    drift = value.get("drift_minutes", 3)
+
+    def number(x: Any, low: float, high: float) -> bool:
+        return type(x) in (int, float) and low <= x <= high
+
+    def colour(c: Any) -> bool:
+        return isinstance(c, list) and len(c) == 3 and number(c[0], 0, 1) and number(c[1], 0, 1) and number(c[2], 1, 100)
+
+    if not (
+        isinstance(name, str)
+        and 1 <= len(name.strip()) <= 30
+        and isinstance(icon, str)
+        and len(icon) <= 64
+        and isinstance(colours, list)
+        and 1 <= len(colours) <= 8
+        and all(colour(c) for c in colours)
+        and isinstance(white, list)
+        and len(white) == 2
+        and number(white[0], 1, 100)
+        and number(white[1], 2000, 6500)
+        and type(drift) is int
+        and 1 <= drift <= 60
+    ):
+        return None
+    return {"name": name.strip(), "icon": icon, "colours": colours, "white": white, "drift_minutes": drift}
 
 
 @callback
@@ -137,6 +177,13 @@ def _stored(data: Any) -> dict[str, Any]:
     if isinstance(was := settings.get("evening_routine_enabled"), bool):
         settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
     renamed = {"movie": "nebula"}
+    # Your own scenes first: lights, rooms and dimmers can be in them.
+    custom = {
+        scene_id: scene
+        for scene_id, value in list(part("custom_scenes", dict).items())[:MAX_CUSTOM]
+        if isinstance(scene_id, str) and scene_id.startswith(CUSTOM_PREFIX) and (scene := custom_scene(value))
+    }
+    tiles = TILE_SCENES | custom.keys()
     return {
         "settings": {
             key: value
@@ -148,8 +195,9 @@ def _stored(data: Any) -> dict[str, Any]:
         "scenes": {
             light: scene
             for light, was in scenes.items()
-            if isinstance(was, str) and (scene := renamed.get(was, was)) in SCENES
+            if isinstance(was, str) and ((scene := renamed.get(was, was)) in SCENES or scene in custom)
         },
+        "custom_scenes": custom,
         "auto": [light for light in auto if isinstance(light, str)],
         "dimmed": {
             light: float(level)
@@ -158,22 +206,22 @@ def _stored(data: Any) -> dict[str, Any]:
         },
         "last_wake_up": _instant(data.get("last_wake_up")),
         "dashboard_added": data.get("dashboard_added") is True,
-        "layouts": {key: setup for key, value in layouts.items() if (setup := _setup(value))},
+        "layouts": {key: setup for key, value in layouts.items() if (setup := _setup(value, tiles))},
         "dimmers": {
             device: found
             for device, value in dimmer_settings.items()
-            if isinstance(value, dict) and (found := _dimmer(value))
+            if isinstance(value, dict) and (found := _dimmer(value, tiles))
         },
     }
 
 
-def _dimmer(value: dict[str, Any]) -> dict[str, Any]:
+def _dimmer(value: dict[str, Any], tiles: frozenset[str] | set[str]) -> dict[str, Any]:
     """A stored dimmer's settings: the lights it controls and its scenes,
     whichever are set."""
     found: dict[str, Any] = {}
     if isinstance(lights := value.get("lights"), list) and (lights := [x for x in lights if isinstance(x, str)]):
         found["lights"] = lights
-    if setup := _setup(value.get("scenes")):
+    if setup := _setup(value.get("scenes"), tiles):
         found["scenes"] = setup
     return found
 
@@ -238,14 +286,20 @@ class HueLite:
         # Each light's brightness when it was last turned off, to tell a plain
         # switch-on from one at a brightness of someone's own.
         self._off_brightness: dict[str, int] = {}
-        # The colour scenes' drift step their bulbs were last moved on at.
-        self._drifted = self._drift_step()
+        # Your own scenes, as stored (by id), and every colour scene (the
+        # built-in ones and yours; a static one of yours is a one-colour one).
+        self.custom: dict[str, dict[str, Any]] = {}
+        self.palettes: dict[str, Palette] = dict(PALETTES)
+        # Each colour scene's drift step its bulbs were last moved on at.
+        self._drifted: dict[str, int] = {}
 
     # ---- Lifecycle -----------------------------------------------------------
 
     async def async_load(self) -> None:
         """Load the saved settings and scenes, and work out where the timelines are."""
         data = _stored(await self._store.async_load())
+        self.custom = data["custom_scenes"]
+        self._custom_changed()
         self.settings.update(data["settings"])
         self.last_wake_up = data["last_wake_up"]
         self.layouts, self.dimmer_settings = data["layouts"], data["dimmers"]
@@ -305,6 +359,7 @@ class HueLite:
             "layouts": self.layouts,
             "dimmers": self.dimmer_settings,
             "dashboard_added": self.dashboard_added,
+            "custom_scenes": self.custom,
         }
 
     @callback
@@ -487,6 +542,21 @@ class HueLite:
 
     # ---- Scenes --------------------------------------------------------------
 
+    def is_scene(self, scene: str) -> bool:
+        """Whether a preset, a colour scene or one of your own has this id."""
+        return scene in PRESETS or scene in self.palettes
+
+    def tile_scenes(self) -> set[str]:
+        """Every scene with a tile: the built-in ones and your own."""
+        return TILE_SCENES | self.custom.keys()
+
+    @callback
+    def _custom_changed(self) -> None:
+        """Your own scenes changed: work out the colour scenes again (a new
+        one drifts from its next step)."""
+        self.palettes = {**PALETTES, **{scene_id: palette_from_stored(scene) for scene_id, scene in self.custom.items()}}
+        self._drifted = {scene: self._drifted.get(scene, self._drift_step(p)) for scene, p in self.palettes.items()}
+
     def in_scene(self, scene: str) -> list[str]:
         """The lights in a scene (NATURAL, ROUTINE, WAKE_UP, a preset or a colour scene)."""
         return sorted(light for light, current in self.scenes.items() if current == scene)
@@ -541,7 +611,7 @@ class HueLite:
             return
         self.set_scene(lights, preset, leave_auto=True)
         self._undim(lights)
-        if preset in PALETTES:
+        if preset in self.palettes:
             await self.send_palette(preset, lights, 0.4, parent)
         else:
             await self.sender.send(lights, PRESETS[preset], 0.4, parent)
@@ -631,11 +701,10 @@ class HueLite:
         scene = self.scenes.get(light, "")
         if scene in PRESETS:
             return PRESETS[scene]
-        if scene in PALETTES:
-            palette = PALETTES[scene]
+        if palette := self.palettes.get(scene):
             if not self.sender.has_colour(light):
                 return palette.white
-            return palette.colour(self._palette_order(scene).index(light) + self._drift_step())
+            return palette.colour(self._palette_order(scene).index(light) + self._drift_step(palette))
         if scene == NATURAL or (scene == ROUTINE and self.evening.phase in EVENING_PHASES):
             return PRESETS["nightlight"] if light in self._nightlights(scene) else self.target(scene).light
         return None
@@ -658,12 +727,12 @@ class HueLite:
     async def send_palette(self, scene: str, lights: list[str], transition: float, parent: Context | None = None) -> None:
         """Turn lights on in a colour scene. Each colour bulb gets the colour
         (with its brightness) for its place among the scene's colour bulbs,
-        moved on one colour every DRIFT_MINUTES, so a room shows several and
+        moved on one colour every `drift_minutes`, so a room shows several and
         they drift; white bulbs get the scene's white."""
-        palette = PALETTES[scene]
+        palette = self.palettes[scene]
         colour = [light for light in lights if self.sender.has_colour(light)]
         order = self._palette_order(scene, colour)
-        step = self._drift_step()
+        step = self._drift_step(palette)
         by_colour: dict[int, list[str]] = {}
         for light in colour:
             by_colour.setdefault((order.index(light) + step) % len(palette.colours), []).append(light)
@@ -677,19 +746,20 @@ class HueLite:
         return sorted({*(joining or []), *(light for light in self.in_scene(scene) if self.sender.has_colour(light))})
 
     @staticmethod
-    def _drift_step() -> int:
-        return int(dt_util.utcnow().timestamp()) // (DRIFT_MINUTES * 60)
+    def _drift_step(palette: Palette) -> int:
+        return int(dt_util.utcnow().timestamp()) // (palette.drift_minutes * 60)
 
     @callback
     def _drift(self) -> None:
-        """Every DRIFT_MINUTES, start the colour scenes' bulbs that are on
-        moving to their next colour, taking until the next move."""
-        if (step := self._drift_step()) == self._drifted:
-            return
-        self._drifted = step
-        for scene in PALETTES:
+        """Every `drift_minutes` of each colour scene, start its bulbs that
+        are on moving to their next colour, taking until the next move."""
+        for scene, palette in self.palettes.items():
+            step = self._drift_step(palette)
+            if not palette.drifts or self._drifted.get(scene) == step:
+                continue
+            self._drifted[scene] = step
             if lights := [light for light in self.on(self.in_scene(scene)) if self.sender.has_colour(light)]:
-                self.spawn(self.send_palette(scene, lights, DRIFT_MINUTES * 60))
+                self.spawn(self.send_palette(scene, lights, palette.drift_minutes * 60))
 
     # ---- Changes to the lights -----------------------------------------------
 

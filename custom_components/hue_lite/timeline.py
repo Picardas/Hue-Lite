@@ -63,16 +63,30 @@ PRESETS: dict[str, Light] = {
 class Palette:
     """A colour scene, like Hue's: its colours, each an xy colour and a
     brightness, are spread across the colour bulbs and drift from one to the
-    next, so the bulbs differ in brightness too and change it slowly. White
-    bulbs get `white`."""
+    next every `drift_minutes`, so the bulbs differ in brightness too and
+    change it slowly. White bulbs get `white`. With one colour it's static,
+    like a preset."""
 
     colours: tuple[tuple[float, float, float], ...]
     white: Light
+    drift_minutes: int = 3
 
     def colour(self, index: int) -> Light:
         """The light for a colour bulb at `index` (round the palette)."""
         x, y, brightness = self.colours[index % len(self.colours)]
         return Light(brightness, (x, y), self.white.kelvin)
+
+    @property
+    def drifts(self) -> bool:
+        return len(self.colours) > 1
+
+
+def palette_from_stored(scene: dict[str, Any]) -> Palette:
+    """One of your own scenes, as stored (already checked): its colours as
+    [x, y, brightness], `white` as [brightness, kelvin], and its drift."""
+    brightness, kelvin = scene["white"]
+    colours = tuple((x, y, b) for x, y, b in scene["colours"])
+    return Palette(colours, Light(brightness, colours[0][:2], kelvin), scene["drift_minutes"])
 
 
 # Hue-Lite's colour scenes, from colours in Hue's scene library: Golden hour's
