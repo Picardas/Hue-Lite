@@ -62,8 +62,6 @@ SWITCHES: Final = {
     "wake_up_weekends": False,
     "wake_up_auto_off": False,
 }
-# Switches that are settings rather than everyday controls.
-CONFIG_SWITCHES: Final = ("coming_home_only_dark", "wake_up_auto_off")
 
 TIMES: Final = {
     "wake_up_weekday": "07:00",

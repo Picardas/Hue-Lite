@@ -14,6 +14,8 @@
 //                               headed by a bar for all its lights
 //   custom:hue-lite-routines    Wake up, Evening and Coming & Going as collapsible blocks
 //   custom:hue-lite-dimmers     each Hue dimmer: the lights it controls and its scenes
+//   custom:hue-lite-light-card  one block of the Lights dashboard (a light, room or
+//                               label group) for any dashboard, in the card picker
 //
 // Each room's and light's scenes, and the dimmers' settings, are kept by
 // Hue-Lite and shared by every dashboard (websocket `hue_lite/subscribe`);
@@ -1681,8 +1683,143 @@
     }
   }
 
+  // ---- Light card, for any dashboard ---------------------------------------
+
+  // Hue-Lite's setup, asked for once per page (again if that failed).
+  let setupAsked = null;
+  function loadSetup(hass) {
+    setupAsked = setupAsked || hass.callWS({ type: `${DOMAIN}/config` }).catch((err) => {
+      setupAsked = null;
+      throw err;
+    });
+    return setupAsked;
+  }
+
+  // The Lights dashboard's block for a light, a room (all its lights) or a
+  // label group, with the same id, so it has the same scenes; null if there
+  // are no such lights.
+  function cardBlock(hass, setup, { entity, area, label }) {
+    const lights = allLights(hass, setup.roles.exclude);
+    const ids = (entries) => entries.map((x) => x.entity_id).sort(byName(hass));
+    if (entity) {
+      const entry = hass.entities?.[entity];
+      if (!entry || !hass.states[entity]) return null;
+      const areaId = areaOf(hass, entry);
+      const alone = lights.filter((x) => areaOf(hass, x) === areaId).length <= 1;
+      const id = `${areaId || "no-area"}${alone ? "" : `|${entity}`}`;
+      const icon = hass.areas?.[areaId]?.icon || (areaId ? "mdi:texture-box" : "mdi:lightbulb-question-outline");
+      return room(setup, id, undefined, icon, [entity], { entity_id: [entity] });
+    }
+    if (area) {
+      const inArea = ids(lights.filter((x) => areaOf(hass, x) === area));
+      const a = hass.areas?.[area];
+      return inArea.length ? room(setup, area, a?.name || area, a?.icon || "mdi:texture-box", inArea, { area_id: area }) : null;
+    }
+    const tagged = ids(lights.filter((x) => labelsOf(hass, x).has(label)));
+    const l = setup.labels.find((x) => x.label_id === label);
+    return tagged.length ? room(setup, `label:${label}`, l?.name || label, l?.icon || "mdi:label-outline", tagged, { label_id: label }) : null;
+  }
+
+  // One block of the Lights dashboard on any dashboard: a light, a room or a
+  // label group, with its bar (switch, dim, Auto) over its scenes, which are
+  // the Lights dashboard's for the same one.
+  //   {entity: light.x} or {area: living_room} or {label: lamps}
+  class HueLiteLightCard extends HTMLElement {
+    setConfig(config) {
+      if (!config.entity && !config.area && !config.label) throw new Error("Choose a light, a room or a label");
+      this._config = config;
+      this._inner = null;
+      this._token = null;
+      this._build();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      if (this._inner) this._inner.hass = hass;
+      else if (!this._token) this._build();
+    }
+
+    getCardSize() {
+      return 6;
+    }
+
+    getGridOptions() {
+      return { columns: "full", rows: "auto" };
+    }
+
+    async _build() {
+      if (!this._hass || !this._config) return;
+      const token = (this._token = {});
+      const setup = await loadSetup(this._hass).catch(() => null);
+      if (token !== this._token) return;
+      const block = setup && cardBlock(this._hass, setup, this._config);
+      if (!block) {
+        const note = document.createElement("ha-card");
+        note.style.padding = "16px";
+        note.textContent = setup ? "No Hue-Lite lights there." : "Hue-Lite isn't set up.";
+        this.replaceChildren(note);
+        return;
+      }
+      this._inner = document.createElement("hue-lite-rooms");
+      this._inner.setConfig({ type: "custom:hue-lite-rooms", rooms: [block], toolbar: false, layout_key: "hue_lite_cards" });
+      this._inner.hass = this._hass;
+      this.replaceChildren(this._inner);
+    }
+
+    // A room with lights, or else a light, for the card picker's preview.
+    static getStubConfig(hass) {
+      const lights = Object.values(hass.entities || {}).filter((e) => e.entity_id.startsWith("light.") && hass.states[e.entity_id]);
+      const area = sortedAreas(hass).find((a) => lights.some((e) => areaOf(hass, e) === a.area_id));
+      return area ? { area: area.area_id } : { entity: lights[0]?.entity_id || "" };
+    }
+
+    static getConfigElement() {
+      return document.createElement("hue-lite-light-card-editor");
+    }
+  }
+
+  // The card's editor: a light, or a room, or a label (whichever was picked last).
+  const CARD_TARGETS = ["entity", "area", "label"];
+
+  class HueLiteLightCardEditor extends HTMLElement {
+    setConfig(config) {
+      this._config = config;
+      this._render();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      this._render();
+    }
+
+    _render() {
+      if (!this._hass || !this._config) return;
+      if (!this._form) {
+        this._form = document.createElement("ha-form");
+        const labels = { entity: "A light", area: "Or a room (all its lights)", label: "Or a label group" };
+        this._form.computeLabel = (field) => labels[field.name];
+        this._form.schema = [
+          { name: "entity", selector: { entity: { filter: { domain: "light" } } } },
+          { name: "area", selector: { area: {} } },
+          { name: "label", selector: { label: {} } },
+        ];
+        this._form.addEventListener("value-changed", (ev) => {
+          const value = ev.detail.value;
+          const key = CARD_TARGETS.find((k) => value[k] && value[k] !== this._config[k]) || CARD_TARGETS.find((k) => value[k]);
+          const config = { type: this._config.type, ...(key ? { [key]: value[key] } : {}) };
+          this.dispatchEvent(new CustomEvent("config-changed", { detail: { config }, bubbles: true, composed: true }));
+        });
+        this.appendChild(this._form);
+      }
+      this._form.hass = this._hass;
+      this._form.data = this._config;
+    }
+  }
+
   for (const [tag, cls] of [
     ["ll-strategy-dashboard-hue-lite", HueLiteStrategy],
+    ["hue-lite-light-card", HueLiteLightCard],
+    ["hue-lite-light-card-editor", HueLiteLightCardEditor],
     ["hue-lite-light-bar", HueLiteLightBar],
     ["hue-lite-scene-tile", HueLiteSceneTile],
     ["hue-lite-rooms", HueLiteRooms],
@@ -1693,9 +1830,10 @@
   }
   window.customCards = window.customCards || [];
   window.customCards.push({
-    type: "hue-lite-light-bar",
-    name: "Hue-Lite light bar",
-    description: "Tap to toggle, slide to dim, Auto, hold for the light dialog; one light or several.",
+    type: "hue-lite-light-card",
+    name: "Hue-Lite light",
+    description: "A light, room or label group as on the Lights dashboard: switch, dim, Auto and its scenes.",
+    preview: true,
   });
 
   // ---- Adding the dashboard ------------------------------------------------

@@ -64,6 +64,13 @@ keeps these, so every phone and browser shows the same. **Reorder** drags the ro
 moment first; the arrow keys work too); the rooms' order, and which are
 folded, are each person's own.
 
+**On your other dashboards**, add the **Hue-Lite light** card (Add card →
+search "Hue-Lite"): pick a light, a room or a label group, and it shows that
+block as on the Lights dashboard, with the same scenes. Hue-Lite's settings
+are configuration entities, so Home Assistant's own Overview shows just
+what Natural light and the evening routine are doing; the settings are on
+the Hue-Lite device page and the Lights dashboard.
+
 With Hue dimmers, a **Dimmers** card sets each one up: the lights it
 controls (its area, or lights you pick) and the scenes its On button steps
 through, dragged and hidden like a room's. Only admins can change them.

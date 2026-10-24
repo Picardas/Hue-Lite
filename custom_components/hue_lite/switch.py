@@ -5,12 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONFIG_SWITCHES, DOMAIN, SWITCHES
+from .const import DOMAIN, SWITCHES
 from .engine import HueLiteConfigEntry
 from .entity import SettingEntity
 
@@ -27,11 +26,6 @@ async def async_setup_entry(
 
 
 class SettingSwitch(SettingEntity, SwitchEntity):
-    def __init__(self, hue_lite, key: str) -> None:
-        super().__init__(hue_lite, key)
-        if key in CONFIG_SWITCHES:
-            self._attr_entity_category = EntityCategory.CONFIG
-
     @property
     def is_on(self) -> bool:
         return self.hue_lite.settings[self.key]

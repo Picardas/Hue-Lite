@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity import Entity
 
 from .engine import HueLite
@@ -26,7 +27,12 @@ class HueLiteEntity(Entity):
 
 
 class SettingEntity(HueLiteEntity):
-    """A setting: its value lives in the engine, and only this entity changes it."""
+    """A setting: its value lives in the engine, and only this entity changes
+    it. Settings are configuration, so Home Assistant keeps them off its
+    generated dashboards (which show the routines' sensors instead) and
+    lists them under the device's Configuration."""
+
+    _attr_entity_category = EntityCategory.CONFIG
 
     def _set(self, value: Any) -> None:
         self.hue_lite.async_set_setting(self.key, value)

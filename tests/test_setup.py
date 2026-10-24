@@ -46,7 +46,12 @@ async def test_entities(hass: HomeAssistant, hue_lite: HueLite) -> None:
     assert hass.states.get("switch.hue_lite_lights_off_when_everyone_leaves").state == "off"
     assert hass.states.get("time.hue_lite_bedtime_sun_thu_nights").state == "23:00:00"
     assert hass.states.get("number.hue_lite_bedtime_fade_out").state == "15"
-    assert er.async_get(hass).async_get("number.hue_lite_bedtime_fade_out").entity_category == "config"
+    # Settings are configuration, so Home Assistant's own dashboards show the
+    # routines' sensors rather than every setting.
+    registry = er.async_get(hass)
+    for setting in ("number.hue_lite_bedtime_fade_out", "switch.hue_lite_coming_home", "time.hue_lite_wake_up_mon_fri"):
+        assert registry.async_get(setting).entity_category == "config"
+    assert registry.async_get("sensor.hue_lite_natural_light").entity_category is None
     assert hass.states.get("sensor.hue_lite_natural_light").state == "day"
 
 
