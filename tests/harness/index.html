@@ -87,7 +87,7 @@
       light("light.living_room", "Living Room", "on", relax),
       light("light.floor_lamp", "Floor lamp", "on", coolBright),
       light("light.kitchen", "Kitchen", "on", relax),
-      light("light.bedroom", "Bedroom", "off"),
+      light("light.bedroom", "Bedroom", "off", { supported_color_modes: ["color_temp"] }), // white only
       light("light.office", "Office", "on", { brightness: 51, color_mode: "xy", xy_color: [0.2712, 0.1723], rgb_color: [179, 127, 255] }),
       light("light.lamp", "Reading lamp", "on", coolBright),
       light("light.garden", "Garden", "on"),

@@ -133,6 +133,13 @@ Icons and sliders take the colour the bulbs report. Each scene tile shows the
 colour it gives, and it's filled and ticked while the lights are in that
 scene.
 
+**Two rows of scenes:** each block shows at most two rows. Past that, the
+last place is a grey **More** tile that opens the rest (and closes them
+again). Which scenes are behind it is just their order: under Edit scenes,
+drag one in front of More or behind it. The colour scenes don't show on a
+block whose bulbs are all white (they'd all look the same there); add a
+colour bulb and they're back where you had them.
+
 **Edit scenes:**
 - Drag a block's scene tiles into another order.
 - Hide scenes with their eye.

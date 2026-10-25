@@ -56,6 +56,20 @@
     { id: "moonlight", name: "Moonlight", icon: "mdi:moon-waning-crescent" },
   ];
   const BUILT_IN = [...PRESETS, ...COLOUR_SCENES];
+  const COLOUR_SCENE_IDS = new Set(COLOUR_SCENES.map((s) => s.id));
+  // Scene tiles to a row.
+  const PER_ROW = 4;
+  // The colour modes a bulb that can show colour has (others are white only).
+  const COLOUR_MODES = ["hs", "xy", "rgb", "rgbw", "rgbww"];
+
+  // Whether any of these lights can show colour; one that hasn't said (it's
+  // unavailable, say) counts as if it can, as when Hue-Lite sends it a scene.
+  function mayShowColour(hass, lights) {
+    return lights.some((id) => {
+      const modes = hass?.states[id]?.attributes.supported_color_modes;
+      return !Array.isArray(modes) || modes.some((m) => COLOUR_MODES.includes(m));
+    });
+  }
   // Your own scenes (kept by Hue-Lite, in the shared settings) have ids like this.
   const isCustom = (id) => id.startsWith("custom_");
 
@@ -1220,6 +1234,17 @@
            border: 2px dashed var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12));
            border-radius: var(--ha-card-border-radius, 12px); --mdc-icon-size: 24px; }
     .scenes.editing > .add { display: inline-flex; }
+    .scenes > .cell.gone, .expander[hidden] { display: none; }
+    .scenes:not(.editing):not(.expanded) > .cell.beyond { display: none; }
+    .expander { grid-column: span 3; height: 88px; box-sizing: border-box; flex-direction: column; justify-content: center; gap: 0;
+                border-radius: var(--ha-card-border-radius, 12px); --mdc-icon-size: 22px; color: var(--secondary-text-color);
+                background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
+    .expander:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.1); }
+    .expander .what { font-weight: 500; color: var(--primary-text-color); }
+    .expander small { font-size: 11px; line-height: 14px; }
+    .scenes.expanded > .expander { background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.14); color: var(--primary-color); }
+    .scenes.expanded > .expander .what { color: var(--primary-color); }
+    .scenes.editing > .expander { cursor: default; border: 2px dashed var(--divider-color, rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.12)); }
     .edit-row { grid-column: span 12; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
     .edit-row .hint { flex: 1; padding-left: 4px; }
     .scenes:not(.editing) > .edit-row :is(.hint, .reset), .edit-row[hidden] { display: none; }`;
@@ -1237,21 +1262,37 @@
   // `editor(config)`, if given, opens the scene editor while editing: from a
   // tile's pencil (its config: one of your own to change, or a built-in one
   // to copy), or from the + tile at the end (null: a new one).
+  // With `more`, it shows two rows at most: past that, the last place is a
+  // More tile that opens (and closes) the rest. Which scenes are behind it
+  // is just their order, so they're moved in front of it or behind it by
+  // dragging; More itself stays put. Built-in colour scenes aren't drawn
+  // while `noColour` (none of its lights can show colour).
   class SceneSet {
-    constructor(holder, configs, { save, edit, editor, hint, resetTitle, usual }) {
+    constructor(holder, configs, { save, edit, editor, hint, resetTitle, usual, more }) {
       this.holder = holder;
       this.save = save;
       this.editor = editor;
       this.editing = false;
+      this.more = Boolean(more);
+      this.expanded = false;
+      this.noColour = false;
       this.grid = document.createElement("div");
       this.grid.className = "scenes";
       const { preset, light, ...base } = configs.find((c) => c.preset) || {};
       this.base = base;
+      // The lights its scenes are for.
+      this.lights = base.entities || [];
       this.custom = null;
       this.tiles = [];
-      this.grid.innerHTML = editor
-        ? `<button class="add" title="Make a scene of your own"><ha-icon icon="mdi:plus"></ha-icon><span>New scene</span></button>` : "";
+      this.grid.innerHTML = `${editor
+        ? `<button class="add" title="Make a scene of your own"><ha-icon icon="mdi:plus"></ha-icon><span>New scene</span></button>` : ""}
+        <button class="expander" hidden><ha-icon></ha-icon><span class="what"></span><small></small></button>`;
       if (editor) onActivate(this.grid.querySelector(".add"), () => editor(null));
+      onActivate(this.grid.querySelector(".expander"), () => {
+        if (this.editing) return;
+        this.expanded = !this.expanded;
+        this.arrange(this.scenes, this.editing);
+      });
       this.grid.insertAdjacentHTML("beforeend", `
         <div class="edit-row">
           <span class="hint"></span>
@@ -1259,7 +1300,7 @@
           ${edit ? `<button class="edit" title="Put the scenes in another order or hide some"><ha-icon></ha-icon><span></span></button>` : ""}
         </div>`);
       this.grid.querySelector(".hint").textContent = hint
-        || "Drag the scenes into the order you want; the eye shows or hides one, the pencil changes or copies one.";
+        || "Drag the scenes into the order you want (those after More are behind it); the eye shows or hides one, the pencil changes or copies one.";
       const reset = this.grid.querySelector(".reset");
       reset.title = resetTitle || "Back to the usual order, with every built-in scene shown; your own stay as they are";
       onActivate(reset, () => {
@@ -1357,6 +1398,7 @@
         const pen = cell.querySelector(".pen");
         if (pen) pen.title = isCustom(id) ? `Change ${card.scene.name}` : `Make a scene from ${card.scene.name}`;
       }
+      this._placeMore(scenes, cells);
       this.grid.classList.toggle("editing", editing);
       const edit = this.grid.querySelector(".edit");
       // With nothing in it (a set that can't be edited, not being edited), no row.
@@ -1367,6 +1409,42 @@
         edit.querySelector("ha-icon").setAttribute("icon", editing ? "mdi:check" : "mdi:pencil-outline");
       }
       this.sorter.sync();
+    }
+
+    // Whether any of its lights can show colour (one that hasn't said counts
+    // as if it can); when none can, the built-in colour scenes go.
+    colour(can) {
+      if (this.noColour === !can) return;
+      this.noColour = !can;
+      this.arrange(this.scenes, this.editing);
+    }
+
+    // Leaves out colour scenes no light can show, and puts More after the
+    // seventh scene shown when there are more than two rows of them: the
+    // scenes after it are behind it until it's opened (while editing,
+    // they're all shown, More marking where the second row ends).
+    _placeMore(scenes, cells) {
+      const gone = (id) => this.noColour && COLOUR_SCENE_IDS.has(id);
+      const shown = scenes.order.filter((id) => !scenes.hidden.includes(id) && !gone(id));
+      const cut = this.more && shown.length > 2 * PER_ROW ? shown[2 * PER_ROW - 2] : null;
+      const last = cut ? scenes.order.indexOf(cut) : Infinity;
+      scenes.order.forEach((id, i) => {
+        cells.get(id).classList.toggle("gone", gone(id));
+        cells.get(id).classList.toggle("beyond", i > last);
+      });
+      const more = this.grid.querySelector(".expander");
+      more.hidden = !cut;
+      this.grid.classList.toggle("expanded", Boolean(cut) && this.expanded && !this.editing);
+      if (!cut) return;
+      if (cells.get(cut).nextElementSibling !== more) cells.get(cut).after(more);
+      const open = this.expanded && !this.editing;
+      more.disabled = this.editing;
+      more.setAttribute("aria-expanded", String(open));
+      more.querySelector("ha-icon").setAttribute("icon", open ? "mdi:chevron-up" : "mdi:chevron-down");
+      more.querySelector(".what").textContent = open ? "Less" : "More";
+      more.querySelector("small").textContent = this.editing ? "the rest go here" : open ? "" : `${shown.length - (2 * PER_ROW - 1)} more`;
+      more.title = this.editing ? "Scenes after More are behind it: drag one in front to show it straight away"
+        : open ? "Show just the first two rows" : "Show the rest of the scenes";
     }
   }
 
@@ -1480,10 +1558,21 @@
           this._arrange();
         },
         editor: (config) => openSceneEditor(this._hass, config, show, configs[0]?.entities),
+        more: true,
       });
       set.key = key;
       container.appendChild(set.grid);
       this._sets.set(key, set);
+    }
+
+    // Every light in its blocks: a bulb that comes back, or reports what
+    // it can do, can change whether a block's colour scenes show.
+    _watching() {
+      return [...new Set(this._config.rooms.flatMap((r) => r.scenes?.[0]?.entities || []))];
+    }
+
+    _update() {
+      for (const set of this._sets.values()) set.colour(mayShowColour(this._hass, set.lights));
     }
 
     // Everyone's scenes changed. The first time, scenes this user arranged
@@ -1805,6 +1894,11 @@
         const set = this._sets.get(id);
         if (!set) continue;
         set.sync(shared.data?.custom);
+        // The lights it controls: the ones chosen, or its area's.
+        const area = this._config.dimmers.find((d) => d.id === id)?.area_id;
+        const controls = chosen.length ? chosen
+          : this._config.lights.filter((l) => area && this._hass?.entities?.[l] && areaOf(this._hass, this._hass.entities[l]) === area);
+        set.noColour = !mayShowColour(this._hass, controls);
         set.arrange(sceneOrder(set.ids, settings.scenes, shared.data?.dimmer_default, () => true), this._admin);
         // They only show the scenes: a tap here mustn't set any lights.
         for (const { card } of set.tiles) card.inert = true;
