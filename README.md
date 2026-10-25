@@ -241,7 +241,8 @@ on the Hue-Lite device page instead.
 - **Hue dimmers** control their area, or the lights chosen on the Dimmers
   card.
   - **On** steps through their scenes: by default Natural light and the
-    presets.
+    presets. Quick presses step on even before the bulbs report back; after
+    Off, it starts again.
   - **Off** turns the lights off.
   - **Up** and **Down** dim, keeping the lights in their scene.
 

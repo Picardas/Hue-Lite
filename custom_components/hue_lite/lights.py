@@ -47,8 +47,10 @@ class Sender:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        # Contexts of Hue-Lite's own light changes.
-        self._ours: deque[str] = deque(maxlen=100)
+        # Contexts of Hue-Lite's own light changes: enough that a bulb's slow
+        # report isn't forgotten (and taken for someone else's change) while a
+        # big home is sent a burst of commands.
+        self._ours: deque[str] = deque(maxlen=1000)
         # Lights a command is on its way to, and the latest command waiting for each.
         self._sending: set[str] = set()
         self._waiting: dict[str, Command] = {}
@@ -68,10 +70,10 @@ class Sender:
         colour temperature on the rest."""
         colour = [entity_id for entity_id in lights if self.has_colour(entity_id)]
         white = [entity_id for entity_id in lights if entity_id not in colour]
-        if colour:
-            await self.call("turn_on", colour, parent=parent, **light.colour_data(), transition=transition)
-        if white:
-            await self.call("turn_on", white, parent=parent, **light.white_data(), transition=transition)
+        await asyncio.gather(
+            *([self.call("turn_on", colour, parent=parent, **light.colour_data(), transition=transition)] if colour else []),
+            *([self.call("turn_on", white, parent=parent, **light.white_data(), transition=transition)] if white else []),
+        )
 
     async def call(self, service: str, lights: list[str], *, parent: Context | None = None, **data: Any) -> None:
         """Call a light action (`turn_on` or `turn_off`) for lights."""

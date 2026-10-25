@@ -22,8 +22,8 @@ off Auto; turning it on or off doesn't.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine, Mapping
-from datetime import date, datetime, time
+from collections.abc import Coroutine, Iterable, Mapping
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -90,6 +90,10 @@ from .timeline import (
 )
 
 type HueLiteConfigEntry = ConfigEntry[HueLite]
+
+# A dimmer press this soon after the last steps on from it, though its lights
+# haven't said they're on yet.
+QUICK_PRESS = timedelta(seconds=4)
 
 # Every scene a light can be in.
 SCENES = TILE_SCENES | {ROUTINE, WAKE_UP}
@@ -239,6 +243,8 @@ class HueLite(SharedSettings):
         self._stale: set[str] = set()
         # Lights that have just come back on, to be sent their scenes' lights.
         self._picking_up: set[str] = set()
+        # The scene the next scene was last for these lights, and when.
+        self._stepped: dict[tuple[str, ...], tuple[str, datetime]] = {}
 
     # ---- Lifecycle -----------------------------------------------------------
 
@@ -523,21 +529,38 @@ class HueLite(SharedSettings):
     ) -> None:
         """Like pressing a Hue dimmer's On button again: the next scene in
         `cycle` (by default Natural light, then the presets), and round.
-        Lights that are off, or in something not in it, go to its first."""
+        Lights that are off, or in something not in it, go to its first. A
+        press soon after the last, before the bulbs have said they're on,
+        steps on from the scene that one picked rather than starting again."""
         if not lights:
             return
-        scene = next_scene(self.current_scene(lights), cycle or SCENE_CYCLE)
+        current = self.current_scene(lights)
+        key, now = tuple(sorted(lights)), dt_util.utcnow()
+        last = self._stepped.get(key)
+        if (
+            last
+            and not self.on(lights)
+            and now - last[1] < QUICK_PRESS
+            and all(self.scenes.get(light) == last[0] for light in lights)
+        ):
+            current = last[0]
+        scene = next_scene(current, cycle or SCENE_CYCLE)
+        self._stepped = {k: v for k, v in self._stepped.items() if now - v[1] < QUICK_PRESS}
+        self._stepped[key] = (scene, now)
         if scene == NATURAL:
             await self.async_natural_light(lights, parent=parent)
         else:
             await self.async_preset(lights, scene, parent)
 
+    def forget_steps(self, lights: list[str]) -> None:
+        """The next On press for these lights starts the cycle again (after Off)."""
+        self._stepped.pop(tuple(sorted(lights)), None)
+
     async def apply(self, scene: str, lights: list[str], transition: float, parent: Context | None = None) -> None:
         """Send Natural light's or the routine's current light to the lights,
         turning them on. Nightlight-labelled lights get Nightlight during
         Natural light's night and the routine's nightlight phase."""
-        for wanted, group in self._wanted(lights, scene).items():
-            await self._send(group, wanted, transition, parent)
+        await self._send_each(self._wanted(lights, scene).items(), transition, parent)
 
     def _nightlights(self, scene: str) -> set[str]:
         """The lights Natural light or the routine gives Nightlight now: the
@@ -624,8 +647,17 @@ class HueLite(SharedSettings):
         by_level: dict[float, list[str]] = {}
         for entity_id in lights:
             by_level.setdefault(self.dimmed.get(entity_id, 1), []).append(entity_id)
-        for level, group in by_level.items():
-            await self.sender.send(group, light.scaled(level), transition, parent)
+        await asyncio.gather(
+            *(self.sender.send(group, light.scaled(level), transition, parent) for level, group in by_level.items())
+        )
+
+    async def _send_each(
+        self, groups: Iterable[tuple[Light, list[str]]], transition: float, parent: Context | None = None
+    ) -> None:
+        """Send each group of lights its light, all at once, so a slow bulb in
+        one doesn't hold up the rest (or let an earlier command land after a
+        later one)."""
+        await asyncio.gather(*(self._send(group, light, transition, parent) for light, group in groups if group))
 
     # ---- Colour scenes -------------------------------------------------------
 
@@ -654,9 +686,9 @@ class HueLite(SharedSettings):
         for light in lights:
             if light in order:
                 by_colour.setdefault((order.index(light) + step) % len(palette.colours), []).append(light)
-        for index, group in sorted(by_colour.items()):
-            await self._send(group, palette.colour(index), transition, parent)
-        await self._send([light for light in lights if light not in order], palette.white, transition, parent)
+        groups = [(palette.colour(index), group) for index, group in sorted(by_colour.items())]
+        groups.append((palette.white, [light for light in lights if light not in order]))
+        await self._send_each(groups, transition, parent)
 
     def _palette_order(self, scene: str, joining: list[str] | None = None) -> list[str]:
         """The colour bulbs in a colour scene (with those joining it), in the
@@ -671,13 +703,21 @@ class HueLite(SharedSettings):
     def _drift(self) -> None:
         """Every `drift_minutes` of each colour scene, start its bulbs that
         are on moving to their next colour, taking until the next move."""
+        due = {}
         for scene, palette in self.palettes.items():
             step = self._drift_step(palette)
-            if not palette.drifts or self._drifted.get(scene) == step:
-                continue
-            self._drifted[scene] = step
-            if lights := [light for light in self.on(self.in_scene(scene)) if self.sender.has_colour(light)]:
-                self.spawn(self.send_palette(scene, lights, palette.drift_minutes * 60))
+            if palette.drifts and self._drifted.get(scene) != step:
+                self._drifted[scene] = step
+                due[scene] = palette
+        if not due:
+            return
+        # The colour bulbs that are on, by scene, in one look at the lights.
+        lights: dict[str, list[str]] = {}
+        for light in self.on(sorted(light for light, scene in self.scenes.items() if scene in due)):
+            if self.sender.has_colour(light):
+                lights.setdefault(self.scenes[light], []).append(light)
+        for scene, on in lights.items():
+            self.spawn(self.send_palette(scene, on, due[scene].drift_minutes * 60))
 
     # ---- Changes to the lights -----------------------------------------------
 
@@ -740,8 +780,7 @@ class HueLite(SharedSettings):
         for each light wanted rather than each bulb."""
         await asyncio.sleep(0)  # others coming back at the same moment join in
         lights, self._picking_up = sorted(self._picking_up), set()
-        for wanted, group in self._wanted(lights).items():
-            await self._send(group, wanted, 2)
+        await self._send_each(self._wanted(lights).items(), 2)
 
     def _own_brightness(self, new: State) -> bool:
         """Whether a light was switched on at a brightness other than the one

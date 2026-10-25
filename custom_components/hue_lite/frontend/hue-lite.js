@@ -1143,15 +1143,18 @@
   // tells every dashboard, this one included). If Hue-Lite turns it down
   // (only admins set dimmers, say), it's put back and a message says why.
   function changeShared(hass, { type, ...message }, apply) {
-    const before = shared.data && structuredClone(shared.data);
+    // The settings this changes (replaced whenever Hue-Lite sends them), and a copy from before.
+    const before = shared.data && { current: shared.data, data: structuredClone(shared.data) };
     const changed = () => { for (const c of shared.cards) c._sharedChanged(); };
     if (shared.data) {
       apply(shared.data);
       changed();
     }
     hass.callWS({ type: `${DOMAIN}/${type}`, ...message }).catch((err) => {
-      if (before) {
-        shared.data = before;
+      // Put back as it was, unless Hue-Lite has sent the settings since
+      // (which never had this change in them, and may have others').
+      if (before && shared.data === before.current) {
+        shared.data = before.data;
         changed();
       }
       toast(`Couldn't save that: ${err?.message || err?.code || err}`);
@@ -1899,6 +1902,7 @@
                    display: inline-flex; align-items: center; gap: 4px; padding: 8px 12px; border-radius: 18px; --mdc-icon-size: 20px; }
           button:hover { background: rgba(var(--rgb-primary-text-color, 33, 33, 33), 0.06); }
           button[hidden], .drift[hidden], .try[hidden] { display: none; }
+          button:disabled { opacity: 0.5; cursor: default; }
           .try { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 14px; cursor: pointer; }
           .try input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary-color); }
           .try span { font-size: 12px; color: var(--secondary-text-color); }
@@ -2062,8 +2066,8 @@
     // if they have changed.
     _try() {
       clearTimeout(this._trial);
-      if (!this._trying) {
-        this._tried = null;
+      if (!this._trying || this._sending) {
+        if (!this._trying) this._tried = null;
         return;
       }
       this._trial = setTimeout(() => {
@@ -2089,11 +2093,17 @@
     }
 
     // Sends it to Hue-Lite; closes once it's done, or says why not. Saved
-    // after trying it on the lights, they're put in the scene.
+    // after trying it on the lights, they're put in the scene. One at a time
+    // (a second tap on Save mustn't make a second scene), with no more
+    // tries on the lights meanwhile.
     async _send(message) {
+      if (this._sending) return;
+      this._sending = true;
+      clearTimeout(this._trial);
+      const buttons = this.shadowRoot.querySelectorAll(".save, .delete");
+      for (const b of buttons) b.disabled = true;
       try {
         const result = await this._hass.callWS(message);
-        clearTimeout(this._trial);
         const id = result?.id || this._id;
         if (this._trying && message.type === `${DOMAIN}/save_scene` && id) {
           this._hass.callService(DOMAIN, "apply_preset", { preset: id }, { entity_id: this._lights });
@@ -2102,6 +2112,9 @@
       } catch (err) {
         this.shadowRoot.querySelector(".error").textContent = err?.code === "too_many"
           ? "There are too many scenes of your own: delete one first." : `Couldn't do that: ${err?.message || err}`;
+      } finally {
+        this._sending = false;
+        for (const b of buttons) b.disabled = false;
       }
     }
   }

@@ -514,6 +514,23 @@ async def test_away(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: H
     assert home.turn_on == home.turn_off == []
 
 
+async def test_quick_dimmer_presses(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, hue_lite: HueLite) -> None:
+    """Pressed again before the bulbs say they're on, On steps on rather than
+    starting again; after Off, or a while later, it starts again."""
+    dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
+
+    async def press(command: str) -> str:
+        hass.bus.async_fire("zha_event", {"device_id": dimmer.id, "command": command})
+        await settle(hass)
+        return hue_lite.scenes.get("light.living_room", "")
+
+    assert [await press("on_short_release"), await press("on_short_release")] == ["natural", "energize"]
+    await press("off_short_release")
+    assert await press("on_short_release") == "natural"
+    freezer.tick(timedelta(seconds=5))
+    assert await press("on_short_release") == "natural"
+
+
 async def test_hue_dimmer(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
     dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
     remote = add_device(hass, "remote", model="TRADFRI", area="living_room")
