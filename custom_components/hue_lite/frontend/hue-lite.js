@@ -654,13 +654,23 @@
       }
 
       // A single light's slider dims it (turning it on), keeping it in its
-      // scene at that level; it handles its own input.
+      // scene at that level; it handles its own input. Its percentage follows
+      // the slider as it moves, and stays there once it's let go until the
+      // bulb reports its new brightness (or PENDING_MS passes).
       if (slider) {
         slider.addEventListener("pointerdown", (ev) => ev.stopPropagation());
         slider.addEventListener("click", (ev) => ev.stopPropagation());
-        slider.addEventListener("input", () => slider.style.setProperty("--pct", `${slider.value}%`));
+        slider.addEventListener("input", () => {
+          this._dragging = Number(slider.value);
+          this._update();
+        });
         slider.addEventListener("change", () => {
-          this._hass.callService(DOMAIN, "set_brightness", { brightness_pct: Number(slider.value) }, { entity_id: this._config.entities });
+          const pct = Number(slider.value);
+          this._hass.callService(DOMAIN, "set_brightness", { brightness_pct: pct }, { entity_id: this._config.entities });
+          clearTimeout(this._dragged?.timer);
+          this._dragged = { pct, seen: this._states()[0], timer: setTimeout(() => { this._dragged = null; this._update(); }, PENDING_MS) };
+          this._dragging = null;
+          this._update();
         });
       }
     }
@@ -673,6 +683,8 @@
       if (this._unavailable(states)) return;
       const on = !(this._pending?.on ?? states.some((s) => s.state === "on"));
       this._settle();
+      clearTimeout(this._dragged?.timer);
+      this._dragged = null;
       const seen = new Map(states.map((s) => [s.entity_id, s]));
       this._pending = { on, seen, timer: setTimeout(() => { this._settle(); this._update(); }, PENDING_MS) };
       this._call(on ? "turn_on" : "turn_off", {});
@@ -704,6 +716,13 @@
       const reported = this._pending && states.some((s) => s !== this._pending.seen.get(s.entity_id));
       if (reported && this._pending.on === on.length > 0) this._settle();
       const pending = this._pending;
+      // The slider's level while it's moved, or since it was let go until
+      // the bulb reports.
+      if (this._dragged && single !== this._dragged.seen) {
+        clearTimeout(this._dragged.timer);
+        this._dragged = null;
+      }
+      const dragged = pending ? null : this._dragging ?? this._dragged?.pct;
 
       card.classList.toggle("on", pending ? pending.on : on.length > 0);
       card.classList.toggle("unavailable", unavailable);
@@ -714,14 +733,16 @@
       name.textContent = this._config.name || single?.attributes.friendly_name || "Lights";
       state.textContent = unavailable ? "Unavailable"
         : pending ? (pending.on ? "Turning on…" : "Turning off…")
-        : this._single ? (on.length ? `${pct}%` : "Off")
+        : this._single ? (dragged != null ? `${dragged}%` : on.length ? `${pct}%` : "Off")
         : on.length ? `${on.length} of ${states.length} on` : `All ${states.length} off`;
 
       if (slider) {
         slider.disabled = unavailable;
         slider.setAttribute("aria-label", `Brightness of ${name.textContent}`);
-        if (this._root.activeElement !== slider) {
-          const shown = pending?.on === false ? 0 : on.length ? pct : 0;
+        if (this._dragging != null) {
+          slider.style.setProperty("--pct", `${this._dragging}%`);
+        } else if (this._root.activeElement !== slider || dragged != null) {
+          const shown = dragged ?? (pending?.on === false ? 0 : on.length ? pct : 0);
           slider.value = shown || 1;
           slider.style.setProperty("--pct", `${shown}%`);
         }
