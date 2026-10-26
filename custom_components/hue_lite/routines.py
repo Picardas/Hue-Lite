@@ -41,6 +41,8 @@ class Routines:
         # still turn them off), and when it next switches one.
         self.mimicked: set[str] = set()
         self._next_mimic: datetime | None = None
+        # How many sunrises are still being sent.
+        self._waking = 0
 
     @callback
     def async_start(self) -> list[CALLBACK_TYPE]:
@@ -138,16 +140,24 @@ class Routines:
     def asking(self) -> str:
         """What the routines ask of a light on Auto right now: the evening
         routine (ROUTINE) on tonight's evening if someone's home, wake up
-        (WAKE_UP) from its fade-in until its lights would go off after it, or
-        nothing ('', so off)."""
+        (WAKE_UP) from its fade-in until it ends (even once it's let go of its
+        own lights), or nothing ('', so off)."""
         lite = self.lite
         if self.evening_on and lite.evening.phase in EVENING_PHASES and _people(lite.hass.states.get(lite.presence)):
             return ROUTINE
-        if (woke := lite.last_wake_up) and lite.in_scene(WAKE_UP):
-            s = lite.settings
-            if dt_util.utcnow() < woke + timedelta(minutes=s["wake_up_fade_minutes"] + s["wake_up_off_after_minutes"]):
-                return WAKE_UP
+        if (end := self.wake_up_end) and dt_util.utcnow() < end:
+            return WAKE_UP
         return ""
+
+    @property
+    def wake_up_end(self) -> datetime | None:
+        """When the last wake-up ends: at its wake-up time, or if its lights
+        turn off after it, then."""
+        if (woke := self.lite.last_wake_up) is None:
+            return None
+        s = self.lite.settings
+        off_after = s["wake_up_off_after_minutes"] if s["wake_up_auto_off"] else 0
+        return woke + timedelta(minutes=s["wake_up_fade_minutes"] + off_after)
 
     async def match(self, scene: str, lights: list[str]) -> None:
         """Set lights just put on Auto as the routines ask (see `asking`): the
@@ -214,6 +224,7 @@ class Routines:
             if since < wake + off_after <= now and s["wake_up_auto_off"]:
                 self._wake_up_over()
             day += timedelta(days=1)
+        self._let_go_after_wake_up(now)
         self._mimic(now)
 
     @staticmethod
@@ -241,15 +252,29 @@ class Routines:
         # When it was due to start (later lights on Auto join it on that time).
         lite.last_wake_up = wake - timedelta(minutes=lite.settings["wake_up_fade_minutes"])
         lite.set_scene(lights, WAKE_UP)
-        await lite.sender.send(lights, PRESETS["nightlight"], 0)
-        await asyncio.sleep(2)
-        fade = max((wake - dt_util.utcnow()).total_seconds(), 60)
-        for i, (preset, share) in enumerate(SUNRISE):
-            if not (lights := [light for light in lights if lite.scenes.get(light) == WAKE_UP]):
-                return
-            await lite.sender.send(lights, PRESETS[preset], fade * share / 100)
-            if i < len(SUNRISE) - 1:
-                await asyncio.sleep(fade * share / 100)
+        self._waking += 1
+        try:
+            await lite.sender.send(lights, PRESETS["nightlight"], 0)
+            await asyncio.sleep(2)
+            fade = max((wake - dt_util.utcnow()).total_seconds(), 60)
+            for i, (preset, share) in enumerate(SUNRISE):
+                if not (lights := [light for light in lights if lite.scenes.get(light) == WAKE_UP]):
+                    return
+                await lite.sender.send(lights, PRESETS[preset], fade * share / 100)
+                if i < len(SUNRISE) - 1:
+                    await asyncio.sleep(fade * share / 100)
+        finally:
+            self._waking -= 1
+
+    @callback
+    def _let_go_after_wake_up(self, now: datetime) -> None:
+        """Once the wake-up has ended (and its sunrise has been sent, which
+        after a restart can run past the wake-up time), it lets go of its
+        lights, leaving them as they are: they're no longer on Auto unless
+        they were put on it."""
+        lite = self.lite
+        if not self._waking and (end := self.wake_up_end) and end <= now and (lights := lite.in_scene(WAKE_UP)):
+            lite.set_scene(lights, "")
 
     @callback
     def _wake_up_over(self) -> None:

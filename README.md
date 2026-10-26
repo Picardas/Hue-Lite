@@ -26,8 +26,7 @@ Lights join in by **area** and **label**, with no YAML for each light.
 > **Hue-Lite is vibe-coded.** It was built by prompting an AI coding
 > assistant (Claude Code), not written by hand. It runs a real home every
 > day and has a test suite that runs on every change. Still, it's a hobby
-> project: expect rough edges, and please
-> [report them](https://github.com/Picardas/Hue-Lite/issues).
+> project: expect rough edges.
 
 ## Features
 
@@ -224,8 +223,10 @@ on the Hue-Lite device page instead.
   scene again. So does one that was off when you changed its scene.
 - **Wake up.** The Wake up lights that are off get a sunrise. They start at
   Nightlight's dim red and fade through orange and warm white, reaching
-  Energize at your wake-up time. They can turn off again afterwards.
-  Dimming a light during its sunrise stops it there.
+  Energize at your wake-up time. Wake up then lets go of them, leaving them
+  on, or, if you choose, turns them off a while later. Until then they're
+  on Auto, and lights put on Auto join them. Dimming a light during its
+  sunrise stops it there.
 - **Coming & going:**
   - When someone gets home (optionally only after dark), the Coming home
     lights that are off come on. So do the First one home lights, if the

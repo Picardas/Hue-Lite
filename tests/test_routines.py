@@ -226,6 +226,11 @@ async def test_a_wake_up_missed_during_a_restart(
     home.turn_on.clear()
     await restart(hass, freezer, entry, "06:42")
     assert home.turn_on == []
+    assert hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"] == {"light.bedroom": "wake_up"}
+
+    # Down over its end at 07:00, it lets go of the bedroom once back.
+    await restart(hass, freezer, entry, "09:00")
+    assert (hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"], home.turn_off) == ({}, [])
 
 
 async def test_an_evening_missed_during_a_restart(
