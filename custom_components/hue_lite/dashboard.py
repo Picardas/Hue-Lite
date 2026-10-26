@@ -36,7 +36,7 @@ from .const import DOMAIN, SIGNAL_SHARED
 from .dimmers import is_dimmer
 from .engine import HueLite, async_get_loaded
 from .shared import DEFAULT_ORDER, MAX_CUSTOM, TILE_SCENES, custom_scene, scene_set
-from .lights import rgb_color
+from .lights import light_rgb, rgb_color
 from .targets import LIGHT
 from .timeline import PALETTES, PRESETS, kelvin_for, palette_from_stored
 
@@ -50,7 +50,7 @@ DATA_URL = f"{DOMAIN}_dashboard_url"
 # their tiles, and their brightness (and a colour scene's pace), for a copy made in the scene editor.
 SCENE_COLOURS = {
     **{
-        preset: {"rgb_colors": [rgb_color(light.xy_color)], "brightness": [round(light.brightness_pct)]}
+        preset: {"rgb_colors": [light_rgb(light)], "brightness": [round(light.brightness_pct)]}
         for preset, light in PRESETS.items()
     },
     **{

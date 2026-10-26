@@ -247,6 +247,24 @@ async def test_white_and_dimmable_bulbs(hass: HomeAssistant, home: Home, hue_lit
     }
 
 
+async def test_whites_go_to_colour_bulbs_as_colour_temperatures(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """Like Hue's white scenes, Energize, Cool bright, Read and Relax go to a
+    colour bulb with colour temperatures as one (its white LEDs); one without
+    gets the xy colour. Rest and Nightlight, warmer than bulbs' whites go,
+    stay xy colours."""
+    hass.states.async_set("light.living_room", "on", {"supported_color_modes": ["xy", "color_temp"]})
+    hass.states.async_set("light.bedroom", "on", {"supported_color_modes": ["xy"]})
+
+    await action(hass, "apply_preset", {"preset": "energize"})
+    sent = {c.data["entity_id"][0]: {k: v for k, v in c.data.items() if k.endswith(("kelvin", "xy_color"))} for c in home.turn_on}
+    assert sent == {"light.living_room": {"color_temp_kelvin": 6410}, "light.bedroom": {"xy_color": [0.3143, 0.3301]}}
+
+    home.turn_on.clear()
+    await action(hass, "apply_preset", {"preset": "rest"})
+    assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom", "light.living_room"]]
+    assert home.turn_on[0].data["xy_color"] == [0.561, 0.4042]
+
+
 async def test_home_assistant_scenes_win(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
 ) -> None:

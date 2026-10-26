@@ -80,7 +80,7 @@
     const light = (id, name, state, attributes = {}) =>
       ({ entity_id: id, state, attributes: { friendly_name: name, ...attributes } });
     // RGB colours as Home Assistant works them out from the xy colours.
-    const relax = { brightness: 143, color_mode: "xy", xy_color: [0.5019, 0.4152], rgb_color: [255, 189, 86] };
+    const relax = { brightness: 143, color_mode: "color_temp", color_temp_kelvin: 2237, rgb_color: [255, 148, 43] };
     const coolBright = { brightness: 255, color_mode: "xy", xy_color: [0.3812, 0.3794], rgb_color: [255, 236, 186] };
 
     const states = Object.fromEntries([
@@ -153,10 +153,10 @@
         leaving_home_enabled: "switch.hue_lite_lights_off_when_everyone_leaves",
       },
       presets: {
-        energize: { rgb_colors: [[246, 255, 254]] },
-        cool_bright: { rgb_colors: [[255, 236, 186]] },
-        read: { rgb_colors: [[255, 211, 130]] },
-        relax: { rgb_colors: [[255, 189, 86]] },
+        energize: { rgb_colors: [[255, 253, 248]] },
+        cool_bright: { rgb_colors: [[255, 206, 166]] },
+        read: { rgb_colors: [[255, 173, 102]] },
+        relax: { rgb_colors: [[255, 148, 43]] },
         rest: { rgb_colors: [[255, 161, 40]] },
         nightlight: { rgb_colors: [[255, 71, 22]] },
         golden_hour: { rgb_colors: [[255, 195, 54], [255, 161, 53], [255, 127, 42], [255, 127, 100], [255, 183, 111]], brightness: [85, 70, 60, 50, 90] },

@@ -398,18 +398,29 @@
 
   // ---- Colours -------------------------------------------------------------
 
-  // How a light's colour shows on its icon, its slider and its scene's tile:
-  // the RGB colour the bulb reports (Hue-Lite works out a scene's the same
-  // way), halfway to the fully saturated colour of its hue so whites still
-  // show on the card. Pure white, and lights with no colour, show as amber.
+  // How a light's colour shows on its icon, its slider and its scene's tile,
+  // as Home Assistant's own light dialog shows it: the RGB colour the bulb
+  // reports (Hue-Lite works out a scene's the same way), with pale colours
+  // made at least 40% saturated so they show, and near-whites a light grey.
+  // Lights with no colour show as amber, Home Assistant's for a light that's on.
   const AMBER = [255, 193, 7];
 
   function shownColour(rgb) {
     if (!Array.isArray(rgb)) return AMBER;
-    const max = Math.max(...rgb);
-    const min = Math.min(...rgb);
-    if (max - min < 8) return AMBER;
-    return rgb.map((c) => Math.round((c + (255 * (c - min)) / (max - min)) / 2));
+    // To hue (degrees), saturation (0–1) and value (0–255), and back.
+    const [r, g, b] = rgb;
+    let v = Math.max(r, g, b);
+    const c = v - Math.min(r, g, b);
+    const sector = c && (v === r ? (g - b) / c : v === g ? 2 + (b - r) / c : 4 + (r - g) / c);
+    const h = 60 * (sector < 0 ? sector + 6 : sector);
+    let s = v && c / v;
+    if (s < 0.1) v = 225;
+    else if (s < 0.4) s = 0.4;
+    const channel = (n) => {
+      const k = (n + h / 60) % 6;
+      return Math.round(v - v * s * Math.max(Math.min(k, 4 - k, 1), 0));
+    };
+    return [channel(5), channel(3), channel(1)];
   }
 
   const average = (rgbs) => [0, 1, 2].map((i) => rgbs.reduce((sum, c) => sum + c[i], 0) / rgbs.length);

@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import NATURAL, ROUTINE
 from .engine import HueLiteConfigEntry
 from .entity import HueLiteEntity
-from .lights import rgb_color
+from .lights import light_rgb
 
 
 async def async_setup_entry(
@@ -57,7 +57,7 @@ class _TimelineSensor(_EngineSensor):
         return {
             "brightness_pct": light.brightness_pct,
             "xy_color": list(light.xy_color),
-            "rgb_color": rgb_color(light.xy_color),
+            "rgb_color": light_rgb(light),
             "color_temp_kelvin": light.kelvin,
             "lights": self.hue_lite.in_scene(self._scene),
         }

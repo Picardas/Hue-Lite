@@ -15,7 +15,7 @@ import voluptuous as vol
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util.color import color_xy_to_RGB
+from homeassistant.util.color import color_hs_to_RGB, color_temperature_to_hs, color_xy_to_RGB
 
 from .targets import LIGHT
 from .timeline import Light
@@ -32,6 +32,14 @@ def rgb_color(xy: tuple[float, float]) -> list[int]:
     """The RGB colour a colour bulb reports at an xy colour (Home Assistant
     works it out the same way), for the dashboard to show."""
     return list(color_xy_to_RGB(*xy))
+
+
+def light_rgb(light: Light) -> list[int]:
+    """The RGB colour a colour bulb reports at `light`: for a white, sent as
+    a colour temperature, the one Home Assistant gives that."""
+    if light.as_temperature:
+        return list(color_hs_to_RGB(*color_temperature_to_hs(light.kelvin)))
+    return rgb_color(light.xy_color)
 
 
 class Sender:
@@ -59,16 +67,24 @@ class Sender:
         """Whether a change came from Hue-Lite."""
         return context.id in self._ours
 
-    def has_colour(self, entity_id: str) -> bool:
+    def _modes(self, entity_id: str) -> list[str] | None:
         state = self.hass.states.get(entity_id)
-        modes = state.attributes.get("supported_color_modes") if state else None
+        return state.attributes.get("supported_color_modes") if state else None
+
+    def has_colour(self, entity_id: str) -> bool:
+        modes = self._modes(entity_id)
         # Unknown: send colour, which Home Assistant converts if it has to.
         return modes is None or bool(COLOUR_MODES.intersection(modes))
 
     async def send(self, lights: list[str], light: Light, transition: float, parent: Context | None = None) -> None:
         """Turn lights on at `light`: its xy colour on bulbs with colour, its
-        colour temperature on the rest."""
-        colour = [entity_id for entity_id in lights if self.has_colour(entity_id)]
+        colour temperature on the rest, and on any bulb with colour
+        temperatures when it's a white."""
+        colour = [
+            entity_id
+            for entity_id in lights
+            if self.has_colour(entity_id) and not (light.as_temperature and "color_temp" in (self._modes(entity_id) or ()))
+        ]
         white = [entity_id for entity_id in lights if entity_id not in colour]
         await asyncio.gather(
             *([self.call("turn_on", colour, parent=parent, **light.colour_data(), transition=transition)] if colour else []),

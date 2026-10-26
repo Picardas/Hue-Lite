@@ -21,17 +21,23 @@ class Light:
     brightness_pct: float
     xy_color: tuple[float, float]
     kelvin: float
+    # A white that bulbs with colour temperatures get as one, like Hue's white
+    # scenes (their white LEDs, rather than mixing it from colours).
+    as_temperature: bool = False
 
     def rounded(self) -> Light:
         return Light(
-            round(self.brightness_pct), (round(self.xy_color[0], 4), round(self.xy_color[1], 4)), round(self.kelvin)
+            round(self.brightness_pct),
+            (round(self.xy_color[0], 4), round(self.xy_color[1], 4)),
+            round(self.kelvin),
+            self.as_temperature,
         )
 
     def scaled(self, level: float) -> Light:
         """This at `level` times the brightness (between 1% and 100%)."""
         if level == 1:
             return self
-        return Light(min(max(round(self.brightness_pct * level), 1), 100), self.xy_color, self.kelvin)
+        return Light(min(max(round(self.brightness_pct * level), 1), 100), self.xy_color, self.kelvin, self.as_temperature)
 
     def colour_data(self) -> dict[str, Any]:
         """light.turn_on data for bulbs with colour."""
@@ -43,18 +49,20 @@ class Light:
         return {"brightness_pct": self.brightness_pct, "color_temp_kelvin": self.kelvin}
 
 
-# The values the Hue app uses on colour bulbs, as xy colours (which is how Hue
-# gets e.g. Energize's blue tinge), from Hue's scene library:
-# https://gist.github.com/Hypfer/a0a8b5b9429831a7306ec4300077eaaa
-# Nightlight is deliberately redder than Hue's (0.561, 0.4042). White bulbs get
-# a colour temperature instead (Energize, Read and Relax as in Hue's
-# white-ambiance scenes, Rest and Nightlight at 2000 K, as warm as most bulbs
-# go): converting the xy colours would make Nightlight's deep red a cool 4100 K.
+# Hue's scene library values (https://gist.github.com/Hypfer/a0a8b5b9429831a7306ec4300077eaaa).
+# Energize, Cool bright, Read and Relax are whites: like Hue's, they go to any
+# bulb with colour temperatures as one (Energize 156 mired, Read 346, Relax
+# 447, as in Hue), so it uses its white LEDs; the xy colours (on the same
+# white) are for colour bulbs without. Rest and Nightlight are warmer than
+# bulbs' whites go, so colour bulbs get the xy colour; Nightlight is
+# deliberately redder than Hue's (0.561, 0.4042). White bulbs get the colour
+# temperature (Rest and Nightlight at 2000 K, as warm as most bulbs go):
+# converting the xy colours would make Nightlight's deep red a cool 4100 K.
 PRESETS: dict[str, Light] = {
-    "energize": Light(100, (0.3143, 0.3301), 6410),
-    "cool_bright": Light(100, (0.3812, 0.3794), 4000),
-    "read": Light(100, (0.445, 0.4067), 2890),
-    "relax": Light(56, (0.5019, 0.4152), 2237),
+    "energize": Light(100, (0.3143, 0.3301), 6410, True),
+    "cool_bright": Light(100, (0.3812, 0.3794), 4000, True),
+    "read": Light(100, (0.445, 0.4067), 2890, True),
+    "relax": Light(56, (0.5019, 0.4152), 2237, True),
     "rest": Light(35, (0.561, 0.4042), 2000),
     "nightlight": Light(1, (0.67, 0.32), 2000),
 }
@@ -164,12 +172,13 @@ def noticeable(a: Light, b: Light) -> bool:
 
 
 def blend(a: Light, b: Light, f: float) -> Light:
-    """a at f = 0, b at f = 1, linear in between."""
+    """a at f = 0, b at f = 1, linear in between (a white if both are)."""
     f = min(max(f, 0), 1)
     return Light(
         a.brightness_pct + (b.brightness_pct - a.brightness_pct) * f,
         (a.xy_color[0] + (b.xy_color[0] - a.xy_color[0]) * f, a.xy_color[1] + (b.xy_color[1] - a.xy_color[1]) * f),
         a.kelvin + (b.kelvin - a.kelvin) * f,
+        (a.as_temperature or f >= 1) and (b.as_temperature or f <= 0),
     )
 
 
@@ -321,7 +330,7 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
     down = (m - wind_start) / span if span > 0 else (1 if m >= wind_start else 0)
     down = min(max(down, 0), 1)
     light = blend(p["cool_bright"], p["relax"], down * 2) if down <= 0.5 else blend(p["relax"], p["rest"], down * 2 - 1)
-    light = Light(min(ramp, light.brightness_pct), light.xy_color, light.kelvin)
+    light = Light(min(ramp, light.brightness_pct), light.xy_color, light.kelvin, light.as_temperature)
     return Evening(phase, light.rounded(), hhmm(start), hhmm(bedtime), weekend)
 
 

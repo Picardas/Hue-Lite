@@ -182,8 +182,11 @@ on the Hue-Lite device page instead.
 
 ## How it works
 
-- **Scenes.** Colour bulbs get Hue's colours, white bulbs a colour
-  temperature, and dimmable bulbs just the brightness.
+- **Scenes.** Hue's values: the whites (Energize, Cool bright, Read and
+  Relax) go to any bulb with colour temperatures as one, as in Hue, so it
+  uses its white LEDs. Colour bulbs without get Hue's colours, as do Rest
+  and Nightlight, which are warmer than bulbs' whites go. White bulbs get a
+  colour temperature, and dimmable bulbs just the brightness.
 - **Colour scenes.**
 
   | Scene | Colours | A step every |
