@@ -26,13 +26,15 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> bool:
+    # The dashboard's script first, so pages opened while Home Assistant's
+    # starting get it as soon as possible (they wait 5 seconds for it).
+    entry.async_on_unload(dashboard.async_add_script(hass))
     hue_lite = HueLite(hass, entry)
     await hue_lite.async_load()
     entry.runtime_data = hue_lite
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     hue_lite.async_start()
     entry.async_on_unload(hue_lite.async_stop)
-    entry.async_on_unload(dashboard.async_add_script(hass))
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
 

@@ -175,7 +175,7 @@
     },
     "set_auto": {
       "name": "Set Auto",
-      "description": "Puts lights on Auto, or takes them off it. On Auto, a light leaves its scene and straight away does what the routines ask (wake up, the evening routine) whether or not it has their labels, on with whichever is running and off if neither is, until a scene is picked for it or it's changed. Off Auto, it leaves the routine holding it now; labelled lights are taken again next time. With no target, every light.",
+      "description": "Puts lights on Auto, or takes them off it. On Auto, a light leaves its scene and straight away does what the routines ask (wake up, the evening routine) whether or not it has their labels, on with whichever is running and off if neither is, until it's switched on or off by hand, changed or a scene is picked for it. Off Auto, it leaves the routine holding it now; labelled lights are taken again next time. With no target, every light.",
       "fields": {
         "auto": { "name": "Auto", "description": "On to follow the routines, off to leave them." }
       }

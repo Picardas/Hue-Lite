@@ -211,7 +211,8 @@ on the Hue-Lite device page instead.
   own scenes with it.
 - **Evening routine:**
   - Before sunset, if someone's home, the Evening lights come on dim and
-    brighten.
+    brighten. Ones already on, set by hand say, fade from how they are to
+    where the routine will be once it's brightened, getting there with it.
   - They wind down through Relax and Rest, then fade out at bedtime.
   - Sun–Thu and Fri & Sat nights each have their own switch and bedtime.
 - **Dimming.** Dimming a light in a scene, with its slider or a dimmer's Up
@@ -243,9 +244,14 @@ on the Hue-Lite device page instead.
 - **Auto** is the button at the end of each bar. A light is on Auto while
   wake up or the evening routine has it, or once you put it on Auto.
   - On Auto, it follows both routines whether or not it has their labels.
-  - It stays on Auto, on or off, until you pick a scene for it or change it.
-  - Putting a light on Auto matches it to the routines straight away. It
-    joins whichever routine is running, or goes off if neither is.
+  - It stays on Auto until you do something to it by hand: switch it on or
+    off (from the dashboard, a light's dialog, a dimmer or an automation),
+    change it, or pick a scene for it. A bulb coming back after its power
+    was cut doesn't count. Lights with the routines' labels are still taken
+    by them next time.
+  - Putting a light on Auto matches it to the routines straight away, even
+    if it's on Auto already. It joins whichever routine is running, or goes
+    off if neither is.
 - **Hue dimmers** control their area, or the lights chosen on the Dimmers
   card.
   - **On** steps through their scenes: by default Natural light and the

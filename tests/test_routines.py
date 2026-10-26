@@ -73,6 +73,37 @@ async def test_evening_routine(hass: HomeAssistant, freezer: FrozenDateTimeFacto
     assert natural(hass) == ["light.living_room"]
 
 
+async def test_the_evening_routine_fades_lights_that_are_on_into_it(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    await tick(hass, freezer, "16:29")
+    hue_lite = await set_up(hass, entry)
+    # The living room was set by hand; the bedroom's off.
+    hass.states.async_set("light.living_room", "on", {"brightness": 200})
+
+    # At 16:30 the routine takes both. The living room fades from how it is to
+    # where the routine will be once it's brightened (Cool bright at 17:30),
+    # over that hour, rather than dropping to its dim start; the bedroom
+    # comes on dim.
+    await tick(hass, freezer, "16:30")
+    assert routine(hass) == ["light.bedroom", "light.living_room"]
+    assert sorted((c.data["entity_id"], c.data["brightness_pct"], c.data["transition"]) for c in home.turn_on) == [
+        (["light.bedroom"], 5, 5),
+        (["light.living_room"], PRESETS["cool_bright"].brightness_pct, 3600),
+    ]
+
+    # Following the routine moves the bedroom, leaving the living room fading...
+    on(hass, hue_lite, "light.bedroom")
+    home.turn_on.clear()
+    await tick(hass, freezer, "16:31")
+    assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom"]]
+
+    # ...until it's got there, when it follows the routine too.
+    home.turn_on.clear()
+    await tick(hass, freezer, "21:30")
+    assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom", "light.living_room"]]
+
+
 async def test_evening_routine_needs_someone_home(
     hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
 ) -> None:
@@ -565,8 +596,11 @@ async def test_hue_dimmer(hass: HomeAssistant, home: Home, hue_lite: HueLite) ->
     await press("down_hold")
     assert len(home.turn_on) == calls
 
+    # Off turns the room off, and takes it off Auto.
+    await action(hass, "set_auto", {"auto": True, "entity_id": "light.living_room"})
     await press("off_short_release")
     assert home.turn_off[-1].data == {"entity_id": ["light.living_room"], "transition": 1}
+    assert hue_lite.on_auto() == []
 
     # Other remotes are left to their own automations.
     await press("on_short_release", remote.id)

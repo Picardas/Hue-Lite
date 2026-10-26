@@ -300,7 +300,9 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
     wind_start = bedtime - s.wind_down
     nightlight_start = bedtime - s.nightlight
 
-    if m >= bedtime:
+    # In the hour repeated when the clocks go back, the second time round is
+    # really an hour on: a bedtime in the first is still past.
+    if m >= bedtime or (now.fold and m + 60 >= bedtime):
         # After bedtime it's night until 05:00, then day again.
         phase = "day" if morning and now.hour >= 5 else "night"
     elif m < start:

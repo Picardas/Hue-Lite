@@ -165,7 +165,7 @@ class Routines:
         off."""
         lite = self.lite
         if scene == ROUTINE:
-            await lite.apply(ROUTINE, lights, 2)
+            await self._join_evening(lights, 2)
         elif scene == WAKE_UP:
             woke = lite.last_wake_up or dt_util.utcnow()
             left = woke + timedelta(minutes=lite.settings["wake_up_fade_minutes"]) - dt_util.utcnow()
@@ -184,7 +184,24 @@ class Routines:
         lite.followed[ROUTINE] = lite.evening
         if lights := lite.routine_lights("evening"):
             lite.set_scene(lights, ROUTINE)
-            lite.spawn(lite.apply(ROUTINE, lights, 5))
+            lite.spawn(self._join_evening(lights, 5))
+
+    async def _join_evening(self, lights: list[str], transition: float) -> None:
+        """Bring lights the routine has just taken to its light. While it's
+        brightening, ones that are on (set by hand, say) fade from how they
+        are to where it'll be once it's brightened, getting there then, so
+        they don't drop to its dim start; the rest come on at its light now."""
+        lite, now = self.lite, dt_util.now()
+        start = self._at(now.date(), lite.evening.start, now)
+        brightened = start + timedelta(minutes=lite.settings["evening_brighten_minutes"])
+        on = lite.on(lights) if start <= now < brightened else []
+        if on and (later := lite.evening_at(brightened)).phase == "evening":
+            await asyncio.gather(
+                lite.ease(on, later.light, brightened),
+                lite.apply(ROUTINE, [light for light in lights if light not in on], transition),
+            )
+        else:
+            await lite.apply(ROUTINE, lights, transition)
 
     async def _bedtime(self) -> None:
         """Fade out the routine's lights, which it's then done with for

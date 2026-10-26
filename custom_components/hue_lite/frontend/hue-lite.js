@@ -315,11 +315,11 @@
       "",
       "**Your own scenes**: Edit scenes under any room's scenes, then the + tile at the end, makes one: one colour (static) or up to eight, each at its own brightness, drifting at their own speed. Try on the lights shows the colours on the room's lights as you pick them. The pencil on a tile changes one of yours, or starts a copy of a built-in scene. A new scene shows in the room it was made in and on its dimmers; elsewhere Edit scenes shows it.",
       "",
-      "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you pick a scene for it or change it. Put on Auto, it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
+      "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you switch it on or off, change it or pick a scene for it. Put on Auto (even again), it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
       "",
       `**Wake up**: on the days it's on (Mon–Fri and Sat & Sun each have a switch and a time), lights labelled *${label("wake_up")}* that are off get a sunrise: from Nightlight's dim red through orange and warm white to Energize, reaching full brightness *at* your wake-up time. Wake up then lets go of them, leaving them on, or turns them off a while later if you choose. Until then they're on Auto.`,
       "",
-      `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
+      `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home; ones already on fade from how they are instead), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
       `**Coming & Going**: when someone gets home (optionally only after dark), lights labelled *${label("coming_home")}* that are off come on, and so do lights labelled *${label("first_home")}* if the house was empty. Evening lights join the evening routine if it's on, except in its last half hour or so before bed, so they don't go off again soon after; the rest come on in Natural light. When the last person leaves, every light can go off.`,
       "",
@@ -373,14 +373,20 @@
 
   class HueLiteStrategy extends HTMLElement {
     static async generate(config, hass) {
-      let setup;
-      try {
-        setup = await hass.callWS({ type: `${DOMAIN}/config` });
-      } catch (err) {
+      // While Home Assistant's starting, Hue-Lite may not be set up yet: keep
+      // asking for a while (Home Assistant builds the dashboard again once
+      // it's started, too).
+      let setup = null;
+      for (let i = 0; i < 15 && !setup; i++) {
+        setup = await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null);
+        if (setup || hass.config?.state === "RUNNING") break;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      if (!setup) {
         return {
           views: [{
             title: "Lights",
-            cards: [{ type: "markdown", content: "Hue-Lite isn't set up. Add it in **Settings → Devices & services**, then reload this page." }],
+            cards: [{ type: "markdown", content: "Hue-Lite isn't set up. Add it in **Settings → Devices & services**." }],
           }],
         };
       }
@@ -2451,4 +2457,22 @@
     window.hueLiteAddingDashboard = true;
     addDashboard();
   }
+
+  // ---- A dashboard opened before this script arrived ------------------------
+
+  // Home Assistant waits 5 seconds for a dashboard's strategy, then shows
+  // "Timeout waiting for strategy element" and doesn't try again (on a slow
+  // connection, or with a page opened while Home Assistant was starting).
+  // Once this script's here, ask a Lights dashboard showing that to load again.
+  function retryTimedOut() {
+    const main = document.querySelector("home-assistant")?.shadowRoot?.querySelector("home-assistant-main");
+    const panel = main?.shadowRoot?.querySelector("ha-panel-lovelace");
+    const lovelace = panel?.lovelace;
+    if (lovelace?.rawConfig?.strategy?.type !== STRATEGY) return;
+    if (!JSON.stringify(lovelace.config?.views ?? []).includes("Timeout waiting for strategy element")) return;
+    panel.shadowRoot?.querySelector("hui-root")?.dispatchEvent(new CustomEvent("config-refresh", { bubbles: true, composed: true }));
+  }
+
+  retryTimedOut();
+  window.addEventListener("location-changed", () => setTimeout(retryTimedOut, 0));
 })();

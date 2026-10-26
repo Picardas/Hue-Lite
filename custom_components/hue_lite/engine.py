@@ -203,6 +203,9 @@ class HueLite(SharedSettings):
         # Lights dimmed in their scene -> the share of the scene's brightness
         # they get (see async_set_brightness).
         self.dimmed: dict[str, float] = {}
+        # Lights fading from how they were into the routine -> when they get
+        # there; following leaves them alone until then (see ease).
+        self._easing: dict[str, datetime] = {}
         # Hue-Lite's entity ids by key, for the dashboard (filled in as they're added).
         self.entity_ids: dict[str, str] = {}
         self.device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name=NAME, entry_type=DeviceEntryType.SERVICE)
@@ -407,12 +410,13 @@ class HueLite(SharedSettings):
         what the routines ask, whether or not it has their labels: it leaves
         the scene it was in and straight away matches them, joining the
         evening routine or wake up if one's running and going off if not.
-        Taken off, it leaves the routine or wake up holding it, staying as it
-        is; its labels still count next time."""
+        So does one on Auto already (switched on by hand since, say), unless
+        a routine has it. Taken off, it leaves the routine or wake up holding
+        it, staying as it is; its labels still count next time."""
         lights = [light for light in lights if not self.excluded(light)]
         held = [light for light in lights if self.scenes.get(light) in (ROUTINE, WAKE_UP)]
         if auto:
-            joining = [light for light in lights if light not in self.auto and light not in held]
+            joining = [light for light in lights if light not in held]
             asking = self.routines.asking
             changed = self._set_auto(lights, True) | self._put(joining, asking)
             if joining:
@@ -481,6 +485,7 @@ class HueLite(SharedSettings):
                 continue
             changed = True
             self.dimmed.pop(light, None)
+            self._easing.pop(light, None)
             if scene:
                 self.scenes[light] = scene
             else:
@@ -588,6 +593,7 @@ class HueLite(SharedSettings):
         self.set_scene([light for light in lights if self.scenes.get(light) == WAKE_UP], "")
         brightness: dict[int, list[str]] = {}
         for light in lights:
+            self._easing.pop(light, None)
             state = self.hass.states.get(light)
             on = state is not None and state.state == STATE_ON
             if brightness_pct is None:
@@ -744,27 +750,35 @@ class HueLite(SharedSettings):
         since. A light changed by someone else (from the dashboard, a light
         dialog, an automation) leaves its scene and Auto: one that's on and
         changed, or one switched on at a brightness of their own (the
-        slider). Bulbs reporting their own state don't count, and nor does
-        plain switching on and off, and nor does a bulb's follow-up report a
-        moment after a command, which Home Assistant gives the command's
-        context (so a switch-on from the dashboard reports again as if by its
-        user). A wake-up light that's switched off is done with."""
+        slider). Plain switching on or off by someone just takes a light off
+        Auto (out of the routine or wake up holding it), keeping any other
+        scene. Bulbs reporting their own state don't count (nor does one
+        coming back after its power was cut), and nor does a bulb's follow-up
+        report a moment after a command, which Home Assistant gives the
+        command's context (so a switch-on from the dashboard reports again as
+        if by its user). A wake-up light that's switched off is done with."""
         old, new = event.data["old_state"], event.data["new_state"]
         if old is None or new is None:
             return
         light, scene = new.entity_id, self.scenes.get(new.entity_id)
+        ours = self.sender.is_ours(new.context)
+        by_hand = bool(new.context.user_id or new.context.parent_id) and new.context.id != old.context.id and not ours
         if new.state == STATE_OFF:
+            self._easing.pop(light, None)
             if old.state == STATE_ON and (brightness := old.attributes.get("brightness")) is not None:
                 self._off_brightness[light] = brightness
             if scene == WAKE_UP:
                 self.set_scene([light], "")
-        if new.state != STATE_ON or self.sender.is_ours(new.context):
+            if by_hand and old.state == STATE_ON:
+                self.async_set_auto([light], False)
+        if new.state != STATE_ON or ours:
             return
-        by_someone = bool(new.context.user_id or new.context.parent_id)
-        follow_up = new.context.id == old.context.id
-        if by_someone and not follow_up and (old.state == STATE_ON or self._own_brightness(new)):
+        if by_hand and (old.state == STATE_ON or self._own_brightness(new)):
             self.set_scene([light], "", leave_auto=True)
         elif old.state != STATE_ON:
+            if by_hand:
+                self.async_set_auto([light], False)
+                scene = self.scenes.get(light)
             stale = light in self._stale or old.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
             self._stale.discard(light)
             if stale or scene in (NATURAL, ROUTINE):
@@ -911,5 +925,19 @@ class HueLite(SharedSettings):
         if last is not None and not target.moved_from(last):
             return
         self.followed[scene] = target
-        if lights := self.on(self.in_scene(scene)):
+        now = dt_util.utcnow()
+        self._easing = {light: until for light, until in self._easing.items() if until > now}
+        if lights := [light for light in self.on(self.in_scene(scene)) if light not in self._easing]:
             self.spawn(self.apply(scene, lights, 60))
+
+    async def ease(self, lights: list[str], light: Light, until: datetime) -> None:
+        """Fade lights from how they are to `light`, getting there at `until`;
+        following their scene leaves them alone until then, unless they're
+        switched off or dimmed."""
+        for entity_id in lights:
+            self._easing[entity_id] = until
+        await self._send(lights, light, max((until - dt_util.utcnow()).total_seconds(), 2))
+
+    def evening_at(self, when: datetime) -> Evening:
+        """Where the evening routine will be at `when`."""
+        return self._targets(dt_util.as_local(when))[1]

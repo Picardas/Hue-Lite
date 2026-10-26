@@ -4,6 +4,7 @@ colour scenes and the dimmer's cycle."""
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -132,6 +133,15 @@ def test_moved_from() -> None:
     now = datetime.fromisoformat("2026-10-22T13:00")
     assert evening_routine(now, SUN.sunset, later).moved_from(evening_routine(now, SUN.sunset, SETTINGS))
     assert not evening_routine(now, SUN.sunset, SETTINGS).moved_from(evening_routine(now, SUN.sunset, SETTINGS))
+
+
+def test_a_bedtime_in_the_hour_the_clocks_go_back() -> None:
+    # Saturday night's bedtime is 01:30, and the clocks go back from 02:00 to
+    # 01:00: past bedtime the first time round, it's still night the second.
+    late = EveningSettings(**{**SETTINGS.__dict__, "bedtime_weekend": 90})
+    first, second = (datetime(2026, 10, 25, 1, 10, tzinfo=ZoneInfo("Europe/London"), fold=fold) for fold in (0, 1))
+    assert evening_routine(first, SUN.sunset, late).phase == "nightlight"
+    assert evening_routine(second, SUN.sunset, late).phase == "night"
 
 
 def test_next_scene() -> None:

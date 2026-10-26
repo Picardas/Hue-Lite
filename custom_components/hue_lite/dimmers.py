@@ -42,6 +42,7 @@ async def _press(lite: HueLite, button: str, lights: list[str], parent: Context,
         await lite.async_next_scene(lights, parent, cycle)
     elif button == "off":
         lite.forget_steps(lights)
+        lite.async_set_auto(lights, False)
         await lite.sender.call("turn_off", lights, parent=parent, transition=1)
     else:
         up = button == "up"
