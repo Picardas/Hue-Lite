@@ -42,8 +42,12 @@ from .timeline import PALETTES, PRESETS, kelvin_for, palette_from_stored
 
 _LOGGER = logging.getLogger(__name__)
 
-SCRIPT = Path(__file__).parent / "frontend" / "hue-lite.js"
+FRONTEND = Path(__file__).parent / "frontend"
+SCRIPT = FRONTEND / "hue-lite.js"
 URL = f"/{DOMAIN}/hue-lite.js"
+# What every page loads: it loads the script, trying again if it doesn't arrive.
+LOADER = FRONTEND / "hue-lite-loader.js"
+LOADER_URL = f"/{DOMAIN}/hue-lite-loader.js"
 DATA_URL = f"{DOMAIN}_dashboard_url"
 
 # Each preset's and colour scene's colours as a colour bulb reports them, for
@@ -65,11 +69,14 @@ SCENE_COLOURS = {
 
 
 async def async_register(hass: HomeAssistant) -> None:
-    """Serve the script (versioned by its content, so browsers pick up a new
-    one) and register the websocket command. Once per run."""
-    content = await hass.async_add_executor_job(SCRIPT.read_bytes)
-    hass.data[DATA_URL] = f"{URL}?v={hashlib.sha256(content).hexdigest()[:8]}"
-    await hass.http.async_register_static_paths([StaticPathConfig(URL, str(SCRIPT), True)])
+    """Serve the script and its loader (versioned by their content, so
+    browsers pick up a new one) and register the websocket commands. Once per
+    run."""
+    content = b"".join([await hass.async_add_executor_job(path.read_bytes) for path in (LOADER, SCRIPT)])
+    hass.data[DATA_URL] = f"{LOADER_URL}?v={hashlib.sha256(content).hexdigest()[:8]}"
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(URL, str(SCRIPT), True), StaticPathConfig(LOADER_URL, str(LOADER), True)]
+    )
     for command in (
         websocket_config,
         websocket_claim_dashboard,
@@ -85,7 +92,8 @@ async def async_register(hass: HomeAssistant) -> None:
 
 @callback
 def async_add_script(hass: HomeAssistant) -> Callable[[], None]:
-    """Load the script on every frontend page while Hue-Lite is set up."""
+    """Load the script (through its loader) on every frontend page while
+    Hue-Lite is set up."""
     url = hass.data[DATA_URL]
     add_extra_js_url(hass, url)
     return lambda: remove_extra_js_url(hass, url)

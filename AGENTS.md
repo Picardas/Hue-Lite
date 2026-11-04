@@ -24,6 +24,7 @@ one plain JavaScript file with no build step.
 | `switch.py`, `time.py`, `number.py`, `sensor.py`, `entity.py` | The entities: settings, and the routines' state |
 | `config_flow.py`, `__init__.py` | Setup, options, migrations |
 | `frontend/hue-lite.js` | The Lights dashboard: a strategy and its cards |
+| `frontend/hue-lite-loader.js` | What every page loads: it loads `hue-lite.js`, trying again if it doesn't arrive |
 | `translations/en.json`, `icons.json` | Entity, option and action text; icons |
 | `tests/` | pytest tests; `tests/harness/index.html` renders the dashboard with a mock Home Assistant |
 | `docs/images/` | README screenshots |

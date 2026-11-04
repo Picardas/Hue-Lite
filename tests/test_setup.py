@@ -190,9 +190,10 @@ async def test_dashboard_script_and_config(hass: HomeAssistant, home: Home, entr
     assert len(config["presets"]["nebula"]["rgb_colors"]) == len(config["presets"]["nebula"]["brightness"]) == 5
     assert config["presets"]["aurora"]["rgb_colors"][0] == [45, 255, 93]
 
-    # The script is on every page (versioned by content) while Hue-Lite is set up.
+    # The script's loader is on every page (versioned by content) while
+    # Hue-Lite is set up.
     scripts = hass.data[DATA_EXTRA_MODULE_URL]
-    assert [url.split("?v=")[0] for url in scripts.urls] == ["/hue_lite/hue-lite.js"]
+    assert [url.split("?v=")[0] for url in scripts.urls] == ["/hue_lite/hue-lite-loader.js"]
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not scripts.urls
 
