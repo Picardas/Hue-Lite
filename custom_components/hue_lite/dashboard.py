@@ -296,6 +296,13 @@ def _colours(msg: dict[str, Any]) -> dict[str, list]:
     return {"colours": colours, "white": [white["brightness"], white["kelvin"]]}
 
 
+def _may_change(connection: websocket_api.ActiveConnection, hue_lite: HueLite, scene_id: str) -> bool:
+    """Whether the user may change or delete one of your own scenes: an
+    admin, or someone who may control every light in it."""
+    user = connection.user
+    return user.is_admin or all(user.permissions.check_entity(light, POLICY_CONTROL) for light in hue_lite.in_scene(scene_id))
+
+
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/save_scene",
@@ -323,10 +330,7 @@ def websocket_save_scene(hass: HomeAssistant, connection: websocket_api.ActiveCo
     if scene_id is not None and scene_id not in hue_lite.custom:
         connection.send_error(msg["id"], "not_found", "That isn't one of your scenes")
         return
-    user = connection.user
-    if scene_id is not None and not user.is_admin and any(
-        not user.permissions.check_entity(light, POLICY_CONTROL) for light in hue_lite.in_scene(scene_id)
-    ):
+    if scene_id is not None and not _may_change(connection, hue_lite, scene_id):
         # Changing it would change lights they may not control.
         connection.send_error(msg["id"], "unauthorized", "That scene is on lights you can't control")
         return
@@ -372,9 +376,14 @@ def websocket_preview_scene(hass: HomeAssistant, connection: websocket_api.Activ
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/delete_scene", vol.Required("scene"): vol.All(str, vol.Length(1, 64))})
 @_with_hue_lite
 def websocket_delete_scene(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
-    """Delete one of your own scenes (the built-in ones can't be). Anyone can."""
+    """Delete one of your own scenes (the built-in ones can't be). Anyone can,
+    unless it's on lights they may not control (as with changing it)."""
     if msg["scene"] not in hue_lite.custom:
         connection.send_error(msg["id"], "not_found", "That isn't one of your scenes")
+        return
+    if not _may_change(connection, hue_lite, msg["scene"]):
+        # Deleting it would take those lights out of it.
+        connection.send_error(msg["id"], "unauthorized", "That scene is on lights you can't control")
         return
     hue_lite.delete_custom_scene(msg["scene"])
     connection.send_result(msg["id"])

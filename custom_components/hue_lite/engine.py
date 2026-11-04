@@ -589,9 +589,11 @@ class HueLite(SharedSettings):
         picked again. `step_pct` moves each light on from its own
         brightness (a dimmer's Up and Down). A light in a scene that's off
         comes on in it at that level; others just get the brightness. A
-        light in its wake-up stops brightening there."""
+        light in its wake-up stops brightening there. Every light is sent its
+        command at once, so a slow bulb doesn't hold up the rest."""
         self.set_scene([light for light in lights if self.scenes.get(light) == WAKE_UP], "")
         brightness: dict[int, list[str]] = {}
+        coming_on: list[Coroutine[Any, Any, None]] = []
         for light in lights:
             self._easing.pop(light, None)
             state = self.hass.states.get(light)
@@ -607,10 +609,15 @@ class HueLite(SharedSettings):
             if on or scene_light is None:
                 brightness.setdefault(pct, []).append(light)
             else:
-                await self._send([light], scene_light, 0.4, parent)
+                coming_on.append(self._send([light], scene_light, 0.4, parent))
         self.save()
-        for pct, group in brightness.items():
-            await self.sender.call("turn_on", group, parent=parent, brightness_pct=pct, transition=0.4)
+        await asyncio.gather(
+            *coming_on,
+            *(
+                self.sender.call("turn_on", group, parent=parent, brightness_pct=pct, transition=0.4)
+                for pct, group in brightness.items()
+            ),
+        )
 
     def _scene_light(self, light: str) -> Light | None:
         """The light a light's scene wants for it now, before dimming; None

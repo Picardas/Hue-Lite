@@ -67,3 +67,33 @@ async def test_a_bulb_that_doesnt_answer(hass: HomeAssistant, home: Home, hue_li
         await hue_lite.sender.call("turn_off", ["light.bedroom"], transition=1)
     assert len(tried) == 2
     assert "Couldn't turn off light.bedroom: Failed to send request: device did not respond" in caplog.text
+
+
+async def test_dimming_isnt_held_up_by_a_slow_bulb(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """A dimmer's Down moves each light on from its own brightness, so lights
+    at different levels get different commands. They all go at once: one
+    bulb that's slow to answer doesn't hold up the others."""
+    living_room, bedroom = "light.living_room", "light.bedroom"
+    hass.states.async_set(living_room, "on", {"brightness": 255})
+    hass.states.async_set(bedroom, "on", {"brightness": 128})
+    answer = asyncio.Event()
+    sent: list[tuple[list[str], int]] = []
+
+    async def living_room_is_slow(service: str, data: dict[str, Any], parent: Context | None, lights: list[str]) -> None:
+        sent.append((lights, data["brightness_pct"]))
+        if living_room in lights:
+            await answer.wait()
+
+    with patch.object(hue_lite.sender, "_call", living_room_is_slow):
+        dimming = hass.async_create_task(hue_lite.async_set_brightness([living_room, bedroom], step_pct=-10))
+        # Not asyncio.sleep: the tests replace it (see conftest's no_sleep).
+        for _ in range(100):
+            if len(sent) == 2:
+                break
+            turn = hass.loop.create_future()
+            hass.loop.call_soon(turn.set_result, None)
+            await turn
+        # The living room hasn't answered, and the bedroom's been sent its own anyway.
+        assert sorted(sent) == [([bedroom], 40), ([living_room], 90)]
+        answer.set()
+        await dimming

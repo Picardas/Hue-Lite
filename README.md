@@ -161,8 +161,9 @@ Hue-Lite keeps these, so every phone and browser shows the same.
   when it has several) and, if you're an admin, on its dimmers. Made from
   Whole home, a label group or a dimmer, it shows just there. Elsewhere it
   starts hidden, and Edit scenes shows it.
-- Anyone can make, change and delete them; the built-in scenes can't be
-  changed or deleted. There can be up to 50.
+- Anyone can make them, and change or delete them unless they're on lights
+  that person isn't allowed to control. The built-in scenes can't be changed
+  or deleted. There can be up to 50.
 
 ![The scene editor: a name, an icon, and colours each with a brightness](docs/images/scene-editor.png)
 

@@ -128,6 +128,10 @@ async def test_making_changing_and_deleting_scenes(
     may_not = Mock(user=Mock(is_admin=False, permissions=Mock(check_entity=Mock(return_value=False))), subscriptions={})
     change = {"type": f"{DOMAIN}/save_scene", "scene": sea, "name": "Mine", "icon": "", "colours": [{"rgb": [1, 2, 3], "brightness": 5}]}
     assert ws(hass, dashboard.websocket_save_scene, change, connection=may_not).send_error.call_args.args[1] == "unauthorized"
+    # Nor delete it, which would take those lights out of it.
+    deleting = {"type": f"{DOMAIN}/delete_scene", "scene": sea}
+    assert ws(hass, dashboard.websocket_delete_scene, deleting, connection=may_not).send_error.call_args.args[1] == "unauthorized"
+    assert sea in hue_lite.custom
     assert save(name="Odd", icon="<b>", colours=[{"rgb": [1, 2, 3], "brightness": 5}]).send_error.call_args.args[1] == "invalid"
 
     # The built-in scenes can't be changed or deleted, and there's a limit.

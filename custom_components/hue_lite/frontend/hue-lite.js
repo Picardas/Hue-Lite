@@ -1178,17 +1178,41 @@
   // your own scenes (`custom`, by id, with the colours bulbs report for them).
   // One subscription per page tells every card that's watching (through its
   // `_sharedChanged`) whenever they change, from any dashboard.
-  const shared = { data: null, cards: new Set(), subscribed: false };
+  const shared = { data: null, cards: new Set(), connection: null, generation: 0, retry: null };
+  // While Hue-Lite isn't running yet, ask again every this many seconds, this many times (three minutes).
+  const SHARED_RETRY_S = 5;
+  const SHARED_TRIES = 36;
 
   function watchShared(hass, card) {
     shared.cards.add(card);
     if (shared.data) card._sharedChanged();
-    if (shared.subscribed) return;
-    shared.subscribed = true;
-    hass.connection.subscribeMessage((data) => {
+    if (shared.connection === hass.connection) return;
+    shared.connection = hass.connection;
+    subscribeShared(hass.connection);
+    // Back after Home Assistant restarted (or the phone lost its
+    // connection): ask again, which also brings what changed meanwhile.
+    hass.connection.addEventListener?.("ready", () => subscribeShared(hass.connection));
+  }
+
+  // Home Assistant lets a page back in while it's starting, before Hue-Lite
+  // is, and never asks again for a subscription that was turned down then:
+  // so this asks itself, and keeps asking for a while.
+  function subscribeShared(connection, tries = 0) {
+    clearTimeout(shared.retry);
+    const generation = ++shared.generation;
+    const current = () => generation === shared.generation;
+    connection.subscribeMessage((data) => {
+      if (!current()) return;
       shared.data = data;
       for (const c of shared.cards) c._sharedChanged();
-    }, { type: `${DOMAIN}/subscribe` }).catch(() => { shared.subscribed = false; });
+    }, { type: `${DOMAIN}/subscribe` }, { resubscribe: false }).then(
+      (unsubscribe) => { if (!current()) Promise.resolve().then(unsubscribe).catch(() => {}); },
+      () => {
+        if (current() && tries < SHARED_TRIES) {
+          shared.retry = setTimeout(() => subscribeShared(connection, tries + 1), SHARED_RETRY_S * 1000);
+        }
+      },
+    );
   }
 
   // Change a shared setting here straight away, then in Hue-Lite (which
