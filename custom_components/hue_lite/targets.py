@@ -6,6 +6,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from homeassistant.auth.models import User
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.const import ATTR_ENTITY_ID, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
@@ -38,6 +40,11 @@ def _takes_part(hass: HomeAssistant, entity_id: str, exclude_label: str) -> bool
     return state is not None and not isinstance(state.attributes.get(ATTR_ENTITY_ID), list)
 
 
+def taking_part(hass: HomeAssistant, exclude_label: str) -> list[str]:
+    """Every light Hue-Lite uses, reachable or not: the lights the dashboard shows."""
+    return sorted(entity_id for entity_id in hass.states.async_entity_ids(LIGHT) if _takes_part(hass, entity_id, exclude_label))
+
+
 def resolve(hass: HomeAssistant, target: Mapping[str, Any] | None, exclude_label: str) -> list[str]:
     """The lights a target means (entity_id, area_id, floor_id, device_id,
     label_id, by Home Assistant's own rules, so a label on a device or area
@@ -58,3 +65,10 @@ def resolve(hass: HomeAssistant, target: Mapping[str, Any] | None, exclude_label
         and (state := hass.states.get(entity_id)) is not None
         and state.state != STATE_UNAVAILABLE
     )
+
+
+def may_control(user: User, lights: list[str]) -> bool:
+    """Whether a user may control all these lights, as Home Assistant checks
+    for its own light actions: an admin always may. Hue-Lite changes lights
+    as itself, which Home Assistant doesn't check, so it asks this first."""
+    return user.is_admin or all(user.permissions.check_entity(light, POLICY_CONTROL) for light in lights)

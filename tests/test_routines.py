@@ -302,6 +302,7 @@ async def test_away_across_a_restart(hass: HomeAssistant, freezer: FrozenDateTim
     hue_lite = await set_up(hass, entry)
     await switch(hass, "switch.hue_lite_mimic_presence")
     hass.states.async_set("zone.home", "0")
+    await tick(hass, freezer, "16:02")  # everyone's been gone two minutes
     with patch("custom_components.hue_lite.routines.random") as chance:
         chance.randint.return_value = 10
         chance.choice.side_effect = lambda lights: lights[0]
@@ -513,6 +514,7 @@ async def test_away(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: H
         # Not in the day; from the evening's start, the bedroom comes on at
         # the evening routine's light...
         await tick(hass, freezer, "16:01")
+        await tick(hass, freezer, "16:02")  # everyone's been gone two minutes
         assert home.turn_on == []
         await tick(hass, freezer, "16:30")
         assert [c.data for c in home.turn_on] == [
@@ -605,3 +607,138 @@ async def test_hue_dimmer(hass: HomeAssistant, home: Home, hue_lite: HueLite) ->
     # Other remotes are left to their own automations.
     await press("on_short_release", remote.id)
     assert len(home.turn_on) == calls
+
+
+async def test_a_dimmer_on_white_bulbs_skips_colour_scenes(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """A dimmer whose lights can't show colour doesn't step through the
+    built-in colour scenes, even ones shown for it, as its card doesn't show
+    them either. On colour bulbs it does."""
+    dimmer = add_device(hass, "dimmer", model="RWL021", area="bedroom")
+    hue_lite.set_dimmer(dimmer.id, scenes={"order": ["relax", "nebula", "rest"], "hidden": []})
+    hass.states.async_set("light.bedroom", "off", {"supported_color_modes": ["color_temp"]})
+    assert hue_lite.dimmer_cycle(dimmer.id, ["light.bedroom"]) == ["relax", "rest"]
+    hass.states.async_set("light.bedroom", "off", {"supported_color_modes": ["xy"]})
+    assert hue_lite.dimmer_cycle(dimmer.id, ["light.bedroom"]) == ["relax", "nebula", "rest"]
+
+
+def on_auto(hass: HomeAssistant) -> list[str]:
+    return hass.states.get("sensor.hue_lite_light_scenes").attributes["auto"]
+
+
+async def test_away_waits_for_the_house_to_be_empty(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """Away starts only once everyone's been gone two minutes, as Leaving
+    home does, so a phone's location glitching doesn't set it off. And it
+    only switches off lights it switched on: a lamp left on stays on."""
+    await tick(hass, freezer, "16:20")
+    hue_lite = await set_up(hass, entry)
+    await switch(hass, EVENING, False)  # Away runs whether or not the routine's on tonight
+    await tick(hass, freezer, "16:30")
+    await switch(hass, "switch.hue_lite_mimic_presence")
+    hass.states.async_set("light.living_room", "on")  # left on
+    with patch("custom_components.hue_lite.routines.random") as chance:
+        chance.randint.return_value = 10
+        chance.choice.side_effect = lambda lights: lights[0]
+
+        # Nobody home for a minute (a glitch): nothing happens.
+        hass.states.async_set("zone.home", "0")
+        await tick(hass, freezer, "16:31")
+        hass.states.async_set("zone.home", "1")
+        await tick(hass, freezer, "16:35")
+        assert home.turn_on == home.turn_off == []
+
+        # Really gone: two minutes on, Away switches the bedroom on...
+        hass.states.async_set("zone.home", "0")
+        await tick(hass, freezer, "16:36")
+        assert home.turn_on == []
+        await tick(hass, freezer, "16:37")  # two minutes gone
+        await tick(hass, freezer, "16:38")
+        assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom"]]
+        on(hass, hue_lite, "light.bedroom")
+
+        # ...and later off again, never the living room, which it didn't switch on.
+        await tick(hass, freezer, "16:48")
+        await tick(hass, freezer, "16:58")
+    assert [c.data["entity_id"] for c in home.turn_off] == [["light.bedroom"]]
+    assert hass.states.is_state("light.living_room", "on")
+
+
+async def test_away_after_a_restart_with_nobody_home(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """Started with nobody home, the house counts as empty two minutes later,
+    so Away carries on."""
+    await tick(hass, freezer, "16:30")
+    hass.states.async_set("zone.home", "0")
+    await set_up(hass, entry)
+    await switch(hass, "switch.hue_lite_mimic_presence")
+    with patch("custom_components.hue_lite.routines.random") as chance:
+        chance.randint.return_value = 10
+        chance.choice.side_effect = lambda lights: lights[0]
+        await tick(hass, freezer, "16:31")
+        assert home.turn_on == []
+        await tick(hass, freezer, "16:32")  # two minutes after starting
+        await tick(hass, freezer, "16:33")
+    assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom"]]
+
+
+async def test_leaving_takes_lights_off_auto(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, hue_lite: HueLite) -> None:
+    """Once everyone's gone, lights on Auto that are off come off it, so the
+    dashboard doesn't show them on Auto while they're off. One still on
+    stays on Auto (so bedtime still fades it), unless Leaving home switches
+    it off. The labels take them again next time."""
+    office = add_light(hass, "office", "living_room")
+    await action(hass, "set_auto", {"entity_id": [office, "light.bedroom"], "auto": True})
+    hass.states.async_set("light.bedroom", "on")  # the bulb reporting in
+    assert on_auto(hass) == ["light.bedroom", office]
+
+    async def everyone_leaves() -> None:
+        hass.states.async_set("zone.home", "0")
+        freezer.tick(timedelta(seconds=121))
+        async_fire_time_changed(hass)
+        await settle(hass)
+
+    await everyone_leaves()
+    assert on_auto(hass) == ["light.bedroom"]
+
+    # With Leaving home on, the bedroom's switched off and comes off Auto too.
+    hass.states.async_set("zone.home", "1")
+    await switch(hass, "switch.hue_lite_lights_off_when_everyone_leaves")
+    await everyone_leaves()
+    assert on_auto(hass) == []
+    assert [c.data["entity_id"] for c in home.turn_off] == [["light.bedroom"]]
+
+
+async def test_getting_home_late(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry) -> None:
+    """Getting home in the Nightlight stretch or after bedtime, the Coming
+    home lights come on in Natural light and go off half an hour later, even
+    past bedtime. One given a scene meanwhile stays as it is, and someone
+    else getting home brings them on again for another half hour."""
+    office = add_light(hass, "office", "living_room", {home.labels["coming_home"]})
+    await tick(hass, freezer, "22:40")  # the Nightlight stretch: bedtime's at eleven
+    hue_lite = await set_up(hass, entry)
+    hass.states.async_set("zone.home", "0")
+    with after_dark():
+        hass.states.async_set("zone.home", "1")
+        await settle(hass)
+        assert natural(hass) == ["light.living_room", office]
+        on(hass, hue_lite, "light.living_room", office)
+        await action(hass, "apply_preset", {"entity_id": office, "preset": "relax"})
+
+        # Past bedtime, half an hour after getting home: the living room goes off.
+        await tick(hass, freezer, "23:09")
+        assert home.turn_off == []
+        await tick(hass, freezer, "23:10")
+        assert [c.data for c in home.turn_off] == [{"entity_id": ["light.living_room"], "transition": 60}]
+        assert natural(hass) == []
+
+        # Someone else gets home: on again, and off half an hour after that.
+        hass.states.async_set("light.living_room", "off", context=ours(hue_lite))
+        hass.states.async_set("zone.home", "2")
+        await settle(hass)
+        assert natural(hass) == ["light.living_room"]
+        on(hass, hue_lite, "light.living_room")
+        await tick(hass, freezer, "23:40")
+    assert [c.data["entity_id"] for c in home.turn_off] == [["light.living_room"], ["light.living_room"]]
+    assert hass.states.is_state(office, "on")

@@ -19,7 +19,7 @@ from custom_components.hue_lite.engine import HueLite
 from custom_components.hue_lite.shared import DEFAULT_ORDER, DIMMER_DEFAULT
 from custom_components.hue_lite.timeline import kelvin_for
 
-from .conftest import Home, action, add_device, add_light, on, set_up, settle, tick, ws
+from .conftest import Home, action, add_device, add_light, on, ours, set_up, settle, tick, ws
 
 DISCO = {"name": "Disco", "icon": "mdi:party-popper", "colours": [[0.68, 0.31, 60], [0.17, 0.05, 40]], "white": [50, 2700], "drift_minutes": 1}
 TEAL = {"name": "Teal", "icon": "mdi:water", "colours": [[0.17, 0.35, 30]], "white": [30, 5000]}
@@ -167,6 +167,43 @@ async def test_trying_colours_on_the_lights(hass: HomeAssistant, home: Home, hue
     ws(hass, dashboard.websocket_preview_scene, msg)
     await settle(hass)
     assert {c.data["entity_id"][0]: c.data["brightness_pct"] for c in home.turn_on} == {"light.bedroom": 80, "light.living_room": 20}
+    assert hue_lite.scenes == {}
+
+
+async def test_cancelling_after_trying_colours_puts_the_lights_back(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """Trying colours takes the lights out of their scene and Auto. Cancelling
+    the editor puts them back as they were: the living room in Relax, the
+    bedroom off and on Auto, a lamp at its own brightness and colour
+    temperature. Saving leaves them in the new scene."""
+    lamp = add_light(hass, "lamp", "living_room")
+    await action(hass, "apply_preset", {"entity_id": "light.living_room", "preset": "relax"})
+    hass.states.async_set("light.living_room", "on", context=ours(hue_lite))
+    await action(hass, "set_auto", {"entity_id": "light.bedroom", "auto": True})
+    hass.states.async_set(lamp, "on", {"brightness": 100, "color_mode": "color_temp", "color_temp_kelvin": 3000})
+    lights = ["light.living_room", "light.bedroom", lamp]
+    trying = {"type": f"{DOMAIN}/preview_scene", "lights": lights, "colours": [{"rgb": [255, 0, 0], "brightness": 80}]}
+    ws(hass, dashboard.websocket_preview_scene, trying)
+    await settle(hass)
+    assert (hue_lite.scenes, hue_lite.auto) == ({}, set())
+
+    # Cancelled: each goes back.
+    home.turn_on.clear()
+    ws(hass, dashboard.websocket_end_preview, {"type": f"{DOMAIN}/end_preview", "lights": lights, "restore": True})
+    await settle(hass)
+    assert (hue_lite.scenes, hue_lite.auto) == ({"light.living_room": "relax"}, {"light.bedroom"})
+    turned_on = {c.data["entity_id"][0]: c.data for c in home.turn_on}
+    assert turned_on["light.living_room"]["brightness_pct"] == 56
+    assert turned_on[lamp] == {"entity_id": [lamp], "brightness": 100, "color_temp_kelvin": 3000, "transition": 0.4}
+    assert [c.data["entity_id"] for c in home.turn_off] == [["light.bedroom"]]
+
+    # Tried again and saved: nothing's put back.
+    ws(hass, dashboard.websocket_preview_scene, trying)
+    await settle(hass)
+    home.turn_on.clear()
+    home.turn_off.clear()
+    ws(hass, dashboard.websocket_end_preview, {"type": f"{DOMAIN}/end_preview", "lights": lights, "restore": False})
+    await settle(hass)
+    assert home.turn_on == home.turn_off == []
     assert hue_lite.scenes == {}
 
 

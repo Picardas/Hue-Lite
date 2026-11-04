@@ -3,7 +3,7 @@ Hue-Lite set up in it."""
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any
@@ -160,6 +160,18 @@ async def tick(hass: HomeAssistant, freezer: FrozenDateTimeFactory, when: str) -
 
 async def settle(hass: HomeAssistant) -> None:
     await hass.async_block_till_done(wait_background_tasks=True)
+
+
+async def turns(hass: HomeAssistant, until: Callable[[], bool], most: int = 100) -> None:
+    """Let the event loop run, a turn at a time, until `until()` (or `most`
+    turns), for commands that are still on their way. Not asyncio.sleep,
+    which the tests replace (see no_sleep)."""
+    for _ in range(most):
+        if until():
+            return
+        turn = hass.loop.create_future()
+        hass.loop.call_soon(turn.set_result, None)
+        await turn
 
 
 def ws(hass: HomeAssistant, handler: Any, msg: dict[str, Any], connection: Mock | None = None, admin: bool = True) -> Mock:

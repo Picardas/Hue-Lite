@@ -15,6 +15,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .engine import HueLite, async_get_loaded
+from .targets import may_control
 
 _IDS = vol.All(cv.ensure_list, [cv.string])
 
@@ -39,7 +40,7 @@ def async_register(hass: HomeAssistant) -> None:
             raise UnknownUser(context=call.context)
         if user.is_admin:
             return running, found
-        denied = [light for light in found if not user.permissions.check_entity(light, POLICY_CONTROL)]
+        denied = [light for light in found if not may_control(user, [light])]
         if denied and any(call.data.get(key) for key in TARGET_KEYS):
             raise Unauthorized(context=call.context, entity_id=denied[0], permission=POLICY_CONTROL)
         return running, [light for light in found if light not in denied]

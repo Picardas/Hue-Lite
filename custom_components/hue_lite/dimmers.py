@@ -28,7 +28,7 @@ def async_listen(lite: HueLite) -> CALLBACK_TYPE:
         if device is None or not is_dimmer(device):
             return
         if lights := lite.dimmer_lights(device):
-            lite.spawn(_press(lite, command.split("_")[0], lights, event.context, lite.dimmer_cycle(device.id)))
+            lite.spawn(_press(lite, command.split("_")[0], lights, event.context, lite.dimmer_cycle(device.id, lights)))
 
     return lite.hass.bus.async_listen("zha_event", pressed)
 

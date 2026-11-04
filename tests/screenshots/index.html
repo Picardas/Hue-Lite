@@ -137,6 +137,8 @@
     };
 
     const setup = {
+      // The lights that take part, as Hue-Lite sends them (not excluded, hidden or groups).
+      lights: ["light.bedroom", "light.floor_lamp", "light.hall", "light.kitchen", "light.living_room", "light.office"],
       roles: { evening: "evening", wake_up: "wake_up", nightlight: "nightlight", coming_home: "coming_home", first_home: "first_one_home", exclude: "lighting_exclude" },
       labels: [{ label_id: "evening", name: "Evening", icon: "mdi:weather-sunset" }],
       entities: {

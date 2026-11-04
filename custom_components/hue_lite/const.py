@@ -93,6 +93,10 @@ SIGNAL_SHARED: Final = f"{DOMAIN}_shared"
 # Everyone gone for this long turns the lights off.
 LEAVING_DELAY: Final = 120
 
+# Getting home in the Nightlight stretch or after bedtime, the lights that
+# come on go off again after this long (seconds).
+LATE_ARRIVAL: Final = 30 * 60
+
 # Wake up's sunrise, from Nightlight's dim deep red: each preset it fades to,
 # taking this % of the fade-in.
 SUNRISE: Final = (("rest", 40), ("relax", 30), ("energize", 30))

@@ -14,7 +14,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.hue_lite.engine import HueLite
 
-from .conftest import Home
+from .conftest import Home, turns
 
 
 async def test_commands_dont_pile_up_behind_a_slow_bulb(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
@@ -29,24 +29,15 @@ async def test_commands_dont_pile_up_behind_a_slow_bulb(hass: HomeAssistant, hom
         sent.append((lights, data["brightness_pct"]))
         await answer.wait()
 
-    async def until_sent(count: int) -> None:
-        # Not asyncio.sleep: the tests replace it (see conftest's no_sleep).
-        for _ in range(100):
-            if len(sent) >= count:
-                return
-            turn = hass.loop.create_future()
-            hass.loop.call_soon(turn.set_result, None)
-            await turn
-
     living_room, bedroom = "light.living_room", "light.bedroom"
     with patch.object(sender, "_call", slow_bulbs):
         first = hass.async_create_task(sender.call("turn_on", [living_room], brightness_pct=10))
-        await until_sent(1)
+        await turns(hass, lambda: len(sent) >= 1)
         # The living room is still being sent its first: these wait, the later
         # replacing the earlier. The bedroom isn't busy, so it's sent straight away.
         await sender.call("turn_on", [living_room], brightness_pct=20)
         third = hass.async_create_task(sender.call("turn_on", [living_room, bedroom], brightness_pct=30))
-        await until_sent(2)
+        await turns(hass, lambda: len(sent) >= 2)
         assert sent == [([living_room], 10), ([bedroom], 30)]
 
         answer.set()
@@ -86,13 +77,7 @@ async def test_dimming_isnt_held_up_by_a_slow_bulb(hass: HomeAssistant, home: Ho
 
     with patch.object(hue_lite.sender, "_call", living_room_is_slow):
         dimming = hass.async_create_task(hue_lite.async_set_brightness([living_room, bedroom], step_pct=-10))
-        # Not asyncio.sleep: the tests replace it (see conftest's no_sleep).
-        for _ in range(100):
-            if len(sent) == 2:
-                break
-            turn = hass.loop.create_future()
-            hass.loop.call_soon(turn.set_result, None)
-            await turn
+        await turns(hass, lambda: len(sent) == 2)
         # The living room hasn't answered, and the bedroom's been sent its own anyway.
         assert sorted(sent) == [([bedroom], 40), ([living_room], 90)]
         answer.set()

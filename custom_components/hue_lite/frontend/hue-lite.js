@@ -89,13 +89,10 @@
     ]);
   }
 
-  // Lights that take part: not hidden, not labelled Exclude from lighting and
-  // not light groups (which would double up with their members).
-  function allLights(hass, exclude) {
-    return Object.values(hass.entities || {}).filter((e) =>
-      e.entity_id.startsWith("light.") && !e.hidden && !e.entity_category && hass.states[e.entity_id] &&
-      !labelsOf(hass, e).has(exclude) &&
-      !Array.isArray(hass.states[e.entity_id].attributes.entity_id));
+  // The lights that take part, as Hue-Lite says (not hidden, not labelled
+  // Exclude from lighting, not light groups), with their registry entries.
+  function allLights(hass, setup) {
+    return (setup.lights || []).filter((id) => hass.states[id]).map((id) => hass.entities?.[id] || { entity_id: id });
   }
 
   function byName(hass) {
@@ -180,7 +177,7 @@
 
   function mainView(hass, setup, path) {
     const roleLabels = Object.values(setup.roles);
-    const lights = allLights(hass, setup.roles.exclude);
+    const lights = allLights(hass, setup);
     const ids = (entries) => entries.map((x) => x.entity_id).sort(byName(hass));
     const everything = ids(lights);
     // Whole home stays put at the top: a single collapsible block, like a
@@ -315,15 +312,15 @@
       "",
       "**Your own scenes**: Edit scenes under any room's scenes, then the + tile at the end, makes one: one colour (static) or up to eight, each at its own brightness, drifting at their own speed. Try on the lights shows the colours on the room's lights as you pick them. The pencil on a tile changes one of yours, or starts a copy of a built-in scene. A new scene shows in the room it was made in and on its dimmers; elsewhere Edit scenes shows it.",
       "",
-      "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you switch it on or off, change it or pick a scene for it. Put on Auto (even again), it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too.",
+      "**Auto**: the button at the end of a light's or room's bar. On Auto, a light follows wake up and the evening routine whether or not it has their labels, until you switch it on or off, change it or pick a scene for it. Put on Auto (even again), it matches them straight away: on with whichever is running, off if neither is. Lights a routine has show as on Auto too. When everyone's gone out, lights on Auto that are off come off it; the routines' labels take them again next time.",
       "",
       `**Wake up**: on the days it's on (Mon–Fri and Sat & Sun each have a switch and a time), lights labelled *${label("wake_up")}* that are off get a sunrise: from Nightlight's dim red through orange and warm white to Energize, reaching full brightness *at* your wake-up time. Wake up then lets go of them, leaving them on, or turns them off a while later if you choose. Until then they're on Auto.`,
       "",
       `**Evening routine**: on the nights it's on (Sun–Thu and Fri & Sat each have a switch and a bedtime), before sunset, lights labelled *${label("evening")}* come on dim (if someone's home; ones already on fade from how they are instead), brighten to Cool bright, wind down through Relax to Rest before bed (*${label("nightlight")}* lights go to Nightlight for the last stretch) and fade out at bedtime. Picking a scene for a light, Natural light included, takes it out of the routine for the night.`,
       "",
-      `**Coming & Going**: when someone gets home (optionally only after dark), lights labelled *${label("coming_home")}* that are off come on, and so do lights labelled *${label("first_home")}* if the house was empty. Evening lights join the evening routine if it's on, except in its last half hour or so before bed, so they don't go off again soon after; the rest come on in Natural light. When the last person leaves, every light can go off.`,
+      `**Coming & Going**: when someone gets home (optionally only after dark), lights labelled *${label("coming_home")}* that are off come on, and so do lights labelled *${label("first_home")}* if the house was empty. Evening lights join the evening routine if it's on, except in its last half hour or so before bed, so they don't go off again soon after; the rest come on in Natural light. Getting home in that last stretch or after bedtime, they light the way for half an hour, then go off (unless you've changed them). When everyone's been gone two minutes, every light can go off.`,
       "",
-      `**Away**: while nobody's home in the evening (from the evening routine's start until bedtime), one of the *${label("evening")}* lights switches on or off every 10 to 30 minutes, so the house looks lived in. It stops when someone gets home and turns its lights off at bedtime.`,
+      `**Away**: once everyone's been gone two minutes, in the evening (from the evening routine's start until bedtime), one of the *${label("evening")}* lights switches on every 10 to 30 minutes, or one it switched on goes off again, so the house looks lived in. Lights it didn't switch on are left alone. It stops when someone gets home and turns its lights off at bedtime.`,
       "",
       "**Dimming** a light (its slider, or a dimmer's Up and Down) keeps it in its scene at that level: Natural light keeps following the sun, a colour scene keeps drifting, until you pick a scene again. Dimming a light during its wake-up stops its sunrise there.",
       "",
@@ -373,20 +370,19 @@
 
   class HueLiteStrategy extends HTMLElement {
     static async generate(config, hass) {
-      // While Home Assistant's starting, Hue-Lite may not be set up yet: keep
-      // asking for a while (Home Assistant builds the dashboard again once
-      // it's started, too).
-      let setup = null;
-      for (let i = 0; i < 15 && !setup; i++) {
-        setup = await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null);
-        if (setup || hass.config?.state === "RUNNING") break;
-        await new Promise((r) => setTimeout(r, 2000));
-      }
+      const setup = await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null);
       if (!setup) {
+        // While Home Assistant's starting, Hue-Lite may not be set up yet.
+        // Home Assistant builds the dashboard again once it's started, by
+        // which time it is, so there's no need to wait for it here.
+        const starting = hass.config?.state !== "RUNNING";
         return {
           views: [{
             title: "Lights",
-            cards: [{ type: "markdown", content: "Hue-Lite isn't set up. Add it in **Settings → Devices & services**." }],
+            cards: [{
+              type: "markdown",
+              content: starting ? "Hue-Lite is starting…" : "Hue-Lite isn't set up. Add it in **Settings → Devices & services**.",
+            }],
           }],
         };
       }
@@ -2023,9 +2019,9 @@
   // more: a dynamic one, drifting between them at its own speed), with a
   // swatch of how its tile looks. With `lights`, Try on the lights shows
   // the colours on them as they're picked (taking them out of their
-  // scene), and Save then puts them in the scene. Save sends it to
-  // Hue-Lite, which tells every dashboard; Delete (tapped twice, to be
-  // sure) deletes it.
+  // scene), and Save then puts them in the scene; closed any other way,
+  // Hue-Lite puts them back as they were. Save sends it to Hue-Lite, which
+  // tells every dashboard; Delete (tapped twice, to be sure) deletes it.
   class HueLiteSceneEditor extends HTMLElement {
     open(hass, id, scene, show, lights) {
       this._hass = hass;
@@ -2151,6 +2147,11 @@
       onActivate($(".save"), () => this._save());
       this._dialog.addEventListener("close", () => {
         clearTimeout(this._trial);
+        // Colours were tried on the lights: saved, they're in the scene;
+        // otherwise Hue-Lite puts them back as they were.
+        if (this._previewed) {
+          this._hass.callWS({ type: `${DOMAIN}/end_preview`, lights: this._lights, restore: !this._saved }).catch(() => {});
+        }
         this.remove();
       });
       this._rows();
@@ -2230,6 +2231,7 @@
         const colours = JSON.stringify(this._colours);
         if (colours === this._tried) return;
         this._tried = colours;
+        this._previewed = true;
         this._hass.callWS({ type: `${DOMAIN}/preview_scene`, lights: this._lights, colours: this._colours }).catch(() => {});
       }, 300);
     }
@@ -2261,6 +2263,7 @@
       try {
         const result = await this._hass.callWS(message);
         const id = result?.id || this._id;
+        if (message.type === `${DOMAIN}/save_scene`) this._saved = this._trying;
         if (this._trying && message.type === `${DOMAIN}/save_scene` && id) {
           this._hass.callService(DOMAIN, "apply_preset", { preset: id }, { entity_id: this._lights });
         }
@@ -2291,7 +2294,7 @@
   // label group, with the same id, so it has the same scenes; null if there
   // are no such lights.
   function cardBlock(hass, setup, { entity, area, label }) {
-    const lights = allLights(hass, setup.roles.exclude);
+    const lights = allLights(hass, setup);
     const ids = (entries) => entries.map((x) => x.entity_id).sort(byName(hass));
     if (entity) {
       const entry = hass.entities?.[entity];
@@ -2318,12 +2321,19 @@
   // label group, with its bar (switch, dim, Auto) over its scenes, which are
   // the Lights dashboard's for the same one.
   //   {entity: light.x} or {area: living_room} or {label: lamps}
+  // While Home Assistant's starting (a phone reconnecting after a restart),
+  // Hue-Lite or the lights may not be there yet: a card that can't be built
+  // tries again every this many seconds, this many times (three minutes).
+  const CARD_RETRY_S = 5;
+  const CARD_TRIES = 36;
+
   class HueLiteLightCard extends HTMLElement {
     setConfig(config) {
       if (!config.entity && !config.area && !config.label) throw new Error("Choose a light, a room or a label");
       this._config = config;
       this._inner = null;
       this._token = null;
+      this._tries = 0;
       this._build();
     }
 
@@ -2352,6 +2362,14 @@
         note.style.padding = "16px";
         note.textContent = setup ? "No Hue-Lite lights there." : "Hue-Lite isn't set up.";
         this.replaceChildren(note);
+        // Not built yet: try again in a while (unless the card's been set up afresh meanwhile).
+        if (++this._tries < CARD_TRIES) {
+          setTimeout(() => {
+            if (token !== this._token) return;
+            this._token = null;
+            this._build();
+          }, CARD_RETRY_S * 1000);
+        }
         return;
       }
       // Folded or not is kept for each block (two cards sharing one key

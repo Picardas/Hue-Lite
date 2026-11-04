@@ -184,6 +184,9 @@ async def test_dashboard_script_and_config(hass: HomeAssistant, home: Home, entr
     assert "Payroll" not in names
     assert config["roles"] == home.labels
     assert config["entities"]["light_scenes"] == "sensor.hue_lite_light_scenes"
+    # The lights that take part: not the excluded garden light, the hidden
+    # cupboard light or the light group.
+    assert config["lights"] == ["light.bedroom", "light.living_room", "light.strip"]
     # Each preset's and colour scene's colours as a colour bulb reports them.
     # With their brightness, for a copy made in the scene editor.
     assert config["presets"]["relax"] == {"rgb_colors": [[255, 148, 43]], "brightness": [56]}

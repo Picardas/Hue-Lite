@@ -221,6 +221,7 @@ async def test_commands_need_hue_lite_and_a_limit(
         dashboard.websocket_set_dimmer,
         dashboard.websocket_save_scene,
         dashboard.websocket_preview_scene,
+        dashboard.websocket_end_preview,
         dashboard.websocket_delete_scene,
     ):
         assert ws(hass, command, {}).send_error.call_args.args[1] == "not_loaded"

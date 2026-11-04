@@ -156,7 +156,8 @@ Hue-Lite keeps these, so every phone and browser shows the same.
 - **Brightness** dims or brightens every colour together.
 - White bulbs get the first colour's nearest white.
 - **Try on the lights** shows the colours on that block's lights as you pick
-  them. They leave their scene while you do; Save puts them in the new one.
+  them. They leave their scene while you do; Save puts them in the new one,
+  and Cancel puts them back as they were.
 - A new scene shows where you made it: in that room (each of its lights,
   when it has several) and, if you're an admin, on its dimmers. Made from
   Whole home, a label group or a dimmer, it shows just there. Elsewhere it
@@ -239,10 +240,17 @@ on the Hue-Lite device page instead.
   - Evening lights, and lights on Auto, join the evening routine if it's on,
     except in its last half hour or so before bed. The rest come on in
     Natural light.
-  - Every light can go off when everyone has left.
-- **Away** (off by default). While nobody's home in the evening, from the
+  - Getting home in that last stretch or after bedtime, the lights that
+    come on light the way for half an hour, then go off. Ones you've
+    changed meanwhile stay as they are.
+  - Everyone counts as gone once they've been away for two minutes, so a
+    phone's location glitching doesn't count. Then every light can go off,
+    and lights on Auto that are off come off it (the routines' labels take
+    them again next time).
+- **Away** (off by default). Once everyone's gone, in the evening, from the
   evening routine's start until bedtime, one of the Evening lights switches
-  on or off every 10 to 30 minutes, so the house looks lived in.
+  on every 10 to 30 minutes, or one it switched on goes off again, so the
+  house looks lived in. Lights it didn't switch on are left alone.
   - It stops when someone gets home, leaving the lights as they are.
   - At bedtime, it turns off the lights it switched on.
 - **Auto** is the button at the end of each bar. A light is on Auto while
@@ -253,6 +261,9 @@ on the Hue-Lite device page instead.
     change it, or pick a scene for it. A bulb coming back after its power
     was cut doesn't count. Lights with the routines' labels are still taken
     by them next time.
+  - When everyone's gone out, lights on Auto that are off come off it, so
+    the dashboard doesn't show a light that's off as on Auto. Ones still on
+    stay on Auto, so bedtime still fades them out.
   - Putting a light on Auto matches it to the routines straight away, even
     if it's on Auto already. It joins whichever routine is running, or goes
     off if neither is.
@@ -260,7 +271,8 @@ on the Hue-Lite device page instead.
   card.
   - **On** steps through their scenes: by default Natural light and the
     presets. Quick presses step on even before the bulbs report back; after
-    Off, it starts again.
+    Off, it starts again. On bulbs that can't show colour, it skips the
+    colour scenes.
   - **Off** turns the lights off.
   - **Up** and **Down** dim, keeping the lights in their scene.
 

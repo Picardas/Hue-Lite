@@ -15,7 +15,7 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.sun import is_up
 from homeassistant.util import dt as dt_util
 
-from .const import CATCH_UP, EVENING_PHASES, LEAVING_DELAY, MIMIC_MINUTES, NATURAL, ROUTINE, SUNRISE, WAKE_UP
+from .const import CATCH_UP, EVENING_PHASES, LATE_ARRIVAL, LEAVING_DELAY, MIMIC_MINUTES, NATURAL, ROUTINE, SUNRISE, WAKE_UP
 from .timeline import PRESETS, Evening
 
 if TYPE_CHECKING:
@@ -35,6 +35,12 @@ class Routines:
     def __init__(self, lite: HueLite) -> None:
         self.lite = lite
         self._leaving: CALLBACK_TYPE | None = None
+        # Whether everyone's been gone LEAVING_DELAY: the moment Leaving home,
+        # taking lights off Auto and Away start from, until someone's home.
+        self._empty = False
+        # Lights that came on for someone getting home late, and when they go off.
+        self._late: set[str] = set()
+        self._late_off: CALLBACK_TYPE | None = None
         # The end of the last wake-up check: each check covers the time since.
         self._checked = dt_util.now()
         # Away: the lights it's switched on (kept across restarts, so it can
@@ -51,6 +57,11 @@ class Routines:
             async_track_state_change_event(self.lite.hass, [self.lite.presence], self._presence_changed),
             async_at_started(self.lite.hass, self._catch_up),
         ]
+
+    @property
+    def _home(self) -> int | None:
+        """How many people are home; None while the zone's unknown."""
+        return _people(self.lite.hass.states.get(self.lite.presence))
 
     @property
     def _started(self) -> bool:
@@ -76,20 +87,26 @@ class Routines:
         else:
             bedtimes = [self._at(day, lite.evening.bedtime, now) for day in (now.date() - timedelta(days=1), now.date())]
             if now - CATCH_UP < max(b for b in bedtimes if b <= now):
-                lite.spawn(self._bedtime())
+                self._bedtime()
             else:
                 lite.set_scene(lite.in_scene(ROUTINE), "")
-        home = bool(_people(lite.hass.states.get(lite.presence)))
+        home = bool(self._home)
         if home or lite.evening.phase not in EVENING_PHASES:
             self._stop_mimicking(turn_off=not home)
+        # Nobody home: the house counts as empty again once that's lasted
+        # (without Leaving home's switching off or taking lights off Auto,
+        # done when they left).
+        if self._home == 0 and not self._leaving:
+            self._leaving = async_call_later(lite.hass, LEAVING_DELAY, self._still_empty)
         self._checked = min(self._checked, now - CATCH_UP)
         self.tick(now)
 
     @callback
     def async_stop(self) -> None:
-        if self._leaving:
-            self._leaving()
-            self._leaving = None
+        for cancel in (self._leaving, self._late_off):
+            if cancel:
+                cancel()
+        self._leaving = self._late_off = None
 
     # ---- Evening routine -----------------------------------------------------
 
@@ -108,7 +125,7 @@ class Routines:
         elif phase in EVENING_PHASES:
             lite.follow(ROUTINE)
         elif was.phase in EVENING_PHASES:
-            lite.spawn(self._bedtime())
+            self._bedtime()
             self._stop_mimicking(turn_off=True)
 
     @property
@@ -143,7 +160,7 @@ class Routines:
         (WAKE_UP) from its fade-in until it ends (even once it's let go of its
         own lights), or nothing ('', so off)."""
         lite = self.lite
-        if self.evening_on and lite.evening.phase in EVENING_PHASES and _people(lite.hass.states.get(lite.presence)):
+        if self.evening_on and lite.evening.phase in EVENING_PHASES and self._home:
             return ROUTINE
         if (end := self.wake_up_end) and dt_util.utcnow() < end:
             return WAKE_UP
@@ -179,7 +196,7 @@ class Routines:
         turns them on at its current light, if it's on tonight and someone's
         home."""
         lite = self.lite
-        if not self.evening_on or not _people(lite.hass.states.get(lite.presence)):
+        if not self.evening_on or not self._home:
             return
         lite.followed[ROUTINE] = lite.evening
         if lights := lite.routine_lights("evening"):
@@ -203,16 +220,13 @@ class Routines:
         else:
             await lite.apply(ROUTINE, lights, transition)
 
-    async def _bedtime(self) -> None:
+    @callback
+    def _bedtime(self) -> None:
         """Fade out the routine's lights, which it's then done with for
         tonight. Lights moved to another scene during the evening (Natural
         light included) aren't the routine's any more, so they're left alone."""
         lite = self.lite
-        if not (lights := lite.in_scene(ROUTINE)):
-            return
-        lite.set_scene(lights, "")
-        if on := lite.on(lights):
-            await lite.sender.call("turn_off", on, transition=lite.settings["bedtime_fade_minutes"] * 60)
+        lite.switch_off_still_in(lite.in_scene(ROUTINE), ROUTINE, lite.settings["bedtime_fade_minutes"] * 60)
 
     # ---- Wake up -------------------------------------------------------------
 
@@ -301,10 +315,7 @@ class Routines:
         woke = lite.last_wake_up
         if woke is None or woke < dt_util.utcnow() - timedelta(hours=6):
             return
-        lights = lite.in_scene(WAKE_UP)
-        lite.set_scene(lights, "")
-        if on := lite.on(lights):
-            lite.spawn(lite.sender.call("turn_off", on, transition=60))
+        lite.switch_off_still_in(lite.in_scene(WAKE_UP), WAKE_UP, 60)
 
     # ---- Coming & Going ------------------------------------------------------
 
@@ -321,6 +332,8 @@ class Routines:
             self._leaving = async_call_later(self.lite.hass, LEAVING_DELAY, self._everyone_left)
         # Only a real count going up: not the zone coming back from unknown.
         before, after = _people(old), _people(new)
+        if after:
+            self._empty = False
         if before is not None and after is not None and after > before:
             # Someone's home: Away stops, leaving its lights as they are.
             self._stop_mimicking(turn_off=False)
@@ -333,7 +346,10 @@ class Routines:
         Lights the evening routine takes join it while it's on, except in
         its Nightlight stretch before bed, when they'd go off again soon
         after; the rest come on in Natural light. That's the routines'
-        doing, not a scene someone picked, so lights on Auto stay on it."""
+        doing, not a scene someone picked, so lights on Auto stay on it.
+        Getting home in the Nightlight stretch or after bedtime, the lights
+        light the way for LATE_ARRIVAL, then go off (ones changed meanwhile
+        stay as they are); a later arrival gives them longer."""
         lite = self.lite
         s = lite.settings
         if not s["coming_home_enabled"] or (s["coming_home_only_dark"] and is_up(lite.hass)):
@@ -349,33 +365,55 @@ class Routines:
         if natural := [light for light in lights if light not in taken]:
             lite.set_scene(natural, NATURAL)
             lite.spawn(lite.apply(NATURAL, natural, 2, parent))
+            if lite.evening.phase in ("nightlight", "night"):
+                self._late.update(natural)
+                if self._late_off:
+                    self._late_off()
+                self._late_off = async_call_later(lite.hass, LATE_ARRIVAL, self._late_over)
+
+    @callback
+    def _late_over(self, _now: datetime) -> None:
+        """Lights that came on for a late arrival go off."""
+        lights, self._late, self._late_off = sorted(self._late), set(), None
+        self.lite.switch_off_still_in(lights, NATURAL, 60)
 
     @callback
     def _everyone_left(self, _now: datetime) -> None:
-        self._leaving = None
+        """Everyone's been gone LEAVING_DELAY: Leaving home switches the
+        lights off, and lights on Auto come off it, so the dashboard doesn't
+        show lights switched off while you're out as on Auto. Ones still on
+        (Leaving home is off) stay on Auto, so bedtime still fades them out.
+        The routines' labels take their lights again next time."""
+        self._still_empty(_now)
         lite = self.lite
-        if lite.settings["leaving_home_enabled"] and (on := lite.on(lite.lights())):
+        leaving = lite.settings["leaving_home_enabled"]
+        on = lite.on(lite.lights())
+        lite.async_set_auto([light for light in lite.on_auto() if leaving or light not in on], False)
+        if leaving and on:
             lite.spawn(lite.sender.call("turn_off", on, transition=2))
+
+    @callback
+    def _still_empty(self, _now: datetime) -> None:
+        self._leaving = None
+        self._empty = True
 
     # ---- Away ----------------------------------------------------------------
 
     @callback
     def _mimic(self, now: datetime) -> None:
-        """While nobody's home in the evening (from the evening routine's
+        """While the house is empty in the evening (from the evening routine's
         start until bedtime, whether or not it's on tonight), now and then
-        switch one of its lights on, at its light, or off, so the house looks
-        lived in."""
+        switch one of the Evening lights on, at the routine's light, or one
+        it switched on off again, so the house looks lived in. Lights it
+        didn't switch on (a lamp left on) are left alone."""
         lite = self.lite
-        if not (
-            lite.settings["mimic_presence"]
-            and _people(lite.hass.states.get(lite.presence)) == 0
-            and lite.evening.phase in EVENING_PHASES
-        ):
+        if not (lite.settings["mimic_presence"] and self._empty and lite.evening.phase in EVENING_PHASES):
             return
         if self._next_mimic is not None and now < self._next_mimic:
             return
         self._next_mimic = now + timedelta(minutes=random.randint(*MIMIC_MINUTES))
-        if not (lights := lite.routine_lights("evening")):
+        on = set(lite.on(evening := lite.labelled("evening")))
+        if not (lights := [light for light in evening if light in self.mimicked or light not in on]):
             return
         light = random.choice(lights)
         if lite.hass.states.is_state(light, STATE_ON):

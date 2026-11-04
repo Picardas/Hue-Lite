@@ -98,6 +98,10 @@ QUICK_PRESS = timedelta(seconds=4)
 # Every scene a light can be in.
 SCENES = TILE_SCENES | {ROUTINE, WAKE_UP}
 
+# How long the scene editor's trying colours on lights is remembered, if
+# it's never closed (the page went away): how they were is forgotten then.
+PREVIEW_FOR = timedelta(minutes=30)
+
 
 @callback
 def async_get_loaded(hass: HomeAssistant) -> HueLite | None:
@@ -170,6 +174,20 @@ def _stored(data: Any) -> dict[str, Any]:
         },
     }
 
+
+
+def _own_light(state: State | None) -> dict[str, Any]:
+    """light.turn_on data giving a light back the brightness and colour it
+    had (as a colour temperature if it was in one)."""
+    attributes = state.attributes if state else {}
+    data: dict[str, Any] = {}
+    if (brightness := attributes.get("brightness")) is not None:
+        data["brightness"] = brightness
+    if attributes.get("color_mode") == "color_temp" and attributes.get("color_temp_kelvin"):
+        data["color_temp_kelvin"] = attributes["color_temp_kelvin"]
+    elif xy := attributes.get("xy_color"):
+        data["xy_color"] = list(xy)
+    return data
 
 
 def _instant(value: Any) -> datetime | None:
@@ -248,6 +266,10 @@ class HueLite(SharedSettings):
         self._picking_up: set[str] = set()
         # The scene the next scene was last for these lights, and when.
         self._stepped: dict[tuple[str, ...], tuple[str, datetime]] = {}
+        # Lights the scene editor's trying colours on -> how they were (their
+        # scene, whether on Auto, dimmed level, state), and until when that's kept.
+        self._previewed: dict[str, tuple[str, bool, float | None, State | None]] = {}
+        self._preview_until = dt_util.utcnow()
 
     # ---- Lifecycle -----------------------------------------------------------
 
@@ -500,6 +522,16 @@ class HueLite(SharedSettings):
         self._watch_lights()
         self._notify()
 
+    @callback
+    def switch_off_still_in(self, lights: list[str], scene: str, transition: float) -> None:
+        """A routine is done with lights it put in `scene`: those still in it
+        (not changed, or given another scene, since) leave it, and the ones
+        that are on fade out over `transition` seconds."""
+        lights = [light for light in lights if self.scenes.get(light) == scene]
+        self.set_scene(lights, "")
+        if on := self.on(lights):
+            self.spawn(self.sender.call("turn_off", on, transition=transition))
+
     def current_scene(self, lights: list[str]) -> str:
         """The scene every light that's on is in, or '' when none are on or
         they're in different scenes (or none)."""
@@ -686,9 +718,50 @@ class HueLite(SharedSettings):
     async def async_preview(self, lights: list[str], palette: Palette, parent: Context | None = None) -> None:
         """Show colours being picked for a scene on these lights, spread
         across the colour bulbs as a colour scene's are (white bulbs get its
-        white). The lights leave their scene and Auto, as if set by hand."""
+        white). The lights leave their scene and Auto, as if set by hand;
+        how they were is kept, so cancelling puts them back (see
+        async_end_preview)."""
+        now = dt_util.utcnow()
+        if now > self._preview_until:
+            self._previewed = {}
+        self._preview_until = now + PREVIEW_FOR
+        for light in lights:
+            if light not in self._previewed:
+                state = self.hass.states.get(light)
+                self._previewed[light] = (self.scenes.get(light, ""), light in self.auto, self.dimmed.get(light), state)
         self.set_scene(lights, "", leave_auto=True)
         await self._spread(palette, lights, sorted(light for light in lights if self.sender.has_colour(light)), 0, 0.4, parent)
+
+    async def async_end_preview(self, lights: list[str], restore: bool, parent: Context | None = None) -> None:
+        """The scene editor's closed. Saved, the lights are in the new scene
+        and how they were is forgotten. Cancelled (`restore`), the lights it
+        tried colours on go back to how they were: their scene (at its level)
+        and Auto, or their own brightness and colour, or off. One put in a
+        scene meanwhile is left as it is, and so is a scene that's gone, or a
+        routine that's over."""
+        before = {light: self._previewed.pop(light) for light in lights if light in self._previewed}
+        if not restore or dt_util.utcnow() > self._preview_until:
+            return
+        back = {light: was for light, was in before.items() if light not in self.scenes and not self.excluded(light)}
+        for light, (scene, auto, level, _) in back.items():
+            if scene in self.palettes or scene in PRESETS or scene == NATURAL or (
+                scene == ROUTINE and self.evening.phase in EVENING_PHASES
+            ):
+                self.scenes[light] = scene
+                if level is not None:
+                    self.dimmed[light] = level
+            if auto:
+                self.auto.add(light)
+        self._changed()
+        off = [light for light, (*_, state) in back.items() if state is None or state.state != STATE_ON]
+        groups = self._wanted([light for light in back if light not in off])
+        in_scene = {light for group in groups.values() for light in group}
+        own = [light for light in back if light not in off and light not in in_scene]
+        await asyncio.gather(
+            self._send_each(groups.items(), 0.4, parent),
+            *([self.sender.call("turn_off", off, parent=parent, transition=0.4)] if off else []),
+            *(self.sender.call("turn_on", [light], parent=parent, transition=0.4, **_own_light(back[light][3])) for light in own),
+        )
 
     async def _spread(
         self, palette: Palette, lights: list[str], order: list[str], step: int, transition: float, parent: Context | None

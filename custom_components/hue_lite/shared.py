@@ -15,7 +15,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import NATURAL, SIGNAL_SHARED
-from .lights import rgb_color
+from .lights import Sender, rgb_color
 from .timeline import PALETTES, PRESETS, SCENE_CYCLE
 
 # The scenes with a tile on the dashboard.
@@ -126,6 +126,7 @@ class SharedSettings:
     use_dashboard: bool
     dashboard_added: bool
     _stale: set[str]
+    sender: Sender
 
     def shared(self) -> dict[str, Any]:
         """What every dashboard shares: the rooms' and lights' scenes, the
@@ -230,10 +231,13 @@ class SharedSettings:
             return self.lights({ATTR_ENTITY_ID: chosen})
         return self.lights({ATTR_AREA_ID: [device.area_id]}) if device.area_id else []
 
-    def dimmer_cycle(self, device_id: str) -> list[str]:
-        """The scenes a dimmer's On button steps through, in order."""
+    def dimmer_cycle(self, device_id: str, lights: list[str]) -> list[str]:
+        """The scenes a dimmer's On button steps through, in order. With
+        none of its lights able to show colour, not the built-in colour
+        scenes, which its card doesn't show either."""
         scenes = self.dimmer_settings.get(device_id, {}).get("scenes", DIMMER_DEFAULT)
-        return [scene for scene in scenes["order"] if scene not in scenes["hidden"]]
+        white = not any(self.sender.has_colour(light) for light in lights)
+        return [scene for scene in scenes["order"] if scene not in scenes["hidden"] and not (white and scene in PALETTES)]
 
     def tile_scenes(self) -> set[str]:
         """Every scene with a tile: the built-in ones and your own."""

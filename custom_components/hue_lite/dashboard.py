@@ -16,7 +16,6 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.components import websocket_api
 from homeassistant.components.frontend import add_extra_js_url, remove_extra_js_url
 from homeassistant.components.http import StaticPathConfig
@@ -37,7 +36,7 @@ from .dimmers import is_dimmer
 from .engine import HueLite, async_get_loaded
 from .shared import DEFAULT_ORDER, MAX_CUSTOM, TILE_SCENES, custom_scene, scene_set
 from .lights import light_rgb, rgb_color
-from .targets import LIGHT
+from .targets import LIGHT, may_control, taking_part
 from .timeline import PALETTES, PRESETS, kelvin_for, palette_from_stored
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,6 +84,7 @@ async def async_register(hass: HomeAssistant) -> None:
         websocket_set_dimmer,
         websocket_save_scene,
         websocket_preview_scene,
+        websocket_end_preview,
         websocket_delete_scene,
     ):
         websocket_api.async_register_command(hass, command)
@@ -127,8 +127,8 @@ def websocket_config(hass: HomeAssistant, connection: websocket_api.ActiveConnec
 def _config(hue_lite: HueLite) -> dict[str, Any]:
     """What the dashboard needs: the role labels, the labels it can show
     (role labels and labels on lights, their devices and areas; Home Assistant
-    only lists every label to admins), Hue-Lite's entity ids, and the scenes'
-    colours."""
+    only lists every label to admins), Hue-Lite's entity ids, the lights that
+    take part, and the scenes' colours."""
     hass = hue_lite.hass
     devices, areas = dr.async_get(hass), ar.async_get(hass)
     wanted = set(hue_lite.labels.values())
@@ -150,6 +150,8 @@ def _config(hue_lite: HueLite) -> dict[str, Any]:
             if label.label_id in wanted
         ],
         "entities": hue_lite.entity_ids,
+        # The lights that take part, for the dashboard to show.
+        "lights": taking_part(hass, hue_lite.labels["exclude"]),
         "presets": SCENE_COLOURS,
         # The built-in scenes' usual order.
         "scenes": DEFAULT_ORDER,
@@ -192,7 +194,7 @@ def websocket_claim_dashboard(
 MAX_LAYOUTS = 500
 # Scene ids: the built-in ones or your own, which are checked when the command's handled (_known).
 SCENE_IDS = vol.All(cv.ensure_list, [vol.All(str, vol.Length(1, 64))], vol.Length(max=len(TILE_SCENES) + MAX_CUSTOM))
-SCENES = vol.Any(None, {vol.Required("order"): SCENE_IDS, vol.Required("hidden"): SCENE_IDS})
+SCENE_SET = vol.Any(None, {vol.Required("order"): SCENE_IDS, vol.Required("hidden"): SCENE_IDS})
 
 
 def _known(hue_lite: HueLite, scenes: dict[str, list[str]] | None) -> bool:
@@ -218,7 +220,7 @@ def websocket_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveCon
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): f"{DOMAIN}/set_scenes", vol.Required("key"): vol.All(str, vol.Length(1, 255)), vol.Required("scenes"): SCENES}
+    {vol.Required("type"): f"{DOMAIN}/set_scenes", vol.Required("key"): vol.All(str, vol.Length(1, 255)), vol.Required("scenes"): SCENE_SET}
 )
 @_with_hue_lite
 def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
@@ -239,7 +241,7 @@ def websocket_set_scenes(hass: HomeAssistant, connection: websocket_api.ActiveCo
         vol.Required("type"): f"{DOMAIN}/set_dimmer",
         vol.Required("device_id"): str,
         vol.Optional("lights"): vol.Any(None, vol.All(cv.entity_ids, vol.Length(max=100))),
-        vol.Optional("scenes"): SCENES,
+        vol.Optional("scenes"): SCENE_SET,
     }
 )
 @websocket_api.require_admin
@@ -296,11 +298,15 @@ def _colours(msg: dict[str, Any]) -> dict[str, list]:
     return {"colours": colours, "white": [white["brightness"], white["kelvin"]]}
 
 
+def _may_control(connection: websocket_api.ActiveConnection, lights: list[str]) -> bool:
+    """Whether the user may control all these lights (see targets.may_control)."""
+    return may_control(connection.user, lights)
+
+
 def _may_change(connection: websocket_api.ActiveConnection, hue_lite: HueLite, scene_id: str) -> bool:
-    """Whether the user may change or delete one of your own scenes: an
-    admin, or someone who may control every light in it."""
-    user = connection.user
-    return user.is_admin or all(user.permissions.check_entity(light, POLICY_CONTROL) for light in hue_lite.in_scene(scene_id))
+    """Whether the user may change or delete one of your own scenes: they
+    may control every light in it."""
+    return _may_control(connection, hue_lite.in_scene(scene_id))
 
 
 @websocket_api.websocket_command(
@@ -362,14 +368,26 @@ def websocket_preview_scene(hass: HomeAssistant, connection: websocket_api.Activ
     opened for, as a colour scene spreads them. The lights leave their scene,
     as if set by hand. Only lights the user may control (as with the
     actions), and not excluded ones (which the dashboard doesn't show)."""
-    user = connection.user
     lights = [
         light
         for light in hue_lite.lights({ATTR_ENTITY_ID: msg["lights"]})
-        if not hue_lite.excluded(light) and (user.is_admin or user.permissions.check_entity(light, POLICY_CONTROL))
+        if not hue_lite.excluded(light) and _may_control(connection, [light])
     ]
     palette = palette_from_stored({**_colours(msg), "drift_minutes": 3})
     hue_lite.spawn(hue_lite.async_preview(lights, palette, connection.context(msg)))
+    connection.send_result(msg["id"])
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): f"{DOMAIN}/end_preview", vol.Required("lights"): vol.All(cv.entity_ids, vol.Length(1, 100)), vol.Required("restore"): bool}
+)
+@_with_hue_lite
+def websocket_end_preview(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any], hue_lite: HueLite) -> None:
+    """The scene editor closed after trying colours on these lights: saved,
+    or cancelled (`restore`), when they go back to how they were. Only
+    lights the user may control, as with trying colours."""
+    lights = [light for light in msg["lights"] if _may_control(connection, [light])]
+    hue_lite.spawn(hue_lite.async_end_preview(lights, msg["restore"], connection.context(msg)))
     connection.send_result(msg["id"])
 
 
