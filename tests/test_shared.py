@@ -1,25 +1,25 @@
 """The settings every dashboard shares, kept by Hue-Lite: each room's and
 light's scenes, and each Hue dimmer's lights and scenes."""
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import Mock
 
+import probatio as vol
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
-import voluptuous as vol
 
 from homeassistant.components.lovelace.const import STORAGE_DASHBOARD_CREATE_FIELDS
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import Unauthorized
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 
 from custom_components.hue_lite import dashboard
 from custom_components.hue_lite.const import DOMAIN, STORAGE_KEY
 from custom_components.hue_lite.engine import HueLite
+from custom_components.hue_lite.shared import MAX_LAYOUTS
+from custom_components.hue_lite.timeline import PALETTES, SCENE_CYCLE
 
-from .conftest import Home, add_device, natural, ours, set_up, settle, ws
+from .conftest import Home, add_device, change_options, natural, ours, set_up, settle, ws
 
 
 def events(connection: Mock) -> list[dict[str, Any]]:
@@ -76,6 +76,92 @@ async def test_damaged_shared_settings_are_left_out(
     assert hue_lite.dimmer_settings == {"dimmer": {"lights": ["light.bedroom"]}}
 
 
+async def test_whole_homes_scenes_move_to_their_own_key(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """Whole home's scenes were kept as "home", which an area called Home
+    also has: with no such area, they're Whole home's, under its own key now."""
+    whole_home = {"order": ["relax", "energize"], "hidden": ["nebula"]}
+    hass_storage[STORAGE_KEY] = {
+        "version": 1,
+        "key": STORAGE_KEY,
+        "data": {"layouts": {"home": whole_home, "bedroom": {"order": ["rest"], "hidden": []}}},
+    }
+    hue_lite = await set_up(hass, entry)
+    assert hue_lite.layouts == {"whole-home": whole_home, "bedroom": {"order": ["rest"], "hidden": []}}
+
+
+async def test_an_area_called_home_keeps_its_scenes(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """With an area called Home (id "home"), the scenes kept as "home" may
+    be that room's, so they stay with it."""
+    ar.async_get(hass).async_create("Home")
+    hass_storage[STORAGE_KEY] = {
+        "version": 1,
+        "key": STORAGE_KEY,
+        "data": {"layouts": {"home": {"order": ["relax"], "hidden": []}}},
+    }
+    hue_lite = await set_up(hass, entry)
+    assert hue_lite.layouts == {"home": {"order": ["relax"], "hidden": []}}
+
+
+async def test_a_saved_dimmers_lights_keep_only_lights(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """The lights chosen for a dimmer are saved by their entity ids, as the
+    lights on Auto are: anything else in the list (another kind of entity, or
+    a light twice) is left out, and a light that isn't set up yet is kept."""
+    hass_storage[STORAGE_KEY] = {
+        "version": 1,
+        "key": STORAGE_KEY,
+        "data": {"dimmers": {"dimmer": {"lights": ["light.bedroom", "lock.front_door", "light.bedroom", "light.desk"]}}},
+    }
+    hue_lite = await set_up(hass, entry)
+    assert hue_lite.dimmer_settings == {"dimmer": {"lights": ["light.bedroom", "light.desk"]}}
+
+
+async def test_saved_rooms_scenes_are_capped(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """A damaged file with more rooms and lights keeping their own scenes
+    than Hue-Lite allows keeps the first ones, up to the limit; a key too
+    long to be a room's or a light's is left out."""
+    relax = {"order": ["relax"], "hidden": []}
+    layouts = {"k" * 256: relax, **{f"room_{i}": relax for i in range(MAX_LAYOUTS + 100)}}
+    hass_storage[STORAGE_KEY] = {"version": 1, "key": STORAGE_KEY, "data": {"layouts": layouts}}
+    hue_lite = await set_up(hass, entry)
+    assert len(hue_lite.layouts) == MAX_LAYOUTS
+    assert "k" * 256 not in hue_lite.layouts
+    assert f"room_{MAX_LAYOUTS - 1}" in hue_lite.layouts
+
+
+async def test_a_new_scene_shows_in_new_rooms_only_while_theres_room(
+    hass: HomeAssistant, home: Home, hue_lite: HueLite, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new scene made to show in several rooms that don't keep scenes of
+    their own yet adds them only up to the limit (two, here), counting each."""
+    monkeypatch.setattr(dashboard, "MAX_LAYOUTS", 2)
+    # The living room already keeps its own scenes.
+    hue_lite.set_layout("living_room", {"order": ["relax"], "hidden": []})
+    connection = ws(
+        hass,
+        dashboard.websocket_save_scene,
+        {
+            "type": f"{DOMAIN}/save_scene",
+            "name": "Sea",
+            "icon": "",
+            "colours": [{"rgb": [0, 0, 255], "brightness": 20}],
+            "show": {"layouts": ["living_room", "bedroom", "kitchen", "bedroom"]},
+        },
+    )
+    sea = connection.send_result.call_args.args[1]["id"]
+    # It shows in the living room and the bedroom; the kitchen would be one too many.
+    assert set(hue_lite.layouts) == {"living_room", "bedroom"}
+    assert sea in hue_lite.layouts["living_room"]["order"]
+    assert sea in hue_lite.layouts["bedroom"]["order"]
+
+
 async def test_the_lights_dashboard_is_added_once(hass: HomeAssistant, home: Home, entry: MockConfigEntry, hue_lite: HueLite) -> None:
     def config() -> dict[str, Any]:
         return ws(hass, dashboard.websocket_config, {"type": f"{DOMAIN}/config"}).send_result.call_args.args[1]
@@ -102,12 +188,10 @@ async def test_the_lights_dashboard_is_added_once(hass: HomeAssistant, home: Hom
     assert not config()["add_dashboard"]
 
     # ...until the option's turned off (when it isn't added at all) and on again.
-    hass.config_entries.async_update_entry(entry, options={**entry.options, "dashboard": False})
-    await hass.async_block_till_done()
+    await change_options(hass, dashboard=False)
     assert not config()["add_dashboard"]
     assert not claim()
-    hass.config_entries.async_update_entry(entry, options={**entry.options, "dashboard": True})
-    await hass.async_block_till_done()
+    await change_options(hass, dashboard=True)
     assert config()["add_dashboard"]
 
 
@@ -224,4 +308,26 @@ async def test_commands_need_hue_lite_and_a_limit(
         dashboard.websocket_end_preview,
         dashboard.websocket_delete_scene,
     ):
-        assert ws(hass, command, {}).send_error.call_args.args[1] == "not_loaded"
+        assert ws(hass, command, {}, validate=False).send_error.call_args.args[1] == "not_loaded"
+
+
+async def test_a_dimmer_keeps_at_least_one_scene(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """Every scene hidden would leave On nothing to step through (it would
+    quietly fall back to the default ones the card shows hidden), so that's
+    turned down; the dimmer keeps its scenes."""
+    dimmer = add_device(hass, "dimmer", model="RWL021", area="living_room")
+    every = [*SCENE_CYCLE, *PALETTES]
+
+    def set_scenes(order: list[str], hidden: list[str]) -> Mock:
+        message = {"type": f"{DOMAIN}/set_dimmer", "device_id": dimmer.id, "scenes": {"order": order, "hidden": hidden}}
+        return ws(hass, dashboard.websocket_set_dimmer, message)
+
+    assert set_scenes(every, every).send_error.call_args.args[1] == dashboard.ERR_NO_SCENES
+    assert set_scenes([], []).send_error.call_args.args[1] == dashboard.ERR_NO_SCENES
+    assert hue_lite.dimmer_settings == {}
+
+    # One shown is enough.
+    set_scenes(every, every[1:]).send_result.assert_called_once()
+    hass.bus.async_fire("zha_event", {"device_id": dimmer.id, "command": "on_short_release"})
+    await settle(hass)
+    assert hue_lite.scenes["light.living_room"] == every[0]

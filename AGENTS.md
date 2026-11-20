@@ -10,14 +10,17 @@ one plain JavaScript file with no build step.
 
 ## Layout
 
+Paths are in `custom_components/hue_lite/`, except `tests/` and `docs/`.
+
 | Path | What's there |
 | ---- | ------------ |
-| `custom_components/hue_lite/engine.py` | The core: settings, which scene each light is in, Auto, the clock, stored data (`_stored` checks everything loaded) |
+| `engine.py` | The core: settings, which scene each light is in, Auto, the clock, stored data (`_stored` checks everything loaded) |
+| `const.py` | The settings (`SWITCHES`, `TIMES`, `NUMBERS`) and their defaults, the role labels, and the routines' timings |
 | `shared.py` | What every dashboard shares (each room's scenes, the dimmers, your own scenes), mixed into `HueLite`, and checking it as it's loaded |
 | `routines.py` | The evening routine, wake up, coming and going, Away, and catching up after a restart |
 | `timeline.py` | Presets, colour scenes and the two timelines, as plain functions with no Home Assistant imports |
 | `lights.py` | `Sender`: every light command goes through it, so Hue-Lite knows its own changes and commands don't queue up behind a slow bulb |
-| `targets.py` | Which lights a target means, and which are excluded |
+| `targets.py` | Which lights a target means, which are excluded, the area a light is in (`light_area`), and who may control them |
 | `dimmers.py` | Hue dimmer presses (ZHA events) |
 | `dashboard.py` | Serves the script; the websocket commands the dashboard uses (the shared settings, and saving, trying and deleting your own scenes) |
 | `services.py`, `services.yaml` | The actions, which check the caller's permissions |
@@ -26,7 +29,7 @@ one plain JavaScript file with no build step.
 | `frontend/hue-lite.js` | The Lights dashboard: a strategy and its cards |
 | `frontend/hue-lite-loader.js` | What every page loads: it loads `hue-lite.js`, trying again if it doesn't arrive |
 | `translations/en.json`, `icons.json` | Entity, option and action text; icons |
-| `tests/` | pytest tests; `tests/harness/index.html` renders the dashboard with a mock Home Assistant |
+| `tests/` | pytest tests; `test_permissions.py` runs commands through Home Assistant's real websocket with real users; `tests/harness/index.html` renders the dashboard with a mock Home Assistant |
 | `docs/images/` | README screenshots |
 
 ## Checking a change
@@ -34,12 +37,14 @@ one plain JavaScript file with no build step.
 ```bash
 pip install -r requirements_test.txt   # pins Home Assistant's test tooling, so tests run against a known version
 pytest
+pip install ruff==0.17.6 && ruff check .   # the version CI uses; rules in pyproject.toml
 ```
 
-- **CI:** every push runs the tests, hassfest and HACS's checks, and checks
-  the dashboard script parses (see `.github/workflows/validate.yml`). The tests take about 10 seconds on
-  Linux. Under WSL, keep the virtual environment on the Linux filesystem;
-  on a Windows drive the tests take minutes.
+- **CI:** every push runs the tests, ruff, hassfest and HACS's checks, and
+  checks the dashboard script parses (see `.github/workflows/validate.yml`).
+  The tests take about 10 seconds on Linux. Under WSL, keep the virtual
+  environment on the Linux filesystem; on a Windows drive the tests take
+  minutes.
 - **Dashboard script:** there are no JavaScript tests. Serve the repository
   root (`python3 -m http.server --bind 127.0.0.1`) and open
   `/tests/harness/`. It takes `?dark`, `?user` (not an admin), `?unshared`,
@@ -64,9 +69,17 @@ pytest
   the user's side, one scenario per test, with comments narrating the steps.
   - Use conftest's `home` (a few lights, areas and labels) and its helpers:
     `tick`, `settle`, `on`, `ours`, `action`, `switch`, `ws` (a websocket
-    command), `after_dark`.
+    command), `change_options`, `after_dark`.
   - Light actions are recorded, not run, so a light's state only changes
     when a test sets it.
+  - `ws()` checks a command against its schema first, as Home Assistant
+    does. Tests of who may do what go through the real websocket with real
+    users, in `tests/test_permissions.py` (`hass_ws_client`).
+  - Change options with `change_options()`, which goes through the options
+    flow and so reloads Hue-Lite; updating the entry directly doesn't.
+  - Routine state that would leave lights wrong for more than a few minutes
+    after a restart is stored, checked in `_stored`, and tested by
+    restarting part-way.
 - **Comments and docstrings** are plain English and say what happens, not
   how the code does it. Use British spelling (colour, behaviour).
 - **Distrust stored data and the dashboard.** Check everything loaded from
@@ -74,6 +87,19 @@ pytest
   - A command that controls lights for other people is admin-only.
   - Commands use `_with_hue_lite`.
 - **Send light commands only through `Sender`.**
+- **Areas and devices:** a light's area is `light_area` (its own, or its
+  device's; a child device without one is in its parent's). Expect child
+  devices wherever a device is looked up: they have no model of their own.
+  The registry changes that make Hue-Lite look at exclusions again
+  (`EXCLUDING_ENTITY_CHANGES`, `EXCLUDING_DEVICE_CHANGES`) stay in step with
+  `excluded()`.
+- **Python:** `import probatio as vol` (Home Assistant's validation library;
+  `voluptuous` is only an alias of it). No `from __future__` imports: Home
+  Assistant needs Python 3.14, which doesn't need them.
+- **Migrations:** a config entry's go in `async_migrate_entry`, with
+  `MINOR_VERSION` raised. Never raise `STORAGE_VERSION`: an older Hue-Lite
+  couldn't load the data then. New stored data is optional and checked in
+  `_stored` instead.
 - **`manifest.json` has no requirements.** Don't add any.
 
 ## Adding things

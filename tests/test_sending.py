@@ -1,8 +1,6 @@
 """Sending commands to the lights: they don't pile up behind a slow bulb,
 and one that doesn't answer doesn't stop the rest."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 from unittest.mock import patch

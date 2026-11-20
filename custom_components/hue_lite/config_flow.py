@@ -2,13 +2,11 @@
 finds or creates the role labels; the options flow can point each role at
 another label."""
 
-from __future__ import annotations
-
 from typing import Any
 
-import voluptuous as vol
+import probatio as vol
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlowWithReload
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import label_registry as lr
 from homeassistant.helpers.selector import BooleanSelector, EntitySelector, EntitySelectorConfig, LabelSelector
@@ -45,8 +43,9 @@ def role_labels(hass: HomeAssistant, roles: list[str] | None = None) -> dict[str
 
 class HueLiteConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
-    # 1.2 added the First one home label.
-    MINOR_VERSION = 2
+    # Minor version 2 added the First one home label; 3 removed the evening
+    # routine's single switch.
+    MINOR_VERSION = 3
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -55,11 +54,13 @@ class HueLiteConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+    def async_get_options_flow(config_entry: ConfigEntry) -> HueLiteOptionsFlow:
         return HueLiteOptionsFlow()
 
 
-class HueLiteOptionsFlow(OptionsFlow):
+class HueLiteOptionsFlow(OptionsFlowWithReload):
+    """Changing the options reloads Hue-Lite with them."""
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             return self.async_create_entry(data=user_input)

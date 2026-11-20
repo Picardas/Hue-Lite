@@ -1,8 +1,6 @@
 """Your own scenes, kept by Hue-Lite with the built-in ones: static (one
 colour, like a preset) or dynamic (several, drifting at their own speed)."""
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import Mock
 

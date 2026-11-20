@@ -3,14 +3,12 @@ light actions, called as Hue-Lite (a context of its own, so its changes
 aren't taken for someone else's) and without commands piling up behind a slow
 bulb; and the colours they report, for the dashboard."""
 
-from __future__ import annotations
-
 import asyncio
 from collections import deque
 import logging
 from typing import Any
 
-import voluptuous as vol
+import probatio as vol
 
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import Context, HomeAssistant

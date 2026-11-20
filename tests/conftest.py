@@ -1,8 +1,6 @@
 """Fixtures and helpers: a home with a few lights, areas and labels, and
 Hue-Lite set up in it."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Generator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -15,7 +13,12 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL, UrlManager
 from homeassistant.core import Context, HomeAssistant, ServiceCall
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+    label_registry as lr,
+)
 
 from custom_components.hue_lite.const import CONF_DIMMERS, CONF_PRESENCE, DOMAIN, ROLES, label_option
 from custom_components.hue_lite.engine import HueLite
@@ -174,12 +177,30 @@ async def turns(hass: HomeAssistant, until: Callable[[], bool], most: int = 100)
         await turn
 
 
-def ws(hass: HomeAssistant, handler: Any, msg: dict[str, Any], connection: Mock | None = None, admin: bool = True) -> Mock:
-    """Call a websocket command as a dashboard would; the connection records
-    what's sent back."""
+def ws(
+    hass: HomeAssistant,
+    handler: Any,
+    msg: dict[str, Any],
+    connection: Mock | None = None,
+    admin: bool = True,
+    validate: bool = True,
+) -> Mock:
+    """Call a websocket command as a dashboard would, checked against its
+    schema as Home Assistant checks it (unless `validate` is off); the
+    connection records what's sent back."""
     connection = connection or Mock(user=Mock(is_admin=admin), subscriptions={})
-    handler(hass, connection, {"id": 1, **msg})
+    msg = {"id": 1, **msg}
+    # Commands with no fields of their own have no schema.
+    handler(hass, connection, handler._ws_schema(msg) if validate and handler._ws_schema else msg)
     return connection
+
+
+async def change_options(hass: HomeAssistant, **options: Any) -> None:
+    """Change Hue-Lite's options as Configure does, which reloads it."""
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(flow["flow_id"], {**entry.options, **options})
+    await hass.async_block_till_done()
 
 
 def after_dark(dark: bool = True) -> AbstractContextManager:

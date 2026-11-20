@@ -1,25 +1,54 @@
 """The routines: the evening routine, wake up, Coming & Going, and Away, and
 catching up on them after a restart."""
 
-from __future__ import annotations
-
 import asyncio
 from datetime import date, datetime, time, timedelta
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import CALLBACK_TYPE, Context, CoreState, Event, EventStateChangedData, HomeAssistant, State, callback
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import (
+    CALLBACK_TYPE,
+    Context,
+    CoreState,
+    Event,
+    EventStateChangedData,
+    HomeAssistant,
+    State,
+    callback,
+)
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.sun import is_up
 from homeassistant.util import dt as dt_util
 
-from .const import CATCH_UP, EVENING_PHASES, LATE_ARRIVAL, LEAVING_DELAY, MIMIC_MINUTES, NATURAL, ROUTINE, SUNRISE, WAKE_UP
+from .const import (
+    CATCH_UP,
+    EVENING_PHASES,
+    LATE_ARRIVAL,
+    LEAVING_DELAY,
+    MIMIC_MINUTES,
+    NATURAL,
+    ROUTINE,
+    SUNRISE,
+    WAKE_UP,
+)
 from .timeline import PRESETS, Evening
 
 if TYPE_CHECKING:
     from .engine import HueLite
+
+
+def sunrise_from(done: float) -> list[tuple[str, float]]:
+    """The sunrise's steps still to come once `done` of it (0 to 1) has gone
+    by: each preset, with the % of the time left it takes (all of SUNRISE
+    from the start)."""
+    gone, steps, start = done * 100, [], 0
+    for preset, share in SUNRISE:
+        if (end := start + share) > gone:
+            steps.append((preset, (end - max(start, gone)) * 100 / (100 - gone)))
+        start = end
+    return steps
 
 
 def _people(state: State | None) -> int | None:
@@ -32,14 +61,23 @@ def _people(state: State | None) -> int | None:
 
 
 class Routines:
+    """The routines of one Hue-Lite, following the clock, the home zone and
+    the settings."""
+
     def __init__(self, lite: HueLite) -> None:
         self.lite = lite
         self._leaving: CALLBACK_TYPE | None = None
         # Whether everyone's been gone LEAVING_DELAY: the moment Leaving home,
         # taking lights off Auto and Away start from, until someone's home.
         self._empty = False
-        # Lights that came on for someone getting home late, and when they go off.
-        self._late: set[str] = set()
+        # When everyone went out, and whether Leaving home has run since
+        # (kept across restarts, so one just after they left still runs it).
+        self.left_at: datetime | None = None
+        self.left_done = False
+        # Lights that came on for someone getting home late, and when they go
+        # off (kept across restarts, so they still do).
+        self.late: set[str] = set()
+        self.late_until: datetime | None = None
         self._late_off: CALLBACK_TYPE | None = None
         # The end of the last wake-up check: each check covers the time since.
         self._checked = dt_util.now()
@@ -49,6 +87,11 @@ class Routines:
         self._next_mimic: datetime | None = None
         # How many sunrises are still being sent.
         self._waking = 0
+        # The evening routine's lights that were unreachable when it started
+        # (switched off at the wall, say): one coming back on while it's
+        # running joins it then. Not kept across restarts.
+        self.missed: set[str] = set()
+        self._unwatch_missed: CALLBACK_TYPE | None = None
 
     @callback
     def async_start(self) -> list[CALLBACK_TYPE]:
@@ -69,6 +112,16 @@ class Routines:
         may not answer, so the routines wait for _catch_up."""
         return self.lite.hass.state is CoreState.running
 
+    def stored_late(self) -> dict[str, Any] | None:
+        """The lights lit for a late arrival and when they go off, as stored."""
+        if not self.late or self.late_until is None:
+            return None
+        return {"lights": sorted(self.late), "until": self.late_until.isoformat()}
+
+    def stored_left(self) -> dict[str, Any] | None:
+        """When everyone went out and whether Leaving home has run, as stored."""
+        return {"at": self.left_at.isoformat(), "done": self.left_done} if self.left_at else None
+
     @callback
     def _catch_up(self, _hass: HomeAssistant) -> None:
         """Once Home Assistant has started, do what fell due in the last
@@ -78,12 +131,20 @@ class Routines:
         routine's lights. Further back, they're just let go. Away's lights go
         off once its evening's over, unless someone's home, when they're
         left. What's been done already (before Hue-Lite was reloaded) isn't
-        done again."""
+        done again, and what was under way carries on: lights fading into the
+        routine as it brightens, a sunrise, lights lit for a late arrival,
+        and Leaving home just after everyone went out."""
         lite, now = self.lite, dt_util.now()
         if lite.evening.phase in EVENING_PHASES:
             start = self._at(now.date(), lite.evening.start, now)
-            if now - CATCH_UP < start <= now and not lite.in_scene(ROUTINE):
+            # Data saved before 2.5.0 has no start time: its lights tell.
+            started = lite.last_evening >= start if lite.last_evening is not None else bool(lite.in_scene(ROUTINE))
+            if now - CATCH_UP < start <= now and not started:
                 self._start_evening()
+            elif (until := self.brightening_until()) and (on := lite.on(lite.in_scene(ROUTINE))):
+                # Still brightening: its lights that are on (whether fading
+                # into it or following it) go on to where it'll be then.
+                lite.spawn(lite.ease(on, lite.evening_at(until).light, until))
         else:
             bedtimes = [self._at(day, lite.evening.bedtime, now) for day in (now.date() - timedelta(days=1), now.date())]
             if now - CATCH_UP < max(b for b in bedtimes if b <= now):
@@ -93,13 +154,42 @@ class Routines:
         home = bool(self._home)
         if home or lite.evening.phase not in EVENING_PHASES:
             self._stop_mimicking(turn_off=not home)
-        # Nobody home: the house counts as empty again once that's lasted
-        # (without Leaving home's switching off or taking lights off Auto,
-        # done when they left).
-        if self._home == 0 and not self._leaving:
-            self._leaving = async_call_later(lite.hass, LEAVING_DELAY, self._still_empty)
+        self._catch_up_late(now)
+        self._catch_up_leaving(now)
+        self._resume_sunrise(now)
         self._checked = min(self._checked, now - CATCH_UP)
         self.tick(now)
+
+    @callback
+    def _catch_up_late(self, now: datetime) -> None:
+        """Lights lit for a late arrival go off when they were due to: later,
+        or now if that was in the last CATCH_UP; further back, they're left."""
+        if not self.late or self.late_until is None:
+            self._forget_late()
+        elif self.late_until > now:
+            self._late_off = async_call_later(self.lite.hass, (self.late_until - now).total_seconds(), self._late_over)
+        elif now - CATCH_UP < self.late_until:
+            self._late_over(now)
+        else:
+            self._forget_late()
+
+    @callback
+    def _catch_up_leaving(self, now: datetime) -> None:
+        """Nobody home: if everyone went out just before the restart, Leaving
+        home still runs once they've been gone LEAVING_DELAY. Otherwise (it
+        ran, or they went out long ago) the house counts as empty again once
+        that's lasted, without switching anything off. Someone home: their
+        going out is forgotten."""
+        if self._home:
+            self._set_left(None)
+            return
+        if self._home != 0 or self._leaving:
+            return
+        due = self.left_at + timedelta(seconds=LEAVING_DELAY) if self.left_at else None
+        if due is not None and not self.left_done and now - CATCH_UP < due:
+            self._leaving = async_call_later(self.lite.hass, max((due - now).total_seconds(), 0), self._everyone_left)
+        else:
+            self._leaving = async_call_later(self.lite.hass, LEAVING_DELAY, self._still_empty)
 
     @callback
     def async_stop(self) -> None:
@@ -107,6 +197,7 @@ class Routines:
             if cancel:
                 cancel()
         self._leaving = self._late_off = None
+        self._watch_missed(set())
 
     # ---- Evening routine -----------------------------------------------------
 
@@ -149,6 +240,7 @@ class Routines:
         if key != self._tonight:
             return
         if not value:
+            self._watch_missed(set())
             self.lite.set_scene(self.lite.in_scene(ROUTINE), "")
         elif self.lite.evening.phase in EVENING_PHASES:
             self._start_evening()
@@ -199,26 +291,62 @@ class Routines:
         if not self.evening_on or not self._home:
             return
         lite.followed[ROUTINE] = lite.evening
-        if lights := lite.routine_lights("evening"):
+        lite.last_evening = dt_util.utcnow()
+        lite.save()
+        lights = lite.routine_lights("evening")
+        self._watch_missed(set(lite.routine_lights("evening", reachable=False)) - set(lights))
+        if lights:
             lite.set_scene(lights, ROUTINE)
             lite.spawn(self._join_evening(lights, 5))
+
+    @callback
+    def _watch_missed(self, lights: set[str]) -> None:
+        """Follow the routine's lights it couldn't reach (none, to stop)."""
+        if self._unwatch_missed:
+            self._unwatch_missed()
+            self._unwatch_missed = None
+        self.missed = lights
+        if lights:
+            self._unwatch_missed = async_track_state_change_event(self.lite.hass, sorted(lights), self._missed_back)
+
+    @callback
+    def _missed_back(self, event: Event[EventStateChangedData]) -> None:
+        """A light the routine couldn't reach when it started comes back on
+        (from unavailable, not switched on as it was): while the routine's
+        running, it joins it, unless it's been given a scene or excluded since.
+        One that comes back off is left to whoever switches it on."""
+        old, new = event.data["old_state"], event.data["new_state"]
+        if old is None or new is None or old.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN) or new.state != STATE_ON:
+            return
+        lite, light = self.lite, new.entity_id
+        self.missed.discard(light)
+        if self.asking == ROUTINE and light not in lite.scenes and not lite.excluded(light):
+            lite.set_scene([light], ROUTINE)
+            lite.pick_up(light)
 
     async def _join_evening(self, lights: list[str], transition: float) -> None:
         """Bring lights the routine has just taken to its light. While it's
         brightening, ones that are on (set by hand, say) fade from how they
         are to where it'll be once it's brightened, getting there then, so
         they don't drop to its dim start; the rest come on at its light now."""
-        lite, now = self.lite, dt_util.now()
-        start = self._at(now.date(), lite.evening.start, now)
-        brightened = start + timedelta(minutes=lite.settings["evening_brighten_minutes"])
-        on = lite.on(lights) if start <= now < brightened else []
-        if on and (later := lite.evening_at(brightened)).phase == "evening":
+        lite = self.lite
+        if (brightened := self.brightening_until()) and (on := lite.on(lights)):
             await asyncio.gather(
-                lite.ease(on, later.light, brightened),
+                lite.ease(on, lite.evening_at(brightened).light, brightened),
                 lite.apply(ROUTINE, [light for light in lights if light not in on], transition),
             )
         else:
             await lite.apply(ROUTINE, lights, transition)
+
+    def brightening_until(self) -> datetime | None:
+        """When the evening routine will have brightened, while it's
+        brightening; None otherwise."""
+        lite, now = self.lite, dt_util.now()
+        start = self._at(now.date(), lite.evening.start, now)
+        brightened = start + timedelta(minutes=lite.settings["evening_brighten_minutes"])
+        if start <= now < brightened and lite.evening_at(brightened).phase == "evening":
+            return brightened
+        return None
 
     @callback
     def _bedtime(self) -> None:
@@ -226,6 +354,7 @@ class Routines:
         tonight. Lights moved to another scene during the evening (Natural
         light included) aren't the routine's any more, so they're left alone."""
         lite = self.lite
+        self._watch_missed(set())
         lite.switch_off_still_in(lite.in_scene(ROUTINE), ROUTINE, lite.settings["bedtime_fade_minutes"] * 60)
 
     # ---- Wake up -------------------------------------------------------------
@@ -287,13 +416,39 @@ class Routines:
         try:
             await lite.sender.send(lights, PRESETS["nightlight"], 0)
             await asyncio.sleep(2)
-            fade = max((wake - dt_util.utcnow()).total_seconds(), 60)
-            for i, (preset, share) in enumerate(SUNRISE):
-                if not (lights := [light for light in lights if lite.scenes.get(light) == WAKE_UP]):
-                    return
-                await lite.sender.send(lights, PRESETS[preset], fade * share / 100)
-                if i < len(SUNRISE) - 1:
-                    await asyncio.sleep(fade * share / 100)
+            await self._sunrise(lights, wake, sunrise_from(0))
+        finally:
+            self._waking -= 1
+
+    async def _sunrise(self, lights: list[str], wake: datetime, steps: list[tuple[str, float]]) -> None:
+        """Send the sunrise's `steps` (each a preset and the % of the time
+        left it takes) to the lights still in their wake-up, reaching the last
+        at the `wake` time."""
+        lite = self.lite
+        fade = max((wake - dt_util.utcnow()).total_seconds(), 60)
+        for i, (preset, share) in enumerate(steps):
+            if not (lights := [light for light in lights if lite.scenes.get(light) == WAKE_UP]):
+                return
+            await lite.sender.send(lights, PRESETS[preset], fade * share / 100)
+            if i < len(steps) - 1:
+                await asyncio.sleep(fade * share / 100)
+
+    @callback
+    def _resume_sunrise(self, now: datetime) -> None:
+        """A sunrise was under way when Home Assistant stopped (or Hue-Lite
+        reloaded): its lights still in their wake-up go on from where it
+        should be now, reaching Energize at the wake-up time."""
+        lite = self.lite
+        if (woke := lite.last_wake_up) is None or self._waking:
+            return
+        wake = woke + timedelta(minutes=lite.settings["wake_up_fade_minutes"])
+        if woke <= now < wake and (lights := lite.in_scene(WAKE_UP)):
+            lite.spawn(self._resumed_sunrise(lights, wake, (now - woke) / (wake - woke)))
+
+    async def _resumed_sunrise(self, lights: list[str], wake: datetime, done: float) -> None:
+        self._waking += 1
+        try:
+            await self._sunrise(lights, wake, sunrise_from(done))
         finally:
             self._waking -= 1
 
@@ -330,10 +485,13 @@ class Routines:
         if new.state == "0":
             # Gone for a while, so a brief location glitch doesn't count.
             self._leaving = async_call_later(self.lite.hass, LEAVING_DELAY, self._everyone_left)
+            if self.left_at is None:
+                self._set_left(dt_util.utcnow())
         # Only a real count going up: not the zone coming back from unknown.
         before, after = _people(old), _people(new)
         if after:
             self._empty = False
+            self._set_left(None)
         if before is not None and after is not None and after > before:
             # Someone's home: Away stops, leaving its lights as they are.
             self._stop_mimicking(turn_off=False)
@@ -366,7 +524,9 @@ class Routines:
             lite.set_scene(natural, NATURAL)
             lite.spawn(lite.apply(NATURAL, natural, 2, parent))
             if lite.evening.phase in ("nightlight", "night"):
-                self._late.update(natural)
+                self.late.update(natural)
+                self.late_until = dt_util.utcnow() + timedelta(seconds=LATE_ARRIVAL)
+                lite.save()
                 if self._late_off:
                     self._late_off()
                 self._late_off = async_call_later(lite.hass, LATE_ARRIVAL, self._late_over)
@@ -374,8 +534,15 @@ class Routines:
     @callback
     def _late_over(self, _now: datetime) -> None:
         """Lights that came on for a late arrival go off."""
-        lights, self._late, self._late_off = sorted(self._late), set(), None
+        lights, self._late_off = sorted(self.late), None
+        self._forget_late()
         self.lite.switch_off_still_in(lights, NATURAL, 60)
+
+    @callback
+    def _forget_late(self) -> None:
+        if self.late or self.late_until is not None:
+            self.late, self.late_until = set(), None
+            self.lite.save()
 
     @callback
     def _everyone_left(self, _now: datetime) -> None:
@@ -385,6 +552,9 @@ class Routines:
         (Leaving home is off) stay on Auto, so bedtime still fades them out.
         The routines' labels take their lights again next time."""
         self._still_empty(_now)
+        if self.left_at is not None and not self.left_done:
+            self.left_done = True
+            self.lite.save()
         lite = self.lite
         leaving = lite.settings["leaving_home_enabled"]
         on = lite.on(lite.lights())
@@ -396,6 +566,27 @@ class Routines:
     def _still_empty(self, _now: datetime) -> None:
         self._leaving = None
         self._empty = True
+
+    @callback
+    def _set_left(self, at: datetime | None) -> None:
+        """Everyone went out at `at` (Leaving home not run yet), or with None
+        someone's home."""
+        if (self.left_at, self.left_done) != (at, False):
+            self.left_at, self.left_done = at, False
+            self.lite.save()
+
+    @callback
+    def renamed(self, old: str, new: str) -> None:
+        """A light has a new entity id: if Away switched it on, or it came on
+        for a late arrival, it's still turned off when that's over."""
+        changed = False
+        for lights in (self.mimicked, self.late):
+            if old in lights:
+                lights.discard(old)
+                lights.add(new)
+                changed = True
+        if changed:
+            self.lite.save()
 
     # ---- Away ----------------------------------------------------------------
 

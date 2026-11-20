@@ -1,11 +1,9 @@
 """Hue-Lite: Hue-style scenes, a Natural light scene that follows the sun, and
 lighting routines for any lights in Home Assistant, chosen by area and label."""
 
-from __future__ import annotations
-
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers import config_validation as cv, entity_registry as er, issue_registry as ir
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
@@ -33,15 +31,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> b
     await hue_lite.async_load()
     entry.runtime_data = hue_lite
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    hue_lite.async_start()
+    # Before starting, so a start that fails part-way still stops what it started.
     entry.async_on_unload(hue_lite.async_stop)
-    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    hue_lite.async_start()
     return True
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> bool:
-    """Set up before a role existed (First one home, added in 1.2), find or
-    create its label. One from a later Hue-Lite isn't loaded."""
+    """Bring an older entry up to date. Before minor version 2 it had no First
+    one home label, so one is found or created; before 3 it had the evening
+    routine's single switch, which is removed (there's one for Sun–Thu and one
+    for Fri & Sat nights now). An entry from a later major version isn't loaded."""
     if entry.version > 1:
         return False
     if entry.minor_version < 2:
@@ -49,11 +49,18 @@ async def async_migrate_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) ->
         hass.config_entries.async_update_entry(
             entry, options={**entry.options, **role_labels(hass, missing)}, minor_version=2
         )
+    if entry.minor_version < 3:
+        registry = er.async_get(hass)
+        if old := registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_evening_routine_enabled"):
+            registry.async_remove(old)
+        hass.config_entries.async_update_entry(entry, minor_version=3)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> bool:
     if unloaded := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
+        # Stopped first, so nothing changes (and is saved again) after this save.
+        entry.runtime_data.async_stop()
         await entry.runtime_data.async_save()
     return unloaded
 
@@ -64,6 +71,3 @@ async def async_remove_entry(hass: HomeAssistant, entry: HueLiteConfigEntry) -> 
     for role in ROLES:
         ir.async_delete_issue(hass, DOMAIN, f"missing_label_{role}")
 
-
-async def _async_options_updated(hass: HomeAssistant, entry: HueLiteConfigEntry) -> None:
-    await hass.config_entries.async_reload(entry.entry_id)

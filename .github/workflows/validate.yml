@@ -44,5 +44,9 @@ jobs:
       # (Node comes with the runner).
       - run: node --check custom_components/hue_lite/frontend/hue-lite.js
       - run: node --check custom_components/hue_lite/frontend/hue-lite-loader.js
+      # Lint, with the rules in pyproject.toml. Ruff is pinned, so a new
+      # release can't fail a push on its own.
+      - run: pip install ruff==0.17.6
+      - run: ruff check .
       - run: pip install -r requirements_test.txt
       - run: pytest

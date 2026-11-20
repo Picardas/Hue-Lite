@@ -1,6 +1,6 @@
 """Which lights an action, routine or dimmer uses, and which it leaves alone."""
 
-from __future__ import annotations
+from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
@@ -8,7 +8,12 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUs
 
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import Unauthorized
-from homeassistant.helpers import area_registry as ar, entity_registry as er, label_registry as lr
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+    label_registry as lr,
+)
 
 from custom_components.hue_lite.engine import HueLite
 
@@ -102,6 +107,42 @@ async def test_light_excluded_while_in_a_scene_is_let_go(hass: HomeAssistant, ho
     await action(hass, "natural_light", {"entity_id": desk})
     registry.async_update_entity(desk, hidden_by=er.RegistryEntryHider.USER)
     await hass.async_block_till_done()
+    assert hue_lite.scenes == {}
+
+
+async def test_light_let_go_when_its_device_is_excluded(hass: HomeAssistant, home: Home, hue_lite: HueLite) -> None:
+    """Only a change that can exclude a light (its own or its device's
+    labels, area, hiding or category) has Hue-Lite look at its lights again."""
+    devices, entities = dr.async_get(hass), er.async_get(hass)
+    lamp_device, shelf_device = add_device(hass, "lamp"), add_device(hass, "shelf")
+    lamp = add_light(hass, "lamp", device_id=lamp_device.id)
+    shelf = add_light(hass, "shelf", device_id=shelf_device.id)
+    desk = add_light(hass, "desk")
+    await action(hass, "natural_light", {"entity_id": [lamp, shelf, desk]})
+    assert set(hue_lite.scenes) == {lamp, shelf, desk}
+
+    # A firmware update or a new name changes nothing, and isn't looked into.
+    with patch.object(HueLite, "excluded", autospec=True, side_effect=HueLite.excluded) as checked:
+        devices.async_update_device(lamp_device.id, sw_version="2.0")
+        entities.async_update_entity(desk, name="Desk lamp")
+        await settle(hass)
+    assert checked.call_count == 0
+    assert set(hue_lite.scenes) == {lamp, shelf, desk}
+
+    # The lamp's device gets the Exclude label: the lamp is let go.
+    devices.async_update_device(lamp_device.id, labels={home.labels["exclude"]})
+    await settle(hass)
+    assert set(hue_lite.scenes) == {shelf, desk}
+
+    # The shelf's device moves to an excluded area: the shelf is let go.
+    shed = ar.async_get(hass).async_create("Shed", labels={home.labels["exclude"]})
+    devices.async_update_device(shelf_device.id, area_id=shed.id)
+    await settle(hass)
+    assert set(hue_lite.scenes) == {desk}
+
+    # The desk is hidden: it's let go too.
+    entities.async_update_entity(desk, hidden_by=er.RegistryEntryHider.USER)
+    await settle(hass)
     assert hue_lite.scenes == {}
 
 

@@ -1,19 +1,20 @@
 """Timings and fades, in minutes."""
 
-from __future__ import annotations
-
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import NUMBERS
 from .engine import HueLite, HueLiteConfigEntry
 from .entity import SettingEntity
 
+# Nothing polls, so Home Assistant needn't limit parallel updates.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     async_add_entities(SettingNumber(entry.runtime_data, key) for key in NUMBERS)
 

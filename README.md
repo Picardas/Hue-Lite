@@ -90,8 +90,8 @@ A label counts on the light, its device or its area.
 | First one home | Comes on only for the first person home (when the house was empty), e.g. a bedroom |
 | Exclude from lighting | Left out of everything |
 
-Hidden lights and light groups are left out too. Any other label you give
-lights becomes a group on the dashboard.
+Hidden lights, configuration lights and light groups are left out too. Any
+other label you give lights becomes a group on the dashboard.
 
 ## The Lights dashboard
 
@@ -125,7 +125,8 @@ order:
 - Slide to dim a single light; it stays in its scene at that level. Whole
   home and label groups have no slider: one brightness for lights in
   different scenes would flatten them.
-- **Auto** is at the end of the bar. Whole home's shows on only when every light is on Auto.
+- **Auto** is at the end of the bar. Whole home's shows on only when every
+  light is on Auto.
 - Tap the name to show or hide the scenes.
 
 Icons and sliders take the colour the bulbs report. Each scene tile shows the
@@ -147,7 +148,8 @@ colour bulb and they're back where you had them.
 - **Reset** puts the built-in scenes back in their usual order, all shown;
   your own stay as they are.
 
-Hue-Lite keeps these, so every phone and browser shows the same.
+Hue-Lite keeps these, so every phone and browser shows the same. Anyone who
+can control lights can edit them; a read-only user can't.
 
 **Your own scenes:**
 - Give one a name, an icon and one to eight colours, each with its
@@ -155,16 +157,20 @@ Hue-Lite keeps these, so every phone and browser shows the same.
   which drifts between them every 1 to 60 minutes (3 by default).
 - **Brightness** dims or brightens every colour together.
 - White bulbs get the first colour's nearest white.
-- **Try on the lights** shows the colours on that block's lights as you pick
-  them. They leave their scene while you do; Save puts them in the new one,
-  and Cancel puts them back as they were.
+- **Try on the lights** shows the colours on that block's lights (up to 500)
+  as you pick them. They leave their scene while you do; Save puts them in
+  the new one, and Cancel puts them back as they were.
 - A new scene shows where you made it: in that room (each of its lights,
   when it has several) and, if you're an admin, on its dimmers. Made from
   Whole home, a label group or a dimmer, it shows just there. Elsewhere it
   starts hidden, and Edit scenes shows it.
-- Anyone can make them, and change or delete them unless they're on lights
-  that person isn't allowed to control. The built-in scenes can't be changed
-  or deleted. There can be up to 50.
+- Anyone who can control lights can make them, and change or delete them
+  unless they're on lights that person isn't allowed to control. Only an
+  admin can change or delete a scene a dimmer steps through, as a dimmer
+  works for whoever presses it. A read-only user can't make, change or delete
+  scenes.
+- Two of your own scenes can't share a name (ignoring case). The built-in
+  scenes can't be changed or deleted. There can be up to 50.
 
 ![The scene editor: a name, an icon, and colours each with a brightness](docs/images/scene-editor.png)
 
@@ -196,7 +202,7 @@ on the Hue-Lite device page instead.
   | Golden hour | A sunset: gold, amber and deep orange, with coral | 3 minutes |
   | Nebula | Deep blue, periwinkle and violet, with magenta and pink | 2 minutes |
   | Aurora | Green, teal and cyan, with a violet fringe | 2 minutes |
-  | Ember | Firelight: deep reds glowing low, orange flaring brighter | minute |
+  | Ember | Firelight: deep reds glowing low, orange flaring brighter | 1 minute |
   | Forest | Emerald, leaf green and lime, with golden sunlight | 3 minutes |
   | Moonlight | Dim whites, with pale blue, blush and lavender | 4 minutes |
 
@@ -223,10 +229,15 @@ on the Hue-Lite device page instead.
 - **Dimming.** Dimming a light in a scene, with its slider or a dimmer's Up
   and Down, keeps it there at that level. Natural light keeps following the
   sun and a colour scene keeps drifting, just dimmer or brighter, until you
-  pick a scene again.
+  pick a scene again. Dimmed while the evening routine is still brightening,
+  a light stays at that level until the routine has caught up, then follows
+  it.
 - **Lights that drop out.** A light in a scene that comes back after being
   unreachable (a bulb switched off at the wall forgets its colour) gets its
-  scene again. So does one that was off when you changed its scene.
+  scene again. So does one that was off when you changed its scene. An
+  Evening light (or one on Auto) that was unreachable when the evening
+  routine started joins it when it comes back on, while the routine's
+  running.
 - **Wake up.** The Wake up lights that are off get a sunrise. They start at
   Nightlight's dim red and fade through orange and warm white, reaching
   Energize at your wake-up time. Wake up then lets go of them, leaving them
@@ -247,10 +258,11 @@ on the Hue-Lite device page instead.
     phone's location glitching doesn't count. Then every light can go off,
     and lights on Auto that are off come off it (the routines' labels take
     them again next time).
-- **Away** (off by default). Once everyone's gone, in the evening, from the
-  evening routine's start until bedtime, one of the Evening lights switches
-  on every 10 to 30 minutes, or one it switched on goes off again, so the
-  house looks lived in. Lights it didn't switch on are left alone.
+- **Away** (the **Mimic presence** switch, off by default). Once everyone's
+  gone, in the evening, from the evening routine's start until bedtime, one
+  of the Evening lights switches on every 10 to 30 minutes, or one it
+  switched on goes off again, so the house looks lived in. Lights it didn't
+  switch on are left alone.
   - It stops when someone gets home, leaving the lights as they are.
   - At bedtime, it turns off the lights it switched on.
 - **Auto** is the button at the end of each bar. A light is on Auto while
@@ -269,12 +281,17 @@ on the Hue-Lite device page instead.
     off if neither is.
 - **Hue dimmers** control their area, or the lights chosen on the Dimmers
   card.
-  - **On** steps through their scenes: by default Natural light and the
-    presets. Quick presses step on even before the bulbs report back; after
-    Off, it starts again. On bulbs that can't show colour, it skips the
-    colour scenes.
+  - **On** steps through their scenes (at least one): by default Natural
+    light and the presets. Quick presses step on even before the bulbs
+    report back; after Off, it starts again. On bulbs that can't show colour,
+    it skips the built-in colour scenes.
   - **Off** turns the lights off.
   - **Up** and **Down** dim, keeping the lights in their scene.
+
+- **Restarts.** Hue-Lite picks up where it left off: an evening that's
+  started isn't started again, a sunrise carries on to your wake-up time,
+  lights lit for a late arrival still go off, and Leaving home still runs if
+  everyone went out just before.
 
 The settings are switch, time and number entities on the **Hue-Lite** device,
 so automations can use them too. `sensor.hue_lite_light_scenes` shows which
@@ -305,7 +322,20 @@ data: {brightness_pct: 40}
 ```
 
 With no target, an action uses every light. A user who isn't an admin can
-only use it on lights they're allowed to control.
+only use it on lights they're allowed to control. In automations, name your
+own scenes by their id, which stays the same if a scene is renamed (the
+Light scenes sensor lists them).
+
+## Removing Hue-Lite
+
+1. Go to **Settings → Devices & services → Hue-Lite**, open ⋮ and choose
+   **Delete**. Hue-Lite forgets its settings and your own scenes; your
+   lights stay as they are.
+2. Its labels and the Lights dashboard stay. Delete them under
+   **Settings → Labels** and **Settings → Dashboards** if you don't want
+   them.
+3. Remove Hue-Lite in HACS (or delete `custom_components/hue_lite`), then
+   restart Home Assistant.
 
 ## Limitations
 
@@ -314,7 +344,8 @@ only use it on lights they're allowed to control.
 - **Restarts:** a wake-up, evening routine or bedtime that fell due while
   Home Assistant was restarting happens once it's back, if that's within 15
   minutes. After a longer outage it's skipped, and the routine's lights are
-  left as they are.
+  left as they are; so are lights lit for a late arrival, and Leaving home
+  doesn't run.
 - **Dimming from elsewhere:** dimming a light from Home Assistant's own
   light dialog or an automation still takes it out of its scene; only
   Hue-Lite's slider, dimmers and `set_brightness` keep it there.

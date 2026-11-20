@@ -1,15 +1,15 @@
 """The routines over time: evening, wake up, coming and going, Away, catching
 up after a restart, and dimmers."""
 
-from __future__ import annotations
-
+import asyncio
 from datetime import timedelta
 from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers import entity_registry as er
 
 from custom_components.hue_lite.const import ROUTINE
 from custom_components.hue_lite.engine import HueLite
@@ -22,6 +22,7 @@ from .conftest import (
     add_device,
     add_light,
     after_dark,
+    change_options,
     natural,
     on,
     ours,
@@ -253,10 +254,15 @@ async def test_a_wake_up_missed_during_a_restart(
     await restart(hass, freezer, entry, "06:40")
     assert [c.data["transition"] for c in home.turn_on] == [0, 8 * 60, 6 * 60, 6 * 60]
 
-    # Started, it isn't started again by another restart.
+    # Started, it isn't started again by another restart (no Nightlight
+    # first): it goes on from where it should be by then (40% of the way, so
+    # into Relax), still reaching Energize at 07:00.
     home.turn_on.clear()
     await restart(hass, freezer, entry, "06:42")
-    assert home.turn_on == []
+    assert [(c.data["brightness_pct"], c.data["transition"]) for c in home.turn_on] == [
+        (PRESETS["relax"].brightness_pct, 9 * 60),
+        (PRESETS["energize"].brightness_pct, 9 * 60),
+    ]
     assert hass.states.get("sensor.hue_lite_light_scenes").attributes["scenes"] == {"light.bedroom": "wake_up"}
 
     # Down over its end at 07:00, it lets go of the bedroom once back.
@@ -278,6 +284,118 @@ async def test_an_evening_missed_during_a_restart(
     await restart(hass, freezer, entry, "23:05")
     assert [c.data for c in home.turn_off] == [{"entity_id": ["light.bedroom", "light.living_room"], "transition": 15 * 60}]
     assert routine(hass) == []
+
+
+async def test_a_restart_soon_after_the_evening_starts_leaves_lights_switched_off(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """The evening's started already: catching up after a restart soon after
+    doesn't start it again, so lights switched off since stay off."""
+    await tick(hass, freezer, "16:29")
+    hue_lite = await set_up(hass, entry)
+    await tick(hass, freezer, "16:30")
+    on(hass, hue_lite, "light.living_room", "light.bedroom")
+    # Both switched off by hand, which takes them out of the routine.
+    for light in ("light.living_room", "light.bedroom"):
+        hass.states.async_set(light, "off", context=Context(user_id="someone"))
+    await settle(hass)
+    assert routine(hass) == []
+
+    # Home Assistant restarts at 16:40, within the 15 minutes it catches up on.
+    home.turn_on.clear()
+    await restart(hass, freezer, entry, "16:40")
+    assert (routine(hass), home.turn_on) == ([], [])
+
+
+async def test_changing_options_in_the_evening_keeps_the_scenes_picked(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """Hue-Lite reloads when its options change: just after the evening's
+    started, that doesn't take back lights given a scene since."""
+    await tick(hass, freezer, "16:29")
+    await set_up(hass, entry)
+    await tick(hass, freezer, "16:30")
+    await action(hass, "apply_preset", {"preset": "read", "entity_id": ["light.living_room", "light.bedroom"]})
+    home.turn_on.clear()
+
+    await change_options(hass, dimmers=False)
+    assert entry.runtime_data.scenes == {"light.living_room": "read", "light.bedroom": "read"}
+    assert home.turn_on == []
+
+
+async def test_a_reload_as_the_evening_brightens_keeps_lights_fading_into_it(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """A light set by hand fades into the routine as it brightens, rather than
+    dropping to its dim start; Hue-Lite reloading meanwhile doesn't drop it
+    either: it goes on fading, to Cool bright by 17:30."""
+    await tick(hass, freezer, "16:29")
+    await set_up(hass, entry)
+    hass.states.async_set("light.living_room", "on", {"brightness": 200})
+    await tick(hass, freezer, "16:30")
+    await tick(hass, freezer, "16:35")
+
+    # Reloaded at 16:35, it goes on fading over the 55 minutes left, and
+    # following the routine leaves it to that.
+    home.turn_on.clear()
+    await change_options(hass, dimmers=False)
+    await tick(hass, freezer, "16:40")
+    sent = [c.data for c in home.turn_on if c.data["entity_id"] == ["light.living_room"]]
+    assert sent == [
+        {"entity_id": ["light.living_room"], **PRESETS["cool_bright"].colour_data(), "transition": 55 * 60}
+    ]
+
+
+async def test_an_evening_light_unreachable_at_the_start_joins_when_it_comes_back(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """A lamp switched off at the wall can't be reached when the evening
+    starts; switched on there later, it comes back on and joins the routine,
+    as it would have at the start."""
+    await tick(hass, freezer, "16:29")
+    hue_lite = await set_up(hass, entry)
+    hass.states.async_set("light.bedroom", "unavailable")
+    await tick(hass, freezer, "16:30")
+    assert routine(hass) == ["light.living_room"]
+
+    home.turn_on.clear()
+    await tick(hass, freezer, "17:00")
+    hass.states.async_set("light.bedroom", "on")
+    await settle(hass)
+    assert routine(hass) == ["light.bedroom", "light.living_room"]
+    assert [c.data for c in home.turn_on if c.data["entity_id"] == ["light.bedroom"]] == [
+        {"entity_id": ["light.bedroom"], **hue_lite.evening.light.colour_data(), "transition": 2}
+    ]
+
+
+async def test_an_evening_light_switched_on_later_doesnt_join(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """One that comes back off, then is switched on, is someone switching it
+    on: it doesn't join the routine."""
+    await tick(hass, freezer, "16:29")
+    await set_up(hass, entry)
+    hass.states.async_set("light.bedroom", "unavailable")
+    await tick(hass, freezer, "16:30")
+    hass.states.async_set("light.bedroom", "off")
+    hass.states.async_set("light.bedroom", "on")
+    await settle(hass)
+    assert routine(hass) == ["light.living_room"]
+
+
+async def test_an_excluded_light_coming_back_doesnt_join_the_evening(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    await tick(hass, freezer, "16:29")
+    await set_up(hass, entry)
+    hass.states.async_set("light.bedroom", "unavailable")
+    await tick(hass, freezer, "16:30")
+    # Excluded meanwhile, then back on.
+    er.async_get(hass).async_update_entity("light.bedroom", labels={home.labels["evening"], home.labels["exclude"]})
+    await hass.async_block_till_done()
+    hass.states.async_set("light.bedroom", "on")
+    await settle(hass)
+    assert routine(hass) == ["light.living_room"]
 
 
 async def test_an_evening_long_missed_during_a_restart(
@@ -312,6 +430,60 @@ async def test_away_across_a_restart(hass: HomeAssistant, freezer: FrozenDateTim
     # ...then Home Assistant was down over bedtime: back, it turns it off.
     await restart(hass, freezer, entry, "23:40")
     assert [c.data for c in home.turn_off] == [{"entity_id": ["light.bedroom"], "transition": 60}]
+
+
+async def test_away_still_turns_off_a_light_renamed_meanwhile(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    # Away switched the bedroom on while nobody's home...
+    await tick(hass, freezer, "16:00")
+    hue_lite = await set_up(hass, entry)
+    await switch(hass, "switch.hue_lite_mimic_presence")
+    hass.states.async_set("zone.home", "0")
+    await tick(hass, freezer, "16:02")  # everyone's been gone two minutes
+    with patch("custom_components.hue_lite.routines.random") as chance:
+        chance.randint.return_value = 600  # and doesn't switch again before bedtime
+        chance.choice.side_effect = lambda lights: lights[0]
+        await tick(hass, freezer, "16:30")
+    on(hass, hue_lite, "light.bedroom")
+
+    # ...then it's given a new entity id.
+    er.async_get(hass).async_update_entity("light.bedroom", new_entity_id="light.bed")
+    hass.states.async_remove("light.bedroom")
+    on(hass, hue_lite, "light.bed")
+    await hass.async_block_till_done()
+
+    # At bedtime it's still turned off, under its new id.
+    await tick(hass, freezer, "23:00")
+    assert [c.data for c in home.turn_off] == [{"entity_id": ["light.bed"], "transition": 60}]
+
+
+async def test_a_restart_mid_sunrise_still_reaches_energize(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """Home Assistant stopping part-way through a sunrise stops it; back,
+    it goes on from where it should be, reaching Energize at the wake-up time."""
+    await tick(hass, freezer, "06:00")
+    await set_up(hass, entry)
+    await switch(hass, "switch.hue_lite_wake_up_on_weekdays")
+
+    # The sunrise is stopped (as unloading Hue-Lite stops it) while it waits
+    # to send Relax, once Nightlight and Rest (06:30 to 06:42) are on their way.
+    async def stopped(_seconds: float) -> None:
+        if len(home.turn_on) >= 2:
+            raise asyncio.CancelledError
+
+    with patch("custom_components.hue_lite.routines.asyncio.sleep", side_effect=stopped):
+        await tick(hass, freezer, "06:30")
+    assert len(home.turn_on) == 2
+
+    # Back at 06:45, half-way: Relax until 06:51, then Energize by 07:00.
+    home.turn_on.clear()
+    await restart(hass, freezer, entry, "06:45")
+    assert [(c.data["brightness_pct"], c.data["transition"]) for c in home.turn_on] == [
+        (PRESETS["relax"].brightness_pct, 6 * 60),
+        (PRESETS["energize"].brightness_pct, 9 * 60),
+    ]
 
 
 async def test_dimming_during_a_wake_up_stops_it(
@@ -683,6 +855,33 @@ async def test_away_after_a_restart_with_nobody_home(
     assert [c.data["entity_id"] for c in home.turn_on] == [["light.bedroom"]]
 
 
+async def test_a_restart_just_after_everyone_leaves_still_switches_off(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, hue_lite: HueLite, entry: MockConfigEntry
+) -> None:
+    """Leaving home switches the lights off two minutes after everyone's
+    gone, even if Home Assistant restarts in those two minutes."""
+    await switch(hass, "switch.hue_lite_lights_off_when_everyone_leaves")
+    hass.states.async_set("light.living_room", "on")
+    hass.states.async_set("zone.home", "0")
+    await settle(hass)
+
+    # A minute later Home Assistant restarts; nobody comes back.
+    await restart(hass, freezer, entry, "13:01")
+    assert home.turn_off == []
+    freezer.tick(timedelta(minutes=1))
+    async_fire_time_changed(hass)
+    await settle(hass)
+    assert [c.data["entity_id"] for c in home.turn_off] == [["light.living_room"]]
+
+    # Once it has, another restart doesn't switch anything off again.
+    home.turn_off.clear()
+    await restart(hass, freezer, entry, "13:05")
+    freezer.tick(timedelta(minutes=5))
+    async_fire_time_changed(hass)
+    await settle(hass)
+    assert home.turn_off == []
+
+
 async def test_leaving_takes_lights_off_auto(hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, hue_lite: HueLite) -> None:
     """Once everyone's gone, lights on Auto that are off come off it, so the
     dashboard doesn't show them on Auto while they're off. One still on
@@ -742,3 +941,36 @@ async def test_getting_home_late(hass: HomeAssistant, freezer: FrozenDateTimeFac
         await tick(hass, freezer, "23:40")
     assert [c.data["entity_id"] for c in home.turn_off] == [["light.living_room"], ["light.living_room"]]
     assert hass.states.is_state(office, "on")
+
+
+async def test_lights_lit_for_a_late_arrival_go_off_after_a_restart(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry
+) -> None:
+    """Lights that came on for a late arrival still go off half an hour
+    later if Home Assistant restarts meanwhile, and straight away if it was
+    down when they were due to."""
+    await tick(hass, freezer, "22:40")  # the Nightlight stretch: bedtime's at eleven
+    hue_lite = await set_up(hass, entry)
+    hass.states.async_set("zone.home", "0")
+    with after_dark():
+        hass.states.async_set("zone.home", "1")
+        await settle(hass)
+        assert natural(hass) == ["light.living_room"]
+        on(hass, hue_lite, "light.living_room")
+
+        # A restart at 22:45: it still goes off at 23:10.
+        await restart(hass, freezer, entry, "22:45")
+        await tick(hass, freezer, "23:09")
+        assert home.turn_off == []
+        await tick(hass, freezer, "23:10")
+        assert [c.data for c in home.turn_off] == [{"entity_id": ["light.living_room"], "transition": 60}]
+
+        # Someone else gets home at 23:10 (lit until 23:40), and Home
+        # Assistant's down from then until 23:45: it goes off once back.
+        hass.states.async_set("light.living_room", "off", context=ours(hue_lite))
+        hass.states.async_set("zone.home", "2")
+        await settle(hass)
+        on(hass, hue_lite, "light.living_room")
+        home.turn_off.clear()
+        await restart(hass, freezer, entry, "23:45")
+    assert [c.data["entity_id"] for c in home.turn_off] == [["light.living_room"]]

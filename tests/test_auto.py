@@ -2,8 +2,6 @@
 labels (on with them, off when none wants it), until a scene is picked for it
 or it's changed."""
 
-from __future__ import annotations
-
 from freezegun.api import FrozenDateTimeFactory
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
