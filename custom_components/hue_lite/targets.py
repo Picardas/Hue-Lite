@@ -1,8 +1,6 @@
 """Which lights an action, routine or dimmer means, and which lights Hue-Lite
 leaves alone."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -16,6 +14,13 @@ from homeassistant.helpers.target import TargetSelection, async_extract_referenc
 LIGHT = "light"
 
 
+# The registry changes that can exclude a light, or bring it back: a
+# light's own, and its device's (a parent's area is its child devices').
+# Keep in step with excluded().
+EXCLUDING_ENTITY_CHANGES = frozenset({"hidden_by", "entity_category", "labels", "device_id", "area_id"})
+EXCLUDING_DEVICE_CHANGES = frozenset({"labels", "area_id", "parent_device_id"})
+
+
 def excluded(hass: HomeAssistant, entity_id: str, exclude_label: str) -> bool:
     """Whether Hue-Lite leaves a light alone: it's hidden or a config entity,
     or it, its device or its area has the Exclude from lighting label."""
@@ -27,9 +32,15 @@ def excluded(hass: HomeAssistant, entity_id: str, exclude_label: str) -> bool:
     device = dr.async_get(hass).async_get(entry.device_id) if entry.device_id else None
     if device and exclude_label in device.labels:
         return True
-    area_id = entry.area_id or (device.area_id if device else None)
+    area_id = light_area(hass, entry, device)
     area = ar.async_get(hass).async_get_area(area_id) if area_id else None
     return bool(area and exclude_label in area.labels)
+
+
+def light_area(hass: HomeAssistant, entry: er.RegistryEntry, device: dr.AnyDeviceEntry | None) -> str | None:
+    """The area a light is in: its own, or else its device's. A child device
+    (one part of a product) without an area of its own is in its parent's."""
+    return entry.area_id or (dr.async_get_effective_area_id(hass, device) if device else None)
 
 
 def _takes_part(hass: HomeAssistant, entity_id: str, exclude_label: str) -> bool:
@@ -45,12 +56,12 @@ def taking_part(hass: HomeAssistant, exclude_label: str) -> list[str]:
     return sorted(entity_id for entity_id in hass.states.async_entity_ids(LIGHT) if _takes_part(hass, entity_id, exclude_label))
 
 
-def resolve(hass: HomeAssistant, target: Mapping[str, Any] | None, exclude_label: str) -> list[str]:
+def resolve(hass: HomeAssistant, target: Mapping[str, Any] | None, exclude_label: str, reachable: bool = True) -> list[str]:
     """The lights a target means (entity_id, area_id, floor_id, device_id,
     label_id, by Home Assistant's own rules, so a label on a device or area
     counts too), or every light when it's empty. Lights named directly are
     used as they are; the others skip excluded lights and light groups.
-    Unavailable lights are always left out."""
+    Unavailable lights are left out, unless `reachable` is off."""
     selection = TargetSelection(dict(target or {}))
     if selection.has_any_target:
         selected = async_extract_referenced_entity_ids(hass, selection)
@@ -63,12 +74,30 @@ def resolve(hass: HomeAssistant, target: Mapping[str, Any] | None, exclude_label
         for entity_id in found | named
         if entity_id.startswith(f"{LIGHT}.")
         and (state := hass.states.get(entity_id)) is not None
-        and state.state != STATE_UNAVAILABLE
+        and (state.state != STATE_UNAVAILABLE or not reachable)
     )
 
 
-def may_control(user: User, lights: list[str]) -> bool:
+def with_members(hass: HomeAssistant, lights: list[str]) -> list[str]:
+    """These lights and, for a light group, the lights in it (and in groups
+    in it), each once: Home Assistant checks a group's lights as its own."""
+    found: list[str] = []
+    seen: set[str] = set()
+    waiting = list(lights)
+    while waiting:
+        if (light := waiting.pop()) in seen:
+            continue
+        seen.add(light)
+        found.append(light)
+        state = hass.states.get(light)
+        if state and isinstance(members := state.attributes.get(ATTR_ENTITY_ID), list):
+            waiting.extend(member for member in members if isinstance(member, str))
+    return found
+
+
+def may_control(hass: HomeAssistant, user: User, lights: list[str]) -> bool:
     """Whether a user may control all these lights, as Home Assistant checks
-    for its own light actions: an admin always may. Hue-Lite changes lights
-    as itself, which Home Assistant doesn't check, so it asks this first."""
-    return user.is_admin or all(user.permissions.check_entity(light, POLICY_CONTROL) for light in lights)
+    for its own light actions (a light group's lights included): an admin
+    always may. Hue-Lite changes lights as itself, which Home Assistant
+    doesn't check, so it asks this first."""
+    return user.is_admin or all(user.permissions.check_entity(light, POLICY_CONTROL) for light in with_members(hass, lights))

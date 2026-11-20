@@ -1,7 +1,5 @@
 """Bases for Hue-Lite's entities, all on one device."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from homeassistant.const import EntityCategory

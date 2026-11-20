@@ -5,12 +5,12 @@ Plain functions of the time of day, with no Home Assistant imports, so they can
 be tested on their own. Times of day are minutes after midnight.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
+
+from .const import NATURAL
 
 
 @dataclass(frozen=True)
@@ -158,7 +158,7 @@ PALETTES: dict[str, Palette] = {
 }
 
 # What a Hue dimmer's On button steps through, and round again.
-SCENE_CYCLE = ("natural", "energize", "cool_bright", "read", "relax", "rest", "nightlight")
+SCENE_CYCLE = (NATURAL, "energize", "cool_bright", "read", "relax", "rest", "nightlight")
 
 
 def noticeable(a: Light, b: Light) -> bool:
@@ -310,8 +310,9 @@ def evening_routine(now: datetime, sunset: int, s: EveningSettings) -> Evening:
     nightlight_start = bedtime - s.nightlight
 
     # In the hour repeated when the clocks go back, the second time round is
-    # really an hour on: a bedtime in the first is still past.
-    if m >= bedtime or (now.fold and m + 60 >= bedtime):
+    # really an hour on: a bedtime in the first is still past (one after the
+    # repeated hour isn't yet).
+    if m >= bedtime or (now.fold and bedtime < m - now.minute + 60):
         # After bedtime it's night until 05:00, then day again.
         phase = "day" if morning and now.hour >= 5 else "night"
     elif m < start:

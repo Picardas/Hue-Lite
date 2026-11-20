@@ -19,14 +19,15 @@ they had their labels. Picking a scene for a light or changing it takes it
 off Auto; turning it on or off doesn't.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Coroutine, Iterable, Mapping
-from datetime import date, datetime, time, timedelta
+from dataclasses import replace
+from datetime import date, datetime, timedelta
+import itertools
+import re
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_LABEL_ID,
@@ -44,7 +45,12 @@ from homeassistant.helpers import (
     label_registry as lr,
 )
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
-from homeassistant.helpers.event import TrackStates, async_track_state_change_event, async_track_state_change_filtered, async_track_time_change
+from homeassistant.helpers.event import (
+    TrackStates,
+    async_track_state_change_event,
+    async_track_state_change_filtered,
+    async_track_time_change,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
@@ -58,8 +64,10 @@ from .const import (
     DEFAULT_SETTINGS,
     DOMAIN,
     EVENING_PHASES,
+    LATE_ARRIVAL,
     NAME,
     NATURAL,
+    NUMBERS,
     ROLES,
     ROUTINE,
     STORAGE_KEY,
@@ -70,8 +78,18 @@ from .const import (
 )
 from .lights import Sender
 from .routines import Routines
-from .shared import CUSTOM_PREFIX, MAX_CUSTOM, TILE_SCENES, SharedSettings, custom_scene, renamed, scene_set, stored_dimmer
-from .targets import LIGHT, excluded, resolve
+from .shared import (
+    CUSTOM_PREFIX,
+    MAX_CUSTOM,
+    MAX_LAYOUTS,
+    TILE_SCENES,
+    SharedSettings,
+    custom_scene,
+    renamed,
+    scene_set,
+    stored_dimmer,
+)
+from .targets import EXCLUDING_DEVICE_CHANGES, EXCLUDING_ENTITY_CHANGES, LIGHT, excluded, resolve
 from .timeline import (
     PALETTES,
     PRESETS,
@@ -98,26 +116,70 @@ QUICK_PRESS = timedelta(seconds=4)
 # Every scene a light can be in.
 SCENES = TILE_SCENES | {ROUTINE, WAKE_UP}
 
-# How long the scene editor's trying colours on lights is remembered, if
-# it's never closed (the page went away): how they were is forgotten then.
+# How long the scene editor keeps how the lights it's trying colours on were,
+# in case it's never closed (the page went away).
 PREVIEW_FOR = timedelta(minutes=30)
 
 
 @callback
 def async_get_loaded(hass: HomeAssistant) -> HueLite | None:
     """The running Hue-Lite, if it's set up."""
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.state is ConfigEntryState.LOADED:
-            return entry.runtime_data
-    return None
+    entries: list[HueLiteConfigEntry] = hass.config_entries.async_loaded_entries(DOMAIN)
+    return entries[0].runtime_data if entries else None
+
+
+# The most lights kept in each stored list (those on Auto, those Away
+# switched on, those in a scene), so a damaged file can't slow every start.
+MAX_STORED_LIGHTS = 5000
+
+# Whole home's key for its scenes, as the dashboard has it (an area's id never
+# has a hyphen), and its key before 2.5.0.
+WHOLE_HOME = "whole-home"
+WHOLE_HOME_WAS = "home"
+
+# A time as the time entities keep it: HH:MM, or HH:MM:SS.
+TIME = re.compile(r"([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?")
 
 
 def _is_time(value: str) -> bool:
-    try:
-        time.fromisoformat(value)
-    except ValueError:
-        return False
-    return True
+    return TIME.fullmatch(value) is not None
+
+
+def _setting(key: str, value: Any) -> Any:
+    """A stored setting as it can be used, or None: of its default's type
+    (so not a bool for a number), a time as HH:MM, and a number brought
+    within its range."""
+    if key not in DEFAULT_SETTINGS or type(value) is not type(DEFAULT_SETTINGS[key]):
+        return None
+    if key in TIMES:
+        return value if _is_time(value) else None
+    if key in NUMBERS:
+        _, low, high, _ = NUMBERS[key]
+        return min(max(value, low), high)
+    return value
+
+
+def _is_light_id(value: Any) -> bool:
+    """Whether a stored value can be a light's entity id."""
+    return isinstance(value, str) and value.startswith(f"{LIGHT}.") and len(value) <= 255
+
+
+def _stored_lights(value: Any) -> list[str]:
+    """A stored list of lights: the entity ids in it that can be lights',
+    each once, and at most MAX_STORED_LIGHTS of them. Lights not set up
+    (yet) are kept."""
+    if not isinstance(value, list):
+        return []
+    return list(itertools.islice(dict.fromkeys(filter(_is_light_id, value)), MAX_STORED_LIGHTS))
+
+
+def _stored_dimmer(value: dict[str, Any], tiles: set[str]) -> dict[str, Any]:
+    """A stored dimmer's settings (see shared.stored_dimmer), with its lights
+    kept as other stored lists of lights are."""
+    found = stored_dimmer(value, tiles)
+    if lights := _stored_lights(found.pop("lights", None)):
+        found["lights"] = lights
+    return found
 
 
 def _stored(data: Any) -> dict[str, Any]:
@@ -126,13 +188,14 @@ def _stored(data: Any) -> dict[str, Any]:
     nights, both starting as it was; renamed scenes get their new ids), with
     anything of the wrong kind left out: a damaged file, a scene there isn't
     any more, or a setting of the wrong type, which keeps its default (a bad
-    time would break every minute's tick)."""
+    time would break every minute's tick); a number out of range is brought
+    within it, and lists are capped."""
     data = data if isinstance(data, dict) else {}
 
     def part(key: str, kind: type) -> Any:
         return data[key] if isinstance(data.get(key), kind) else kind()
 
-    settings, scenes, auto = part("settings", dict), part("scenes", dict), part("auto", list)
+    settings, scenes = part("settings", dict), part("scenes", dict)
     layouts, dimmer_settings, dimmed = part("layouts", dict), part("dimmers", dict), part("dimmed", dict)
     if isinstance(was := settings.get("evening_routine_enabled"), bool):
         settings = {"evening_weeknights": was, "evening_weekends": was, **settings}
@@ -144,36 +207,69 @@ def _stored(data: Any) -> dict[str, Any]:
     }
     tiles = TILE_SCENES | custom.keys()
     return {
-        "settings": {
-            key: value
-            for key, value in settings.items()
-            if key in DEFAULT_SETTINGS
-            and type(value) is type(DEFAULT_SETTINGS[key])
-            and (key not in TIMES or _is_time(value))
-        },
-        "scenes": {
-            light: scene
-            for light, was in scenes.items()
-            if isinstance(was, str) and ((scene := renamed(was)) in SCENES or scene in custom)
-        },
+        "settings": {key: value for key, was in settings.items() if (value := _setting(key, was)) is not None},
+        "scenes": dict(
+            itertools.islice(
+                (
+                    (light, scene)
+                    for light, was in scenes.items()
+                    if _is_light_id(light) and isinstance(was, str) and ((scene := renamed(was)) in SCENES or scene in custom)
+                ),
+                MAX_STORED_LIGHTS,
+            )
+        ),
         "custom_scenes": custom,
-        "auto": [light for light in auto if isinstance(light, str)],
-        "mimicked": [light for light in part("mimicked", list) if isinstance(light, str)],
+        "auto": _stored_lights(data.get("auto")),
+        "mimicked": _stored_lights(data.get("mimicked")),
         "dimmed": {
             light: float(level)
             for light, level in dimmed.items()
             if type(level) in (int, float) and 0 < level <= 100
         },
         "last_wake_up": _instant(data.get("last_wake_up")),
+        "last_evening": _instant(data.get("last_evening")),
+        "late": _stored_late(data.get("late")),
+        "left": _stored_left(data.get("left")),
         "dashboard_added": data.get("dashboard_added") is True,
-        "layouts": {key: setup for key, value in layouts.items() if (setup := scene_set(value, tiles))},
+        "layouts": dict(
+            itertools.islice(
+                (
+                    (key, setup)
+                    for key, value in layouts.items()
+                    if isinstance(key, str) and len(key) <= 255 and (setup := scene_set(value, tiles))
+                ),
+                MAX_LAYOUTS,
+            )
+        ),
         "dimmers": {
             device: found
             for device, value in dimmer_settings.items()
-            if isinstance(value, dict) and (found := stored_dimmer(value, tiles))
+            if isinstance(value, dict) and (found := _stored_dimmer(value, tiles))
         },
     }
 
+
+def _stored_late(value: Any) -> dict[str, Any] | None:
+    """The lights that came on for a late arrival and when they go off, or
+    None: lights are kept as other stored lists of lights are, and a time
+    further on than a late arrival lasts (and a minute) drops it all."""
+    if not isinstance(value, dict):
+        return None
+    lights, until = _stored_lights(value.get("lights")), _instant(value.get("until"))
+    if not lights or until is None or until > dt_util.utcnow() + timedelta(seconds=LATE_ARRIVAL, minutes=1):
+        return None
+    return {"lights": lights, "until": until}
+
+
+def _stored_left(value: Any) -> dict[str, Any] | None:
+    """When everyone went out and whether Leaving home has run since, or
+    None: a time more than a minute ahead drops it."""
+    if not isinstance(value, dict):
+        return None
+    at = _instant(value.get("at"))
+    if at is None or at > dt_util.utcnow() + timedelta(minutes=1):
+        return None
+    return {"at": at, "done": value.get("done") is True}
 
 
 def _own_light(state: State | None) -> dict[str, Any]:
@@ -191,12 +287,16 @@ def _own_light(state: State | None) -> dict[str, Any]:
 
 
 def _instant(value: Any) -> datetime | None:
-    """A stored time with its time zone, or None."""
+    """A stored time with its time zone, or None. A stored time is in the
+    past (or within a day); one far in the future would overflow when the
+    routines add to it, so it's None too."""
     try:
         when = dt_util.parse_datetime(value) if isinstance(value, str) else None
     except ValueError:
         return None
-    return when if when and when.tzinfo else None
+    if when is None or when.tzinfo is None or when > dt_util.utcnow() + timedelta(days=1):
+        return None
+    return when
 
 
 class HueLite(SharedSettings):
@@ -222,12 +322,17 @@ class HueLite(SharedSettings):
         # they get (see async_set_brightness).
         self.dimmed: dict[str, float] = {}
         # Lights fading from how they were into the routine -> when they get
-        # there; following leaves them alone until then (see ease).
+        # there; following leaves them alone until then (see ease). A light
+        # dimmed while the routine brightens is held at that level until it
+        # has (see async_set_brightness).
         self._easing: dict[str, datetime] = {}
         # Hue-Lite's entity ids by key, for the dashboard (filled in as they're added).
         self.entity_ids: dict[str, str] = {}
         self.device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name=NAME, entry_type=DeviceEntryType.SERVICE)
         self.last_wake_up: datetime | None = None
+        # When the evening routine last started, so a restart soon after
+        # doesn't start it again (and take back lights changed since).
+        self.last_evening: datetime | None = None
         # Shared by everyone's dashboard: each room's and light's scenes
         # ({order, hidden}, by the dashboard's key for them), and each Hue
         # dimmer's settings (by device id: the lights it controls instead of
@@ -281,6 +386,11 @@ class HueLite(SharedSettings):
         self.settings.update(data["settings"])
         self.last_wake_up = data["last_wake_up"]
         self.layouts, self.dimmer_settings = data["layouts"], data["dimmers"]
+        # Before 2.5.0, Whole home's scenes were kept as "home", which is also
+        # an area called Home's key: they move unless there's such an area.
+        if WHOLE_HOME_WAS in self.layouts and WHOLE_HOME not in self.layouts and not ar.async_get(self.hass).async_get_area(WHOLE_HOME_WAS):
+            self.layouts[WHOLE_HOME] = self.layouts.pop(WHOLE_HOME_WAS)
+            self.save()
         self.dashboard_added = data["dashboard_added"] and self.use_dashboard
         self.natural, self.evening = self._targets(dt_util.now())
         self.followed = {NATURAL: self.natural, ROUTINE: self.evening}
@@ -292,6 +402,12 @@ class HueLite(SharedSettings):
         self.auto = {light for light in data["auto"] if not self.excluded(light)}
         self.dimmed = {light: level for light, level in data["dimmed"].items() if light in self.scenes}
         self.routines.mimicked = {light for light in data["mimicked"] if not self.excluded(light)}
+        self.last_evening = data["last_evening"]
+        if late := data["late"]:
+            self.routines.late = {light for light in late["lights"] if not self.excluded(light)}
+            self.routines.late_until = late["until"]
+        if left := data["left"]:
+            self.routines.left_at, self.routines.left_done = left["at"], left["done"]
 
     @callback
     def async_start(self) -> None:
@@ -336,6 +452,9 @@ class HueLite(SharedSettings):
             "dashboard_added": self.dashboard_added,
             "custom_scenes": self.custom,
             "mimicked": sorted(self.routines.mimicked),
+            "last_evening": self.last_evening.isoformat() if self.last_evening else None,
+            "late": self.routines.stored_late(),
+            "left": self.routines.stored_left(),
         }
 
     @callback
@@ -400,18 +519,18 @@ class HueLite(SharedSettings):
     # ---- Choosing lights -----------------------------------------------------
 
     @callback
-    def lights(self, target: Mapping[str, Any] | None = None) -> list[str]:
+    def lights(self, target: Mapping[str, Any] | None = None, reachable: bool = True) -> list[str]:
         """The lights a target means; see targets.resolve."""
-        return resolve(self.hass, target, self.labels["exclude"])
+        return resolve(self.hass, target, self.labels["exclude"], reachable)
 
     def labelled(self, role: str) -> list[str]:
         """The lights with a role's label (Evening, Wake up, ...)."""
         return self.lights({ATTR_LABEL_ID: [self.labels[role]]})
 
-    def routine_lights(self, role: str) -> list[str]:
+    def routine_lights(self, role: str, reachable: bool = True) -> list[str]:
         """The lights a routine ("evening" or "wake_up") takes: those with its
-        label, and those on Auto."""
-        return self.lights({ATTR_LABEL_ID: [self.labels[role]], ATTR_ENTITY_ID: sorted(self.auto)})
+        label, and those on Auto (with `reachable` off, unavailable ones too)."""
+        return self.lights({ATTR_LABEL_ID: [self.labels[role]], ATTR_ENTITY_ID: sorted(self.auto)}, reachable)
 
     def excluded(self, entity_id: str) -> bool:
         return excluded(self.hass, entity_id, self.labels["exclude"])
@@ -621,11 +740,30 @@ class HueLite(SharedSettings):
         picked again. `step_pct` moves each light on from its own
         brightness (a dimmer's Up and Down). A light in a scene that's off
         comes on in it at that level; others just get the brightness. A
-        light in its wake-up stops brightening there. Every light is sent its
-        command at once, so a slow bulb doesn't hold up the rest."""
+        light in its wake-up stops brightening there.
+
+        The level is a share of the scene's usual brightness, so a light set
+        while the scene is briefly dim isn't sent far brighter later: a light
+        dimmed while the evening routine brightens is held at that level until
+        it has, then follows it at that share of its full light; a Nightlight
+        light at night takes a share of the light the scene gives the others.
+
+        Every light is sent its command at once, so a slow bulb doesn't hold
+        up the rest."""
         self.set_scene([light for light in lights if self.scenes.get(light) == WAKE_UP], "")
+        # Worked out once for all the lights: the light each one's scene wants
+        # for it now, before dimming (none for a light in no scene), the
+        # Nightlight lights, and when the routine will have brightened (if
+        # it's brightening).
+        nightlights: dict[str, set[str]] = {}
+        wanted = {
+            entity_id: light for light, group in self._wanted(lights, nightlights=nightlights).items() for entity_id in group
+        }
+        ramp = self.routines.brightening_until() if any(self.scenes.get(light) == ROUTINE for light in wanted) else None
+        ramp_full = self.evening_at(ramp).light.brightness_pct if ramp else 0
         brightness: dict[int, list[str]] = {}
         coming_on: list[Coroutine[Any, Any, None]] = []
+        kept = False
         for light in lights:
             self._easing.pop(light, None)
             state = self.hass.states.get(light)
@@ -635,14 +773,20 @@ class HueLite(SharedSettings):
                 pct = min(max(now + (step_pct or 0), 1), 100)
             else:
                 pct = min(max(round(brightness_pct), 1), 100)
-            scene_light = self._scene_light(light)
+            scene_light = wanted.get(light)
             if scene_light is not None:
-                self.dimmed[light] = pct / scene_light.brightness_pct
+                full, until = self._dimming_from(light, scene_light, ramp, ramp_full, nightlights)
+                self.dimmed[light] = pct / full
+                if until is not None:
+                    self._easing[light] = until
+                kept = True
             if on or scene_light is None:
                 brightness.setdefault(pct, []).append(light)
             else:
-                coming_on.append(self._send([light], scene_light, 0.4, parent))
-        self.save()
+                coming_on.append(self.sender.send([light], replace(scene_light, brightness_pct=pct), 0.4, parent))
+        # Only a level kept in a scene is saved.
+        if kept:
+            self.save()
         await asyncio.gather(
             *coming_on,
             *(
@@ -651,28 +795,50 @@ class HueLite(SharedSettings):
             ),
         )
 
-    def _scene_light(self, light: str) -> Light | None:
-        """The light a light's scene wants for it now, before dimming; None
-        when it's in none (or in wake up, which is fading it already)."""
-        return next(iter(self._wanted([light])), None)
+    def _dimming_from(
+        self,
+        light: str,
+        scene_light: Light,
+        ramp: datetime | None,
+        ramp_full: float,
+        nightlights: dict[str, set[str]],
+    ) -> tuple[float, datetime | None]:
+        """The brightness a light's dimmed level is a share of, and until when
+        it's held at the level it was given (see async_set_brightness):
+        `ramp` is when the routine will have brightened (None if it isn't
+        brightening), `ramp_full` its brightness then, and `nightlights` the
+        lights Natural light and the routine give Nightlight now."""
+        scene = self.scenes.get(light, "")
+        if scene == ROUTINE and ramp is not None:
+            return ramp_full, ramp
+        if light in nightlights.get(scene, ()):
+            return self.target(scene).light.brightness_pct, None
+        return scene_light.brightness_pct, None
 
-    def _wanted(self, lights: list[str], scene: str | None = None) -> dict[Light, list[str]]:
+    def _wanted(
+        self, lights: list[str], scene: str | None = None, nightlights: dict[str, set[str]] | None = None
+    ) -> dict[Light, list[str]]:
         """The lights their scenes (or Natural light's or the routine's, as
         `scene`) want for them now, before dimming, each with its lights.
         Lights in none, or in wake up (which is fading them already), are
-        left out."""
+        left out. `nightlights` is filled in with the Nightlight lights it
+        looks up, for a caller that needs them too."""
         groups: dict[Light, list[str]] = {}
-        nightlights: dict[str, set[str]] = {}
+        # Worked out once, for every light that needs them: the Nightlight
+        # lights, and each colour scene's place for each of its colour bulbs.
+        nightlights = {} if nightlights is None else nightlights
+        places: dict[str, dict[str, int]] = {}
         for light in lights:
             current = scene or self.scenes.get(light, "")
             if current in PRESETS:
                 wanted = PRESETS[current]
             elif palette := self.palettes.get(current):
-                wanted = (
-                    palette.colour(self._palette_order(current).index(light) + self._drift_step(palette))
-                    if self.sender.has_colour(light)
-                    else palette.white
-                )
+                if not self.sender.has_colour(light):
+                    wanted = palette.white
+                else:
+                    if current not in places:
+                        places[current] = {bulb: i for i, bulb in enumerate(self._palette_order(current))}
+                    wanted = palette.colour(places[current][light] + self._drift_step(palette))
             elif current == NATURAL or (current == ROUTINE and self.evening.phase in EVENING_PHASES):
                 if current not in nightlights:
                     nightlights[current] = self._nightlights(current)
@@ -862,12 +1028,16 @@ class HueLite(SharedSettings):
             stale = light in self._stale or old.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
             self._stale.discard(light)
             if stale or scene in (NATURAL, ROUTINE):
-                # Lights coming back together (after a restart, a power cut)
-                # are picked up together.
-                first = not self._picking_up
-                self._picking_up.add(light)
-                if first:
-                    self.spawn(self._pick_up())
+                self.pick_up(light)
+
+    @callback
+    def pick_up(self, light: str) -> None:
+        """Send a light that's come back on its scene's light. Lights coming
+        back together (after a restart, a power cut) are picked up together."""
+        first = not self._picking_up
+        self._picking_up.add(light)
+        if first:
+            self.spawn(self._pick_up())
 
     async def _pick_up(self) -> None:
         """Send lights that have come back on their scenes' lights, a command
@@ -902,8 +1072,8 @@ class HueLite(SharedSettings):
     @callback
     def _entity_registry_updated(self, event: Event[er.EventEntityRegistryUpdatedData]) -> None:
         """A light keeps its scene, Auto, dimmers and the scenes shown for it
-        when its entity id changes; one that's deleted, excluded or hidden is
-        let go."""
+        when its entity id changes, and Away and a late arrival still turn it
+        off; one that's deleted, excluded or hidden is let go."""
         data = event.data
         light = data["entity_id"]
         if not light.startswith(f"{LIGHT}."):
@@ -925,15 +1095,19 @@ class HueLite(SharedSettings):
                     self._changed()
                 self._rename_in_dimmers(old, light)
                 self._rename_in_layouts(old, light)
-            self._release_excluded()
+                self.routines.renamed(old, light)
+            if old or EXCLUDING_ENTITY_CHANGES.intersection(data["changes"]):
+                self._release_excluded()
 
     @callback
     def _device_registry_updated(self, event: Event[dr.EventDeviceRegistryUpdatedData]) -> None:
         """A dimmer that's deleted is forgotten; a device's labels or area
         changing can exclude its lights."""
-        if event.data["action"] == "remove" and event.data["device_id"] in self.dimmer_settings:
-            self.set_dimmer(event.data["device_id"], lights=None, scenes=None)
-        self._release_excluded()
+        data = event.data
+        if data["action"] == "remove" and data["device_id"] in self.dimmer_settings:
+            self.set_dimmer(data["device_id"], lights=None, scenes=None)
+        if data["action"] != "update" or EXCLUDING_DEVICE_CHANGES.intersection(data["changes"]):
+            self._release_excluded()
 
     @callback
     def _release_excluded(self, _event: Event | None = None) -> None:

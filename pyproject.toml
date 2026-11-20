@@ -1,0 +1,22 @@
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF", "PT"]
+ignore = [
+    "E501",                       # long lines are wrapped as files are touched, not in one sweep
+    "RUF001", "RUF002", "RUF003", # en dashes are house style (Sun–Thu)
+    "RUF012",                     # Home Assistant's _attr_* class attributes
+    "PT018",                      # tests may assert several things at once
+]
+
+[tool.ruff.lint.isort]
+# Home Assistant's own import style.
+force-sort-within-sections = true
+combine-as-imports = true
+known-first-party = ["homeassistant"]
+section-order = ["future", "standard-library", "third-party", "first-party", "hue-lite", "local-folder"]
+
+[tool.ruff.lint.isort.sections]
+hue-lite = ["custom_components"]

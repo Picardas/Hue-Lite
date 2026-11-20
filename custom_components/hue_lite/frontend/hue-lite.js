@@ -75,7 +75,17 @@
 
   // ---- Registry helpers ----------------------------------------------------
 
+  // Each light's area as Hue-Lite says (a child device's can be its
+  // parent's), from the latest `hue_lite/config`.
+  let lightAreas = {};
+  function rememberAreas(setup) {
+    if (setup?.areas) lightAreas = setup.areas;
+    return setup;
+  }
+
+  // Until Hue-Lite has said, the light's or its device's own area.
   function areaOf(hass, entity) {
+    if (entity.entity_id in lightAreas) return lightAreas[entity.entity_id];
     return entity.area_id || hass.devices?.[entity.device_id]?.area_id || null;
   }
 
@@ -146,7 +156,8 @@
   // Whole home's block: every light. Its Auto button only shows on when every
   // light in the house is on Auto, not when some are.
   function wholeHome(setup, lights) {
-    const block = room(setup, "home", "Whole home", "mdi:home", lights, {});
+    // Not "home": an area called Home has that id.
+    const block = room(setup, "whole-home", "Whole home", "mdi:home", lights, {});
     block.head.auto_all_only = true;
     return block;
   }
@@ -370,7 +381,7 @@
 
   class HueLiteStrategy extends HTMLElement {
     static async generate(config, hass) {
-      const setup = await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null);
+      const setup = rememberAreas(await hass.callWS({ type: `${DOMAIN}/config` }).catch(() => null));
       if (!setup) {
         // While Home Assistant's starting, Hue-Lite may not be set up yet.
         // Home Assistant builds the dashboard again once it's started, by
@@ -823,7 +834,10 @@
       return [this._hass?.states[this._config.natural_entity]?.attributes.rgb_color].filter(Array.isArray);
     }
 
+    // A preview (a dimmer's) shows only the scene, so only Natural light's
+    // colour and phase change it, not its lights.
     _watching() {
+      if (this._config.preview) return [this._config.natural_entity].filter(Boolean);
       return [...this._config.entities, this._config.scenes_entity, this._config.natural_entity].filter(Boolean);
     }
 
@@ -1326,9 +1340,12 @@
   // dragging; More itself stays put. Built-in colour scenes aren't drawn
   // while `noColour` (none of its lights can show colour).
   class SceneSet {
-    constructor(holder, configs, { save, edit, editor, hint, resetTitle, usual, more }) {
+    constructor(holder, configs, { save, edit, editor, hint, resetTitle, usual, more, keepOne }) {
       this.holder = holder;
       this.save = save;
+      // For a dimmer's scenes (On needs one): the message shown instead of
+      // hiding the last scene that's shown.
+      this.keepOne = keepOne;
       this.editor = editor;
       this.editing = false;
       this.more = Boolean(more);
@@ -1398,6 +1415,11 @@
       const eye = cell.querySelector(".eye");
       onActivate(eye, () => {
         const { order, hidden } = this.scenes;
+        const shown = order.filter((id) => !hidden.includes(id) && !(this.noColour && COLOUR_SCENE_IDS.has(id)));
+        if (this.keepOne && shown.length === 1 && shown[0] === tile.id) {
+          toast(this.keepOne);
+          return;
+        }
         this.save({ order, hidden: hidden.includes(tile.id) ? hidden.filter((s) => s !== tile.id) : [...hidden, tile.id] });
         eye.focus();
       });
@@ -1649,6 +1671,11 @@
 
     async _load() {
       await super._load();
+      // Whole home's block was "home" before 2.5.0: it stays folded if it was.
+      if (this._layoutKey === "hue_lite_home" && this._layout.collapsed.includes("home")) {
+        this._layout.collapsed = this._layout.collapsed.map((id) => (id === "home" ? "whole-home" : id));
+        this._arrange();
+      }
       if (this._layout.scenes) this._unshared = this._layout.scenes;
       delete this._layout.scenes;
       if (this._unshared && shared.data) this._sharedChanged();
@@ -1917,6 +1944,7 @@
         hint: "Drag the scenes into the order On steps through; the eye leaves one out, the pencil changes or copies one.",
         resetTitle: "Back to Natural light and the presets; your own scenes stay as they are",
         usual: () => shared.data?.dimmer_default || { order: [], hidden: [] },
+        keepOne: "A dimmer needs at least one scene to step through",
       });
       body.appendChild(set.grid);
       this._sets.set(d.id, set);
@@ -2150,7 +2178,8 @@
         // Colours were tried on the lights: saved, they're in the scene;
         // otherwise Hue-Lite puts them back as they were.
         if (this._previewed) {
-          this._hass.callWS({ type: `${DOMAIN}/end_preview`, lights: this._lights, restore: !this._saved }).catch(() => {});
+          this._hass.callWS({ type: `${DOMAIN}/end_preview`, lights: this._lights, restore: !this._saved })
+            .catch((err) => toast(`Couldn't put the lights back: ${err?.message || err?.code || err}`));
         }
         this.remove();
       });
@@ -2232,7 +2261,8 @@
         if (colours === this._tried) return;
         this._tried = colours;
         this._previewed = true;
-        this._hass.callWS({ type: `${DOMAIN}/preview_scene`, lights: this._lights, colours: this._colours }).catch(() => {});
+        this._hass.callWS({ type: `${DOMAIN}/preview_scene`, lights: this._lights, colours: this._colours })
+          .catch((err) => toast(`Couldn't try the colours on the lights: ${err?.message || err?.code || err}`));
       }, 300);
     }
 
@@ -2283,7 +2313,7 @@
   // Hue-Lite's setup, asked for once per page (again if that failed).
   let setupAsked = null;
   function loadSetup(hass) {
-    setupAsked = setupAsked || hass.callWS({ type: `${DOMAIN}/config` }).catch((err) => {
+    setupAsked = setupAsked || hass.callWS({ type: `${DOMAIN}/config` }).then(rememberAreas).catch((err) => {
       setupAsked = null;
       throw err;
     });

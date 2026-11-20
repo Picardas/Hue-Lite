@@ -1,8 +1,6 @@
 """The timelines (Natural light and the evening routine), the presets, the
 colour scenes and the dimmer's cycle."""
 
-from __future__ import annotations
-
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -142,6 +140,17 @@ def test_a_bedtime_in_the_hour_the_clocks_go_back() -> None:
     first, second = (datetime(2026, 10, 25, 1, 10, tzinfo=ZoneInfo("Europe/London"), fold=fold) for fold in (0, 1))
     assert evening_routine(first, SUN.sunset, late).phase == "nightlight"
     assert evening_routine(second, SUN.sunset, late).phase == "night"
+
+
+def test_a_bedtime_just_after_the_hour_the_clocks_go_back() -> None:
+    # Saturday night's bedtime is 02:30, after the repeated hour: at 01:40
+    # the second time round, it's still an hour off (wind-down, not night).
+    later = EveningSettings(**{**SETTINGS.__dict__, "bedtime_weekend": 150})
+    second = datetime(2026, 10, 25, 1, 40, tzinfo=ZoneInfo("Europe/London"), fold=1)
+    assert evening_routine(second, SUN.sunset, later).phase == "wind_down"
+    # It's night at 02:30, once.
+    at_bedtime = datetime(2026, 10, 25, 2, 30, tzinfo=ZoneInfo("Europe/London"))
+    assert evening_routine(at_bedtime, SUN.sunset, later).phase == "night"
 
 
 def test_next_scene() -> None:

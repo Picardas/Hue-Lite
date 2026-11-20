@@ -2,8 +2,6 @@
 light's scenes (`layouts`), each Hue dimmer's lights and scenes, and your own
 scenes; and checking them as they're loaded."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 import re
 import secrets
@@ -28,6 +26,10 @@ DIMMER_DEFAULT = {"order": [*SCENE_CYCLE, *PALETTES], "hidden": list(PALETTES)}
 # Your own scenes: their ids start with this, and there are at most this many.
 CUSTOM_PREFIX = "custom_"
 MAX_CUSTOM = 50
+
+# The most rooms and lights whose scenes are kept, so the shared settings
+# can't grow without end.
+MAX_LAYOUTS = 500
 
 # The built-in tiles' usual order, as the dashboard shows them (sceneTiles).
 DEFAULT_ORDER = [*PRESETS, NATURAL, *PALETTES]

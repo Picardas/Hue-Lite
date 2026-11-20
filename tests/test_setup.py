@@ -1,27 +1,27 @@
 """Entities, what's saved, the dashboard, sun times and Repairs."""
 
-from __future__ import annotations
-
-from datetime import date
+from datetime import date, timedelta
 import json
 from pathlib import Path
 import re
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from freezegun.api import FrozenDateTimeFactory
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
-from homeassistant.core import HomeAssistant
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import entity_registry as er, issue_registry as ir, label_registry as lr
+from homeassistant.util import dt as dt_util
 
-from custom_components.hue_lite.const import DOMAIN, STORAGE_KEY
+from custom_components.hue_lite.const import DOMAIN, NUMBERS, STORAGE_KEY
 from custom_components.hue_lite.dashboard import SCENE_COLOURS, websocket_config
 from custom_components.hue_lite.engine import HueLite
 
-from .conftest import FRIDAY, Home, add_device, add_light, set_up
+from .conftest import FRIDAY, THURSDAY, Home, action, add_device, add_light, on, set_up, settle
 
 # The real one, before the fixed_sun fixture patches it.
 REAL_SUN_TIMES = HueLite.__dict__["_sun_times"]
@@ -93,6 +93,20 @@ async def test_the_old_evening_switch_becomes_two(
     assert registry.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_evening_routine_enabled") is None
 
 
+async def test_a_newer_setup_loses_the_old_evening_switch_too(hass: HomeAssistant, home: Home, entry: MockConfigEntry) -> None:
+    """Set up after First one home was added (minor version 2) but before
+    the evening routine's switch became two: its entity goes, and the entry
+    is brought up to date."""
+    newer = MockConfigEntry(domain=DOMAIN, title="Hue-Lite", minor_version=2, options=dict(entry.options))
+    newer.add_to_hass(hass)
+    registry = er.async_get(hass)
+    registry.async_get_or_create("switch", DOMAIN, f"{newer.entry_id}_evening_routine_enabled", config_entry=newer)
+    await set_up(hass, newer)
+    assert newer.minor_version == 3
+    assert registry.async_get_entity_id("switch", DOMAIN, f"{newer.entry_id}_evening_routine_enabled") is None
+    assert hass.states.get("switch.hue_lite_evening_routine_sun_thu_nights").state == "on"
+
+
 async def test_damaged_saved_data_is_left_out(
     hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
 ) -> None:
@@ -156,6 +170,146 @@ async def test_routine_lights_let_go_when_bedtime_passed_while_down(
     stored(hass_storage, scenes={"light.bedroom": "routine", "light.living_room": "natural"})
     hue_lite = await set_up(hass, entry)
     assert hue_lite.scenes == {"light.living_room": "natural"}
+
+
+@pytest.mark.parametrize("written", ["23", "2300", "T23:00", "23:00+05:00"])
+async def test_a_saved_time_written_another_way_keeps_its_default(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any], written: str
+) -> None:
+    """A bedtime or wake-up time saved in some other form than HH:MM (in an
+    edited or damaged file) keeps its default, rather than stopping Hue-Lite
+    starting."""
+    stored(hass_storage, settings={"bedtime_weeknight": written, "wake_up_weekday": written})
+    hue_lite = await set_up(hass, entry)
+    assert (hue_lite.settings["bedtime_weeknight"], hue_lite.settings["wake_up_weekday"]) == ("23:00", "07:00")
+
+
+async def test_saved_timings_out_of_range_are_brought_within_it(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """A timing saved outside the range its slider allows (in an edited file,
+    or a range changed since) is brought within it, rather than stopping
+    Hue-Lite starting; one that isn't a whole number keeps its default."""
+    stored(
+        hass_storage,
+        settings={
+            # Far too long, too short, just over and just under...
+            "wake_up_fade_minutes": 10**13,
+            "wake_up_off_after_minutes": 0,
+            "evening_brighten_minutes": 181,
+            "evening_start_before_sunset": -1,
+            # ...and not whole numbers at all.
+            "bedtime_fade_minutes": float("nan"),
+            "evening_wind_down_minutes": float("inf"),
+            "evening_nightlight_minutes": True,
+        },
+    )
+    hue_lite = await set_up(hass, entry)
+    assert {key: hue_lite.settings[key] for key in NUMBERS} == {
+        "wake_up_fade_minutes": 60,
+        "wake_up_off_after_minutes": 15,
+        "bedtime_fade_minutes": 15,
+        "evening_start_before_sunset": 0,
+        "evening_brighten_minutes": 180,
+        "evening_wind_down_minutes": 120,
+        "evening_nightlight_minutes": 30,
+    }
+
+
+@pytest.mark.parametrize("saved", ["9999-12-31T23:59:59+00:00", "2026-10-24T13:00:00+01:00"])
+async def test_a_saved_wake_up_far_ahead_is_forgotten(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any], saved: str
+) -> None:
+    """The last wake-up's time, saved more than a day ahead (in an edited or
+    damaged file), is forgotten, rather than stopping Hue-Lite starting or
+    holding off the next wake-up."""
+    stored(hass_storage, last_wake_up=saved)
+    hue_lite = await set_up(hass, entry)
+    assert hue_lite.last_wake_up is None
+
+
+@pytest.mark.parametrize(
+    "saved",
+    [
+        {"last_evening": "9999-12-31T23:59:59+00:00"},
+        {"last_evening": 5},
+        {"late": {"lights": ["light.living_room"], "until": "2026-10-22T14:00:00+01:00"}},  # beyond half an hour
+        {"late": {"lights": [], "until": "2026-10-22T13:20:00+01:00"}},
+        {"late": {"lights": "light.living_room", "until": "2026-10-22T13:20:00+01:00"}},
+        {"late": ["light.living_room"]},
+        {"left": {"at": "2026-10-22T13:05:00+01:00", "done": False}},  # still to come
+        {"left": {"at": "soon", "done": False}},
+        {"left": "2026-10-22T12:59:00+01:00"},
+    ],
+)
+async def test_damaged_restart_records_are_left_out(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any], saved: dict[str, Any]
+) -> None:
+    """What a restart carries on with (when the evening started, lights lit
+    for a late arrival, everyone going out) is forgotten if it's damaged or
+    further ahead than it could be, rather than holding back the evening or
+    switching lights off at odd times."""
+    hass.states.async_set("zone.home", "0")
+    stored(hass_storage, **saved)
+    hue_lite = await set_up(hass, entry)
+    routines = hue_lite.routines
+    assert (hue_lite.last_evening, routines.late, routines.late_until, routines.left_at) == (None, set(), None, None)
+
+
+async def test_restart_records_are_kept(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    hass.states.async_set("zone.home", "0")
+    stored(
+        hass_storage,
+        last_evening="2026-10-21T16:30:00+01:00",
+        late={"lights": ["light.living_room", "light.gone", 3], "until": "2026-10-22T13:20:00+01:00"},
+        left={"at": "2026-10-22T12:00:00+01:00", "done": "yes"},
+    )
+    hue_lite = await set_up(hass, entry)
+    routines = hue_lite.routines
+    assert hue_lite.last_evening.isoformat() == "2026-10-21T16:30:00+01:00"
+    assert (routines.late, routines.late_until.isoformat()) == ({"light.living_room", "light.gone"}, "2026-10-22T13:20:00+01:00")
+    assert (routines.left_at.isoformat(), routines.left_done) == ("2026-10-22T12:00:00+01:00", False)
+
+
+async def test_saved_lists_of_lights_keep_only_lights(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """The lights on Auto, the ones Away switched on and the ones in a scene
+    are saved by their entity ids. Anything else in those lists (another
+    kind of entity, or an id too long to be a light's) is left out; a light
+    that isn't set up yet is kept, for when it is."""
+    # It's evening and everyone's out, so Away still has the lights it switched on.
+    freezer.move_to(f"{THURSDAY} 20:00:00+01:00")
+    hass.states.async_set("zone.home", "0")
+    too_long = "light." + "x" * 250
+    stored(
+        hass_storage,
+        scenes={"light.bedroom": "relax", "lock.front_door": "relax", too_long: "relax", "light.desk": "relax"},
+        auto=["light.bedroom", "light.bedroom", "switch.kettle", too_long, 3, "light.desk"],
+        mimicked=["light.living_room", "lock.front_door", "light.living_room"],
+    )
+    hue_lite = await set_up(hass, entry)
+    assert hue_lite.scenes == {"light.bedroom": "relax", "light.desk": "relax"}
+    assert hue_lite.auto == {"light.bedroom", "light.desk"}
+    assert hue_lite.routines.mimicked == {"light.living_room"}
+
+
+async def test_saved_lists_of_lights_are_capped(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, home: Home, entry: MockConfigEntry, hass_storage: dict[str, Any]
+) -> None:
+    """A damaged file listing a huge number of lights keeps the first 5,000
+    of each list, so Hue-Lite still starts quickly."""
+    # It's evening and everyone's out, so Away still has the lights it switched on.
+    freezer.move_to(f"{THURSDAY} 20:00:00+01:00")
+    hass.states.async_set("zone.home", "0")
+    many = [f"light.lamp_{i}" for i in range(6000)]
+    stored(hass_storage, scenes=dict.fromkeys(many, "relax"), auto=many, mimicked=many)
+    hue_lite = await set_up(hass, entry)
+    assert len(hue_lite.scenes) == len(hue_lite.auto) == len(hue_lite.routines.mimicked) == 5000
+    assert "light.lamp_4999" in hue_lite.auto
+    assert "light.lamp_5000" not in hue_lite.auto
 
 
 @pytest.mark.parametrize("page", ["harness/index.html", "screenshots/index.html"])
@@ -228,6 +382,45 @@ async def test_removing_hue_lite_forgets_it(
     assert STORAGE_KEY not in hass_storage
     assert ir.async_get(hass).async_get_issue(DOMAIN, "missing_label_evening") is None
     assert lr.async_get(hass).async_get_label(home.labels["wake_up"])
+
+
+async def test_a_removed_hue_lite_stays_forgotten(
+    hass: HomeAssistant, home: Home, entry: MockConfigEntry, hue_lite: HueLite, hass_storage: dict[str, Any]
+) -> None:
+    """A light changed by hand while Hue-Lite saves on its way out doesn't
+    bring its saved data back once it's removed."""
+    # The living room light is in Natural light and on.
+    await action(hass, "natural_light", {"entity_id": "light.living_room"})
+    on(hass, hue_lite, "light.living_room")
+    await settle(hass)
+    store = hue_lite._store
+    write = store._async_write_data
+
+    async def write_while_a_light_changes(data: dict[str, Any]) -> None:
+        # Someone dims it while the file's being written (Home Assistant
+        # writes in another thread, so events go on meanwhile).
+        hass.states.async_set("light.living_room", "on", {"brightness": 40}, context=Context(user_id="someone"))
+        await write(data)
+
+    with patch.object(store, "_async_write_data", write_while_a_light_changes):
+        await hass.config_entries.async_remove(entry.entry_id)
+    assert STORAGE_KEY not in hass_storage
+
+    # Well after a delayed save would have been written.
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+    assert STORAGE_KEY not in hass_storage
+
+
+async def test_a_failed_start_stops_what_it_started(hass: HomeAssistant, home: Home, entry: MockConfigEntry) -> None:
+    """If starting fails part-way, Hue-Lite doesn't go on listening."""
+    before = hass.bus.async_listeners().get(lr.EVENT_LABEL_REGISTRY_UPDATED, 0)
+    entry.add_to_hass(hass)
+    with patch.object(HueLite, "_check_labels", side_effect=RuntimeError("boom")):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_ERROR
+    assert hass.bus.async_listeners().get(lr.EVENT_LABEL_REGISTRY_UPDATED, 0) == before
 
 
 async def test_real_sun_times(hass: HomeAssistant, hue_lite: HueLite) -> None:

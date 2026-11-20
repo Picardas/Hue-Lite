@@ -3,9 +3,7 @@ light scene, the next scene (a Hue dimmer's On button), Auto, and dimming
 that keeps a light's scene. Each takes a light target; none means every
 light."""
 
-from __future__ import annotations
-
-import voluptuous as vol
+import probatio as vol
 
 from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.const import ATTR_AREA_ID, ATTR_DEVICE_ID, ATTR_ENTITY_ID, ATTR_FLOOR_ID, ATTR_LABEL_ID
@@ -18,6 +16,9 @@ from .engine import HueLite, async_get_loaded
 from .targets import may_control
 
 _IDS = vol.All(cv.ensure_list, [cv.string])
+# A scene's id or one of your own scenes' names: short, and on one line (it's
+# quoted in the error when there's no such scene).
+PRESET = vol.All(cv.string, vol.Length(1, 64), vol.Match(r"^[^\x00-\x1f\x7f]*$"))
 
 TARGET_KEYS = (ATTR_ENTITY_ID, ATTR_AREA_ID, ATTR_FLOOR_ID, ATTR_DEVICE_ID, ATTR_LABEL_ID)
 TARGET = {vol.Optional(key): cv.entity_ids if key == ATTR_ENTITY_ID else _IDS for key in TARGET_KEYS}
@@ -40,7 +41,7 @@ def async_register(hass: HomeAssistant) -> None:
             raise UnknownUser(context=call.context)
         if user.is_admin:
             return running, found
-        denied = [light for light in found if not may_control(user, [light])]
+        denied = [light for light in found if not may_control(hass, user, [light])]
         if denied and any(call.data.get(key) for key in TARGET_KEYS):
             raise Unauthorized(context=call.context, entity_id=denied[0], permission=POLICY_CONTROL)
         return running, [light for light in found if light not in denied]
@@ -76,7 +77,7 @@ def async_register(hass: HomeAssistant) -> None:
         "apply_preset",
         apply_preset,
         # Your own scenes too, so they're checked when called.
-        vol.Schema({vol.Required("preset"): cv.string, **TARGET}),
+        vol.Schema({vol.Required("preset"): PRESET, **TARGET}),
     )
     hass.services.async_register(
         DOMAIN, "natural_light", natural_light, vol.Schema({vol.Optional("follow", default=True): cv.boolean, **TARGET})

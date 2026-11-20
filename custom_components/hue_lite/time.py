@@ -1,20 +1,21 @@
 """Wake-up times and bedtimes."""
 
-from __future__ import annotations
-
 from datetime import time
 
 from homeassistant.components.time import TimeEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import TIMES
 from .engine import HueLiteConfigEntry
 from .entity import SettingEntity
 
+# Nothing polls, so Home Assistant needn't limit parallel updates.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     async_add_entities(SettingTime(entry.runtime_data, key) for key in TIMES)
 

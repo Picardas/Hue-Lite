@@ -1,23 +1,24 @@
 """Where the Natural light scene and the evening routine are, their lights,
 which scene each light is in, and your own scenes."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import NATURAL, ROUTINE
 from .engine import HueLiteConfigEntry
 from .entity import HueLiteEntity
 from .lights import light_rgb
 
+# Nothing polls, so Home Assistant needn't limit parallel updates.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: HueLiteConfigEntry, async_add_entities: AddConfigEntryEntitiesCallback
 ) -> None:
     hue_lite = entry.runtime_data
     async_add_entities(

@@ -173,7 +173,7 @@
     const all = ["kitchen", "living_room|light.floor_lamp", "living_room|light.living_room", "bedroom", "office", "hall"];
     const open = { desktop: ["kitchen", "living_room|light.floor_lamp"], phone: ["office"], edit: ["kitchen"], dimmers: [], routines: [] }[view];
     const userData = {
-      hue_lite_home: { order: [], collapsed: view === "desktop" ? [] : ["home"] },
+      hue_lite_home: { order: [], collapsed: view === "desktop" ? [] : ["whole-home"] },
       hue_lite_rooms: { order: [...open, ...all.filter((id) => !open.includes(id))], collapsed: all.filter((id) => !open.includes(id)) },
       hue_lite_routines: { order: [], collapsed: view === "routines" ? [] : ["wake_up", "evening", "coming_going"] },
       hue_lite_dimmers: { order: [], collapsed: ["dimmer_bedroom"] },

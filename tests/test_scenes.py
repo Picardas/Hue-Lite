@@ -1,8 +1,6 @@
 """Presets, colour scenes, Natural light, which scene each light is in,
 dimming, and Home Assistant's own scenes."""
 
-from __future__ import annotations
-
 from freezegun.api import FrozenDateTimeFactory
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockUser
 

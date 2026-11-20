@@ -1,7 +1,5 @@
 """Setup finds or creates the role labels; options can remap them."""
 
-from __future__ import annotations
-
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.config_entries import SOURCE_USER
@@ -55,7 +53,7 @@ async def test_an_older_setup_gets_the_first_one_home_label(hass: HomeAssistant,
     older.add_to_hass(hass)
     assert await hass.config_entries.async_setup(older.entry_id)
     await hass.async_block_till_done()
-    assert older.minor_version == 2
+    assert older.minor_version == 3
     assert older.options["label_first_home"] == older.runtime_data.labels["first_home"] == home.labels["first_home"]
 
 
